@@ -26,22 +26,30 @@ vi.mock('@/services/api', async (importOriginal) => {
 
 import { db } from '@/db/schema';
 import { addAccount } from '@/db/repo/accounts';
-import { judgeNotice, matchesWhitelist, processInboxOnStartup, type InboxRaw } from '@/services/inbox';
+import { judgeNotice, learnCard, matchesWhitelist, processInboxOnStartup, type InboxRaw } from '@/services/inbox';
 import { useSettings } from '@/stores/settings';
 import { DEFAULT_SETTINGS } from '@/db/repo/settings';
 
 const n = (card: string, text: string, merchant = '') => ({ source: 'notify', card, text, merchant }) as Parameters<typeof judgeNotice>[0];
 
 describe('白名單比對', () => {
-  it('名稱出現在商家或訊息裡就命中；不分大小寫、全半形', () => {
+  it('名稱出現在發送者名稱（card）、商家或訊息裡就命中；不分大小寫、全半形', () => {
+    expect(matchesWhitelist({ card: '中國信託', merchant: '', text: '刷卡消費 250 元' }, ['中國信託'])).toBe(true);
     expect(matchesWhitelist({ merchant: '玉山銀行', text: '消費 120 元' }, ['玉山銀行'])).toBe(true);
     expect(matchesWhitelist({ merchant: '', text: '【LINE Pay】付款成功' }, ['line pay'])).toBe(true);
     expect(matchesWhitelist({ merchant: '', text: 'ＬＩＮＥ Ｐａｙ 付款' }, ['LINE Pay'])).toBe(true);
-    expect(matchesWhitelist({ merchant: '全家', text: '消費 85 元' }, ['玉山'])).toBe(false);
+    expect(matchesWhitelist({ card: '全家', merchant: '全家', text: '消費 85 元' }, ['玉山'])).toBe(false);
   });
   it('空名單、空白項目不算命中', () => {
     expect(matchesWhitelist({ merchant: '玉山', text: '' }, [])).toBe(false);
     expect(matchesWhitelist({ merchant: '玉山', text: '' }, ['  '])).toBe(false);
+  });
+  it('learnCard 不會覆蓋使用者已手動設定的卡片對應帳戶', () => {
+    useSettings.setState({ ...DEFAULT_SETTINGS, inbox: { ...DEFAULT_SETTINGS.inbox, cardMap: { 中國信託: 'acc-1' } } } as never);
+    learnCard('中國信託', 'acc-2');
+    expect(useSettings.getState().inbox.cardMap['中國信託']).toBe('acc-1');
+    learnCard('玉山銀行', 'acc-2');
+    expect(useSettings.getState().inbox.cardMap['玉山銀行']).toBe('acc-2');
   });
 });
 

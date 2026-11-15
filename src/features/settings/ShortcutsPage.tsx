@@ -1,13 +1,12 @@
 /**
  * iPhone 捷徑設定頁面：
- * ① 加入 iPhone 捷徑（精靈引導）
+ * ① 加入 iPhone 捷徑（精靈引導與連結碼）
  * ② 已連結的裝置（權杖列表與撤銷）
- * ③ 自訂捷徑權杖與手動設定指南
- * ④ 捷徑記帳設定（看得懂的直接記帳、卡片對應帳戶等）
+ * ③ 自動入帳偏好入口（跳轉至獨立頁面）
+ * ④ 進階：自訂捷徑權杖與手動設定指南
  */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAccounts } from '@/app/hooks';
 import {
   createToken, ensureLink, forgetLink, hookUrl, listTokens, revokeToken, savedLink,
   deviceLabel, openShortcutImport, shortcutFileUrl, SHORTCUTS,
@@ -15,8 +14,7 @@ import {
 } from '@/services/inbox';
 import { useSettings } from '@/stores/settings';
 import { useUI, ask, askInput } from '@/stores/ui';
-import { AccountField, SwitchField } from '@/ui/form';
-import { Icon, iconEmoji } from '@/ui/Icon';
+import { Icon } from '@/ui/Icon';
 import { ShortcutWizard } from '../inbox/ShortcutWizard';
 
 const snack = (text: string, duration?: number) => useUI.getState().showSnack({ text, duration });
@@ -28,9 +26,6 @@ async function copy(text: string, label: string) {
 export default function ShortcutsPage() {
   const navigate = useNavigate();
   const cfg = useSettings((s) => s.inbox);
-  const set = useSettings((s) => s.set);
-  const update = (patch: Partial<typeof cfg>) => set('inbox', { ...cfg, ...patch });
-  const { list: accounts, map: accMap } = useAccounts();
   const [tokens, setTokens] = useState<InboxToken[] | null>(null);
   const [fresh, setFresh] = useState<{ token: string; name: string } | null>(null);
   const [link, setLink] = useState(savedLink);
@@ -112,7 +107,7 @@ export default function ShortcutsPage() {
         <div style={{ width: 36 }} />
       </header>
 
-      <details className="card inbox-intro" open>
+      <details className="card inbox-intro">
         <summary><b>⚡ 什麼是 iPhone 自動記帳捷徑？</b></summary>
         <p className="muted">設定好後，刷卡、網購、LINE Pay 掃碼付款或收到銀行通知時，iPhone 會自動將消費送進 Aster 收件匣，方便你在首頁隨時核對記帳。</p>
         <ol className="inbox-steps">
@@ -164,6 +159,18 @@ export default function ShortcutsPage() {
         ))}
       </div>
 
+      <div className="section-title">自動入帳偏好</div>
+      <div className="list">
+        <button className="field" style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => navigate('/settings/inbox-whitelist')}>
+          <span className="label" style={{ flex: 1 }}>自動入帳偏好</span>
+          <span className="muted" style={{ fontSize: '0.8rem' }}>
+            {cfg.autoBook ? '自動記帳開啟' : `白名單 ${(cfg.whitelist ?? []).length} 項`}
+            {Object.keys(cfg.cardMap).length ? ` · 卡片 ${Object.keys(cfg.cardMap).length}` : ''}
+          </span>
+          <Icon name="chevronR" />
+        </button>
+      </div>
+
       <details className="card inbox-advanced">
         <summary><b>進階：自己動手建立捷徑</b></summary>
         <p className="muted">想修改捷徑內容，或用在其他裝置（Android 的 Tasker 等）時，可以建立一組權杖，用標頭傳送。</p>
@@ -181,41 +188,6 @@ export default function ShortcutsPage() {
         )}
         <ShortcutGuides />
       </details>
-
-      <div className="section-title">自動入帳偏好</div>
-      <div className="list">
-        <SwitchField label="看得懂的直接記帳" sub="開啟 App 時自動記下有金額且明確的項目。Apple Pay 偶爾會送來空白或被拒絕的交易，建議先手動確認一陣子再開啟"
-          checked={cfg.autoBook} onChange={(v) => update({ autoBook: v })} />
-        <button className="field" style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }} onClick={() => navigate('/settings/inbox-whitelist')}>
-          <span className="label" style={{ flex: 1 }}>白名單發送者{(cfg.whitelist ?? []).length ? `（${(cfg.whitelist ?? []).length}）` : ''}</span>
-          <span className="muted" style={{ fontSize: '0.8rem' }}>這些名稱的通知直接記帳，不用確認</span>
-          <Icon name="chevronR" />
-        </button>
-        <AccountField label="判斷不出帳戶時" value={cfg.defaultAccountId} onChange={(v) => update({ defaultAccountId: v })} accounts={accounts}
-          allowEmpty emptyLabel="上次記帳的帳戶" filter={(a) => a.type !== 'loan' && a.type !== 'brokerage'} />
-      </div>
-      {Object.keys(cfg.cardMap).length > 0 && (
-        <>
-          <div className="section-title">卡片對應的帳戶</div>
-          <div className="list">
-            {Object.entries(cfg.cardMap).map(([card, id]) => (
-              <div key={card} className="field">
-                <span className="label" style={{ flex: 1 }}>{card}</span>
-                <select value={accMap.has(id) ? id : ''} aria-label={`${card} 對應的帳戶`}
-                  onChange={(e) => {
-                    const map = { ...cfg.cardMap };
-                    if (e.target.value) map[card] = e.target.value; else delete map[card];
-                    update({ cardMap: map });
-                  }}>
-                  <option value="">（不指定，自動判斷）</option>
-                  {accounts.filter((a) => a.type !== 'loan').map((a) => <option key={a.id} value={a.id}>{iconEmoji(a.icon)} {a.name}</option>)}
-                </select>
-              </div>
-            ))}
-          </div>
-          <p className="muted" style={{ fontSize: '0.78rem', margin: '4px 8px' }}>確認記帳時會自動記住「哪張卡 → 哪個帳戶」，下次同一張卡就不用再選。</p>
-        </>
-      )}
     </main>
   );
 }

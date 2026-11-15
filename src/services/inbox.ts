@@ -79,10 +79,10 @@ export function isTrustedLineNotice(text: string): boolean {
 
 export type NoticeVerdict = { trust: 'ok' } | { trust: 'review'; reason: string } | { trust: 'drop' };
 
-/** 白名單比對：發送者名稱出現在商家或訊息裡就算命中（不分大小寫、全半形正規化） */
-export function matchesWhitelist(it: Pick<InboxRaw, 'text' | 'merchant'>, whitelist: string[]): boolean {
+/** 白名單比對：發送者／卡片／App 名稱或通知內容、商家任一命中即放行（不分大小寫、全半形正規化） */
+export function matchesWhitelist(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }, whitelist: string[]): boolean {
   if (!whitelist.length) return false;
-  const hay = `${it.merchant ?? ''}\n${it.text ?? ''}`.normalize('NFKC').toLowerCase();
+  const hay = `${it.card ?? ''}\n${it.merchant ?? ''}\n${it.text ?? ''}`.normalize('NFKC').toLowerCase();
   return whitelist.some((w) => {
     const n = w.trim().normalize('NFKC').toLowerCase();
     return n.length > 0 && hay.includes(n);
@@ -399,11 +399,13 @@ export async function mergeDuplicate(e: InboxEntry): Promise<boolean> {
   return true;
 }
 
-/** 記住「這張卡 → 這個帳戶」 */
-export function learnCard(card: string | undefined, accountId: string | undefined) {
+/** 記住「這張卡 → 這個帳戶」（使用者已設定過的對應不會被自動覆蓋） */
+export function learnCard(card: string | undefined, accountId: string | undefined, opts: { overwrite?: boolean } = {}) {
   if (!card || !accountId) return;
   const s = useSettings.getState();
-  if (s.inbox.cardMap[card] === accountId) return;
+  const existing = s.inbox.cardMap[card];
+  if (existing && !opts.overwrite) return;
+  if (existing === accountId) return;
   s.set('inbox', { ...s.inbox, cardMap: { ...s.inbox.cardMap, [card]: accountId } });
 }
 
