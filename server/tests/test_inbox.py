@@ -65,6 +65,9 @@ def test_hook_notify_noise_filtering(api: Api) -> None:
     r2 = _hook(token, {"source": "notify", "card": "LINE Pay", "text": "在 50嵐 付款 NT$65 完成"})
     assert r2.status_code == 200 and r2.json()["message"] == "已送到 Aster，打開 App 確認記帳"
 
+    r_in = _hook(token, {"source": "notify", "card": "中國信託", "text": "跨行轉入 NT$30,000，跨行轉帳手續費 0 元，餘額 NT$85,000"})
+    assert r_in.status_code == 200 and r_in.json()["message"] == "已送到 Aster，打開 App 確認記帳"
+
     r3 = _hook(token, {"source": "siri", "text": "早餐 65 現金"})
     assert r3.status_code == 200 and r3.json()["message"] == "已記進 Aster 收件匣：早餐 65 現金"
 
@@ -73,18 +76,20 @@ def test_hook_notify_noise_filtering(api: Api) -> None:
         "【玉山銀行】您的網路交易驗證碼(OTP)為 123456，請於2分鐘內輸入",
         "【國泰世華】您的網銀帳號於 11:20 登入成功，如非本人請洽客服",
         "【台新 Richart】信貸專案限時優惠利率 1.88% 起，立即登錄申請",
+        "【台新銀行】跨行轉帳免收手續費優惠，立即查看",
         "今天晚上 7 點好樂迪包廂見喔！",  # 一般 LINE 聊天，無交易信號
     ]
     for noise in noise_samples:
         rn = _hook(token, {"source": "notify", "card": "銀行", "text": noise})
         assert rn.status_code == 200 and rn.json()["message"] == "已略過非消費通知"
 
-    # 驗證收件匣只有那 3 筆真正交易
+    # 驗證收件匣只有那 4 筆真正交易
     items = api.get("/api/inbox/items").json()
-    assert len(items) == 3
+    assert len(items) == 4
     assert items[0]["source"] == "siri" and items[0]["text"] == "早餐 65 現金"
-    assert items[1]["source"] == "notify" and items[1]["card"] == "LINE Pay"
-    assert items[2]["source"] == "notify" and items[2]["card"] == "國泰世華"
+    assert items[1]["source"] == "notify" and items[1]["card"] == "中國信託"
+    assert items[2]["source"] == "notify" and items[2]["card"] == "LINE Pay"
+    assert items[3]["source"] == "notify" and items[3]["card"] == "國泰世華"
 
 
 def test_hook_rejects_bad_token_and_isolates_users(admin_and_user) -> None:  # noqa: ANN001
@@ -138,3 +143,9 @@ def test_hook_pushes_to_subscribed_devices(api: Api, monkeypatch) -> None:  # no
     r2 = _hook(token, {"text": "晚餐 80"})
     assert r2.status_code == 200 and r2.json()["ok"]
     assert len(api.get("/api/inbox/items").json()) == 2
+
+    # 單純寫「存入」的通知（無 NT$ 與「入帳」字眼）也不應被誤判為雜訊
+    r5 = _hook(token, {"source": "notify", "text": "玉山銀行 帳戶*1234 存入 30,000元"})
+    assert r5.status_code == 200 and r5.json()["ok"]
+    assert r5.json().get("message") != "已略過非消費通知"
+    assert len(api.get("/api/inbox/items").json()) == 3

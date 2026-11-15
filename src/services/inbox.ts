@@ -123,7 +123,7 @@ export const hookUrl = () => `${location.origin}/api/hook/inbox`;
 
 /** 預先做好、簽署過的捷徑（scripts/make-shortcuts.py 產生 public/shortcuts/aster-<key>.shortcut）；name＝匯入後的捷徑名稱 */
 export const SHORTCUTS = [
-  { key: 'auto', name: 'Aster 自動記帳', icon: '⚡', title: '銀行 App／LINE Pay／街口／Apple Pay 自動記帳', automation: '通知與錢包', icloud: '78007b1d408246d3b5957a4174d4674c', hint: '最推薦：刷實體卡、網購、LINE Pay、街口、Apple Pay 跳通知就自動記（已內建 52 家銀行與支付 App）' },
+  { key: 'auto', name: 'Aster 自動記帳', icon: '⚡', title: '銀行 App／LINE Pay／街口／Apple Pay 自動記帳', automation: '通知與錢包', icloud: 'd965a9d8a48642aea3bb847b6525cdaa', hint: '最推薦：刷實體卡、網購、LINE Pay、街口、Apple Pay 跳通知自動記（加入後需至「自動化」勾選銀行與 LINE）' },
   { key: 'voice', name: 'Aster 隨手記', icon: '🎙', title: '對 Siri 說一句話記帳 ＋ 分享選單記帳', automation: null, icloud: 'c9f38f3363294443918b040e21156d46', hint: '「嘿 Siri，Aster 隨手記」說出花費，或在任何 App 按分享直接把文字送去記帳' },
 ] as const;
 
@@ -264,10 +264,17 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
   } else {
     drafts = parseEntries(it.text, { ...ctx, today: date });
     if (!drafts.length) return [];
-    // 通知／簡訊：多個金額時只取一筆（其餘多半是額度、餘額），備註換成商店名稱
+    // 通知／簡訊：多個金額時優先取真實交易金額（避開餘額、額度、手續費），並保留 parseEntries 辨識出的 income（如入帳、薪資、轉入）
     if (it.source === 'notify' || it.source === 'sms' || it.source === 'email') {
       const merchant = it.merchant || noticeMerchant(it.text);
-      drafts = [{ ...drafts[0], note: merchant || drafts[0].note.slice(0, 40), kind: /退款|退貨|退刷/.test(it.text) ? 'income' : 'expense' }];
+      const isBalanceOrFee = (d: DraftEntry) => /(?:餘額|結餘|可用額度|信用額度|手續費)/.test(d.raw);
+      const primary = drafts.find((d) => !isBalanceOrFee(d) && d.amount > 0)
+        ?? drafts.find((d) => d.amount > 0)
+        ?? drafts[0];
+      const isIncome = primary.kind === 'income'
+        || /退款|退貨|退刷|入帳|進帳|跨行轉入|薪資|薪水|發薪/.test(it.text)
+        || (/(?:存入|轉入)/.test(it.text) && !/轉出|扣款|刷卡|消費|付款|提款/.test(it.text));
+      drafts = [{ ...primary, note: merchant || primary.note.slice(0, 40), kind: isIncome ? 'income' : 'expense' }];
     }
   }
   const out: ResolvedDraft[] = [];

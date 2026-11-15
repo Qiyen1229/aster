@@ -145,11 +145,14 @@ export function parseEntries(input: string, ctx: ParseContext): DraftEntry[] {
       const cash = ctx.accounts.find((x) => x.type === 'cash');
       if (accs.length >= 2) { kind = 'transfer'; accountId = accs[0].id; toAccountId = accs[1].id; }
       else if (CASH_OUT_RE.test(seg.text) && cash && accs[0]?.id !== cash.id) { kind = 'transfer'; toAccountId = cash.id; }
-      else if (kind !== 'income' && accs.length === 1 && accs[0].term) {
+      else if (kind !== 'income' && !/跨行轉入/.test(seg.text) && accs.length === 1 && accs[0].term) {
         // 「轉 3000 到 零用金」只說了轉入的帳戶：記成轉帳，轉出帳戶留空，之後帶入預設／上次使用的帳戶
         const at = seg.text.indexOf(accs[0].term);
         if (at > 0 && /(轉|存|匯)[^到入進至給]{0,10}(到|入|進|至)\s*$/.test(seg.text.slice(0, at))) { kind = 'transfer'; toAccountId = accs[0].id; accountId = undefined; }
       }
+    }
+    if (kind === 'expense' && /(?:存入|轉入|跨行轉入)/.test(seg.text)) {
+      kind = 'income';
     }
     const currency = a.currency ?? detectCurrency(seg.text) ?? globalCurrency;
     for (const [re] of CURRENCY_WORDS) rest = rest.replace(re, ' ');

@@ -190,7 +190,7 @@ def auto() -> dict:
             field("amount", var_text(shortcut_input("Amount"))),
             field("merchant", var_text(shortcut_input("Merchant"))),
             field("card", multi_var_text([shortcut_input("Card or Pass"), shortcut_input("App")])),
-            field("text", multi_var_text([shortcut_input("Subtitle"), shortcut_input()])),
+            field("text", multi_var_text([shortcut_input("Title"), shortcut_input("Subtitle"), shortcut_input()])),
         ],
         triggers=[
             {

@@ -99,23 +99,21 @@ export function ShortcutWizard({ preparing, onAdd, hasLink }: { preparing: boole
       })}
       {needAuto.length > 0 && (
         <div className="wiz-auto" role="group" aria-label="還差一步：建立自動化">
-          <b>還差一步：啟用自動化</b>
+          <b>還差一步：在「捷徑」建立自動化</b>
+          <p className="muted" style={{ margin: '4px 0 8px', fontSize: '0.82rem', lineHeight: 1.5 }}>
+            因為 iOS 匯入 <code>.shortcut</code> 時不會自動建立「自動化」規則，加入捷徑後需手動到 iPhone「捷徑」設定觸發條件，才會在背景自動記帳：
+          </p>
           {needAuto.map((s) => (
             <div key={s.key} className="wiz-auto-item">
               <p className="wiz-auto-title"><b>{s.title}</b></p>
               <ol className="wiz-auto-steps" style={{ paddingLeft: '1.2rem' }}>
-                <li style={{ listStyle: 'none', margin: '2px 0 4px -1.2rem', fontWeight: 600, color: 'var(--accent)' }}>
-                  💡 推薦方式（已內建 36 家銀行、支付 App 與 Apple Pay 自動化，免手動勾選）：
-                </li>
-                <li>打開「捷徑」App，找到剛加入的「<b>{s.name}</b>」，點右上角「<b>⋯</b>」進入編輯。</li>
-                <li>點最上方虛線框的「<b>已關閉自動化</b>」（或時鐘圖示）。</li>
-                <li>切換為「<b>立即執行</b>」，並關閉「執行時通知」即可！若有想增減的 App 可點虛線框內的 ＋ 調整。</li>
-                <li style={{ listStyle: 'none', margin: '8px 0 4px -1.2rem', fontWeight: 600, color: 'var(--muted)' }}>
-                  備用方式（若捷徑上方無虛線框，手動建立步驟）：
-                </li>
-                <li>打開「捷徑」App ➔ 下方「自動化」➔ 點「＋」➔ 點上方「自動化操作」找到「<b>App 通知</b>」（或「錢包」交易）。</li>
-                <li>「App」勾選常用的銀行、LINE Pay、街口等 ➔ 勾選「<b>立即執行</b>」➔ 下一步搜尋「執行捷徑」選「<b>{s.name}</b>」。</li>
+                <li>打開 iPhone「<b>捷徑</b>」App ➔ 點下方「<b>自動化</b>」➔ 點右上角「<b>＋</b>」➔ 搜尋並選擇「<b>收到通知</b>」（若要感應 Apple Pay，另建一組「<b>交易</b>」自動化）。</li>
+                <li>「App」勾選你的銀行 App 與 <b>LINE</b>（收 LINE Pay／銀行官方帳號通知）➔ 選「<b>立即執行</b>」（建議關閉「執行時通知」）。</li>
+                <li>下一步選擇「<b>執行捷徑</b>」➔ 選「<b>{s.name}</b>」，並在輸入欄位傳入「<b>通知的輸入</b>」。</li>
               </ol>
+              <p className="muted" style={{ margin: '4px 0 8px', fontSize: '0.8rem' }}>
+                💡 設定後可到下方「<b>已連結的裝置</b>」確認是否顯示「已傳送 N 次資料」，代表捷徑已成功送出通知。
+              </p>
               <button className="pill accent-pill" onClick={() => mark(s.key, 'auto', true)}>我做好了 ✓</button>
             </div>
           ))}

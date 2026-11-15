@@ -112,7 +112,7 @@ export default function ShortcutsPage() {
         <p className="muted">設定好後，刷卡、網購、LINE Pay 掃碼付款或收到銀行通知時，iPhone 會自動將消費送進 Aster 收件匣，方便你在首頁隨時核對記帳。</p>
         <ol className="inbox-steps">
           <li><span>💳</span><div><b>照常付款或呼叫 Siri</b><br />刷實體卡、網購、LINE Pay 掃碼，或先對 Siri 說「嘿 Siri，Aster 隨手記」，等 Siri 回應後再說「早餐 65 現金」</div></li>
-          <li><span>📨</span><div><b>捷徑自動寄出</b><br />銀行或支付 App 跳通知時，自動把金額、商家送進 Aster</div></li>
+          <li><span>📨</span><div><b>設定「收到通知」自動化</b><br />iOS 匯入捷徑不會自動建立自動化規則，加入後需到 iPhone「<b>捷徑 → 自動化 → ＋ → 收到通知</b>」（勾選銀行 App 與 LINE、開啟「立即執行」），選擇執行「<b>Aster 自動記帳</b>」並傳入通知輸入</div></li>
           <li><span>✅</span><div><b>首頁核對入帳</b><br />在首頁收件匣一鍵記帳；若開啟「看得懂的直接記帳」，打開 App 會直接入帳到今日帳目</div></li>
         </ol>
       </details>
@@ -139,6 +139,9 @@ export default function ShortcutsPage() {
       </div>
 
       <div className="section-title">已連結的裝置</div>
+      <p className="muted" style={{ margin: '-4px 4px 8px', fontSize: '0.8rem' }}>
+        可在此確認捷徑是否曾成功送出資料（顯示「已傳送 N 次資料」；若仍為「還沒有送過資料」，請確認「捷徑 → 自動化」已設為「立即執行」並傳入通知輸入）。
+      </p>
       <div className="list">
         {tokens?.length === 0 && <div className="row"><span className="row-sub">還沒有。按上面的「加入」會自動建立。</span></div>}
         {tokens?.map((t) => (
@@ -221,14 +224,14 @@ function ShortcutGuides() {
       <details className="card">
         <summary><b>🔔 銀行 App／LINE Pay／街口通知自動記帳</b></summary>
         <ol>
-          <li>打開「捷徑」App →「自動化」→ 右上角「＋」→ 選「<b>App 通知</b>」（或「App」）。</li>
-          <li>「App」勾選你的銀行 App、LINE Pay、街口支付等，選「<b>立即執行</b>」，按「下一步」→「新增空白自動化」。</li>
+          <li>打開「捷徑」App →「自動化」→ 右上角「＋」→ 選「<b>收到通知</b>」。</li>
+          <li>「App」勾選你的銀行 App、<b>LINE</b>、LINE Pay、街口支付等，選「<b>立即執行</b>」，按「下一步」→「新增空白自動化」。</li>
           {common}
         </ol>
         <table className="inbox-fields"><tbody>
           <tr><td><code>source</code></td><td>notify</td></tr>
           <tr><td><code>card</code></td><td>點「捷徑輸入」→ 選「<b>App</b>」（傳送發送通知的 App 名稱）</td></tr>
-          <tr><td><code>text</code></td><td>點「捷徑輸入」→ 選「<b>內容</b>」</td></tr>
+          <tr><td><code>text</code></td><td>點「捷徑輸入」→ 依序放入「<b>標題</b>」（Title，供 LINE 官方帳號／白名單比對）與「<b>內容</b>」</td></tr>
         </tbody></table>
         <p className="muted">Aster 會從通知文字中解析金額、商店名稱與卡片帳戶，非交易的驗證碼與廣告推播會自動過濾略過。</p>
       </details>

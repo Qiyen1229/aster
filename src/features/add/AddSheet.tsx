@@ -116,6 +116,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
+  const [catPicking, setCatPicking] = useState(!editing && !prefill?.categoryId);
   const [mounted, setMounted] = useState(open);
   const [phase, setPhase] = useState<'entering' | 'open' | 'closing'>(open ? 'entering' : 'closing');
   const [origin, setOrigin] = useState<{ x: string; y: string } | null>(null);
@@ -123,6 +124,10 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   const requestCloseRef = useRef<() => void>(() => {});
   /** 使用者是否已手動選過分類（是的話不再自動分類） */
   const catTouched = useRef(!!prefill?.categoryId);
+  const catPickedByKind = useRef<{ expense: boolean; income: boolean }>({
+    expense: !!(editing || prefill?.categoryId),
+    income: !!(editing || prefill?.categoryId),
+  });
   const [autoCat, setAutoCat] = useState<(CategorySuggestion & { prev: string }) | null>(null);
   const saved = useRef(false);
   const subRowRef = useRef<HTMLDivElement>(null);
@@ -166,7 +171,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    const t = window.setTimeout(() => screenRef.current?.focus({ preventScroll: true }), 50);
+    const t = window.setTimeout(() => screenRef.current?.focus({ preventScroll: true }), 300);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.clearTimeout(t);
@@ -470,7 +475,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   useEffect(() => {
     const row = subRowRef.current;
     const el = row?.querySelector<HTMLElement>('[aria-pressed="true"]');
-    if (row && el) row.scrollTo({ left: el.offsetLeft - row.clientWidth / 2 + el.clientWidth / 2, behavior: 'smooth' });
+    if (row && el) row.scrollTo?.({ left: el.offsetLeft - row.clientWidth / 2 + el.clientWidth / 2, behavior: 'smooth' });
   }, [categoryId, mainOpen]);
 
   // ── 自動分類：備註停止輸入 300ms 後查詢 ──
@@ -489,6 +494,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
           return { ...cur, [kind]: sug.categoryId };
         });
         setMainOpen(c.parentId || c.id);
+        catPickedByKind.current[kind] = true;
+        setCatPicking(false);
         if (sug.tagIds.length) setTagIds((ids) => [...new Set([...ids, ...sug.tagIds.filter((x) => tagMap.has(x))])]);
       }).catch(() => undefined);
     }, 300);
@@ -512,7 +519,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
     catTouched.current = true;
     setAutoCat(null);
     const c = catMap.get(sg.categoryId);
-    if (c && c.kind === kind && !c.archived) { setCatByKind((cur) => ({ ...cur, [c.kind]: c.id })); setMainOpen(c.parentId || c.id); }
+    if (c && c.kind === kind && !c.archived) { setCatByKind((cur) => ({ ...cur, [c.kind]: c.id })); setMainOpen(c.parentId || c.id); catPickedByKind.current[kind] = true; setCatPicking(false); }
     const acc = accMap.get(sg.accountId);
     if (acc && !acc.archived && acc.currency === txCurrency) setAccountId(acc.id);
     if (!expr) setExpr(fromMinor(sg.amountMinor, sg.currency).toString());
@@ -554,6 +561,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
     setCatByKind((s) => ({ ...s, [t.type]: t.categoryId }));
     const c = catMap.get(t.categoryId);
     setMainOpen(c?.parentId || t.categoryId);
+    if (t.type === 'expense' || t.type === 'income') catPickedByKind.current[t.type] = true;
+    setCatPicking(false);
     setAccountId(t.accountId);
     setCurrency(t.currency);
     setExpr(fromMinor(t.amountMinor, t.currency).toString());
@@ -577,6 +586,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       setAutoCat(null);
       setCatByKind((s) => ({ ...s, [c.kind]: c.id }));
       setMainOpen(c.parentId || c.id);
+      catPickedByKind.current[c.kind] = true;
+      setCatPicking(false);
     }
     setNote(d.note);
     if (d.tagIds.length) setTagIds((ids) => [...new Set([...ids, ...d.tagIds.filter((x) => tagMap.has(x))])]);
@@ -656,6 +667,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                   if (next === 'expense' || next === 'income') {
                     const c = catMap.get(catByKind[next]);
                     setMainOpen(c?.parentId || c?.id || '');
+                    setCatPicking(!catPickedByKind.current[next]);
                   }
                 }}
                 options={editing ? MODES.filter((m) => m.value === 'expense' || m.value === 'income') : mode === 'adjust' ? [...MODES, { value: 'adjust', label: '調整' }] : MODES}
@@ -755,33 +767,72 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                 </div>
               )}
 
-              {/* 分類 */}
-              {(mode === 'expense' || mode === 'income') && (
-                <>
+              {/* 分類：未選／重選顯示 5×2 大類別網格；選中含子項的大類後收合為單行返回列，讓出空間以大格顯示子項目 */}
+              {(mode === 'expense' || mode === 'income') && (() => {
+                const showSubGrid = !catPicking && !!mainTree && mainTree.subs.length > 0;
+                return showSubGrid ? (
+                  <div className="cat-stage" ref={subRowRef}>
+                    <button
+                      type="button"
+                      className="cat-back-bar"
+                      onClick={() => setCatPicking(true)}
+                      aria-label={`已選大類 ${mainTree.main.name}，點此重選`}
+                    >
+                      <Icon name="chevronL" size={16} />
+                      <span className="cat-icon xs" style={{ ['--c' as string]: mainTree.main.color }}><CatIcon icon={mainTree.main.icon} size={13} /></span>
+                      <span className="cat-back-name">{mainTree.main.name}</span>
+                      <span className="cat-back-hint">（點此重選）</span>
+                    </button>
+                    <div className="sub-grid" role="radiogroup" aria-label="子分類">
+                      <button
+                        type="button"
+                        className="sub-cell"
+                        role="radio"
+                        aria-checked={categoryId === mainTree.main.id}
+                        aria-pressed={categoryId === mainTree.main.id}
+                        onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((s) => ({ ...s, [kind]: mainTree.main.id })); }}
+                      >
+                        <span className="cat-icon sm" style={{ ['--c' as string]: mainTree.main.color }}><CatIcon icon={mainTree.main.icon} size={17} /></span>
+                        <span>全部{mainTree.main.name}</span>
+                      </button>
+                      {mainTree.subs.map((s) => (
+                        <button
+                          type="button"
+                          key={s.id}
+                          className="sub-cell"
+                          role="radio"
+                          aria-checked={categoryId === s.id}
+                          aria-pressed={categoryId === s.id}
+                          onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((c) => ({ ...c, [kind]: s.id })); }}
+                        >
+                          <span className="cat-icon sm" style={{ ['--c' as string]: s.color }}><CatIcon icon={s.icon} size={17} /></span>
+                          <span>{s.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
                   <div className="cat-grid" role="radiogroup" aria-label="分類">
-                    {tree.map(({ main }) => {
+                    {tree.map(({ main, subs }) => {
                       const active = selCat ? (selCat.id === main.id || selCat.parentId === main.id) : false;
                       return (
                         <button type="button" key={main.id} className="cat-cell" role="radio" aria-checked={active} aria-pressed={active}
-                          onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((s) => ({ ...s, [kind]: main.id })); setMainOpen(main.id); }}>
+                          onClick={() => {
+                            catTouched.current = true;
+                            catPickedByKind.current[kind] = true;
+                            setAutoCat(null);
+                            setCatByKind((s) => ({ ...s, [kind]: main.id }));
+                            setMainOpen(main.id);
+                            if (subs.length > 0) setCatPicking(false);
+                          }}>
                           <span className="cat-icon sm" style={{ ['--c' as string]: main.color }}><CatIcon icon={main.icon} size={16} /></span>
                           {main.name}
                         </button>
                       );
                     })}
                   </div>
-                  {mainTree && mainTree.subs.length > 0 && (
-                    <div className="sub-row" role="radiogroup" aria-label="子分類" ref={subRowRef}>
-                      <button type="button" className="pill" aria-pressed={categoryId === mainTree.main.id}
-                        onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((s) => ({ ...s, [kind]: mainTree.main.id })); }}>全部{mainTree.main.name}</button>
-                      {mainTree.subs.map((s) => (
-                        <button type="button" key={s.id} className="pill" aria-pressed={categoryId === s.id}
-                          onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((c) => ({ ...c, [kind]: s.id })); }}><CatIcon icon={s.icon} size={14} style={{ verticalAlign: -2, marginRight: 4 }} />{s.name}</button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
+                );
+              })()}
 
               {/* 應收／應付：對象與是否動到帳戶 */}
               {loan && (

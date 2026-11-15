@@ -52,8 +52,11 @@ async function ledgerFor(t: TradeInput & { id: string }, stock: Stock) {
   let feeId: string | undefined;
   const cost = t.feeMinor + t.taxMinor;
   if (cost > 0) {
+    const feeCat = (await db.categories.where('system').equals('stock_fee').first())
+      ?? (await db.categories.get('exp-tax-stock_fee'))
+      ?? (await db.categories.get('exp-investment_exp-stock_fee'));
     const fee = await addTransaction({
-      ...base, type: 'expense', categoryId: 'exp-investment_exp-stock_fee', amountMinor: cost,
+      ...base, type: 'expense', categoryId: feeCat?.id ?? 'exp-tax-stock_fee', amountMinor: cost,
       note: `${stock.name} ${t.type === 'buy' ? '手續費' : '手續費＋證交稅'}`, excludeFromBudget: true,
     });
     feeId = fee.id;

@@ -130,4 +130,47 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     const r = await processInboxOnStartup();
     expect(r).toMatchObject({ booked: 0, pending: 1 });
   });
+
+  it('銀行／LINE 通知入帳 30,000（跨行轉入／存入／薪資入帳）保留 income 類型且避開餘額金額', async () => {
+    const { draftsFromItem } = await import('@/services/inbox');
+    const { parseContext } = await import('@/services/quickentry');
+    const ctx = await parseContext();
+    const mk = (text: string, card = '中國信託') => ({
+      id: 99, source: 'notify' as const, text, amount: '', merchant: '', card, occurred: '', created_at: '2026-11-15T10:00:00',
+    });
+
+    const d1 = await draftsFromItem(mk('中國信託：跨行轉入 NT$30,000，跨行轉帳手續費 0 元，餘額 NT$85,000'), ctx, bank);
+    expect(d1).toHaveLength(1);
+    expect(d1[0].kind).toBe('income');
+    expect(d1[0].amount).toBe(30000);
+
+    const d2 = await draftsFromItem(mk('帳戶餘額 NT$85,000，本次存入 NT$30,000', 'LINE'), ctx, bank);
+    expect(d2).toHaveLength(1);
+    expect(d2[0].kind).toBe('income');
+    expect(d2[0].amount).toBe(30000);
+
+    const d3 = await draftsFromItem(mk('國泰世華 薪資入帳 45,000 元'), ctx, bank);
+    expect(d3).toHaveLength(1);
+    expect(d3[0].kind).toBe('income');
+    expect(d3[0].amount).toBe(45000);
+
+    const d4 = await draftsFromItem(mk('全聯消費 350 元，餘額 12,000 元'), ctx, bank);
+    expect(d4).toHaveLength(1);
+    expect(d4[0].kind).toBe('expense');
+    expect(d4[0].amount).toBe(350);
+
+    const ctxWithCathay = {
+      ...ctx,
+      accounts: [{ id: bank, name: '國泰世華', currency: 'TWD', type: 'bank' as const, aliases: ['國泰'] }],
+    };
+    const d5 = await draftsFromItem(mk('跨行轉入 國泰 30,000 元'), ctxWithCathay, bank);
+    expect(d5).toHaveLength(1);
+    expect(d5[0].kind).toBe('income');
+    expect(d5[0].amount).toBe(30000);
+
+    const d6 = await draftsFromItem(mk('【玉山銀行】跨行轉入通知，餘額：85,000元，本次金額：30,000元'), ctx, bank);
+    expect(d6).toHaveLength(1);
+    expect(d6[0].kind).toBe('income');
+    expect(d6[0].amount).toBe(30000);
+  });
 });

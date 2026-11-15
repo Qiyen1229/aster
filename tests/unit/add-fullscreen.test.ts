@@ -151,4 +151,73 @@ describe('全螢幕記帳畫布（AddSheet）', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 270)); });
     expect(document.body.querySelector('.add-screen')).toBeNull();
   });
+
+  it('預設支出大類別為 10 個（5×2），選中含子項的大類後收合為單行返回列並以大格顯示子項目', async () => {
+    const { buildDefaultCategories } = await import('@/db/seed/categories');
+    const { buildTree } = await import('@/db/repo/categories');
+    const { bootstrap } = await import('@/db/bootstrap');
+
+    // 全新資料庫預設種子：10 個支出大類別
+    await db.categories.bulkAdd(buildDefaultCategories());
+    expect(buildTree(await db.categories.toArray(), 'expense')).toHaveLength(10);
+
+    // 既有使用者的舊類別（如 exp-clothing）不會被 bootstrap 刪除或覆寫
+    await db.categories.add({
+      id: 'exp-clothing', kind: 'expense', parentId: '', name: '服飾', icon: '👕', color: '#FF6482',
+      sort: 99, archived: 0, createdAt: 1, updatedAt: 1,
+    });
+    await bootstrap();
+    expect(await db.categories.get('exp-clothing')).toBeDefined();
+
+    await act(async () => {
+      useUI.getState().openAdd();
+      root.render(React.createElement(AddSheet));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+
+    const screen = document.body.querySelector<HTMLElement>('.add-screen')!;
+    // 初始顯示大類別網格（含既有舊類別共 11 個；預設新使用者為 10 個）
+    expect(screen.querySelector('.cat-grid')).not.toBeNull();
+    expect(screen.querySelector('.cat-back-bar')).toBeNull();
+    expect(screen.querySelector('.sub-grid')).toBeNull();
+
+    // 點選「飲食」（有子項目）→ 大類網格收合為單行返回列，改以 .sub-grid 大格顯示子項目
+    const foodBtn = Array.from(screen.querySelectorAll<HTMLButtonElement>('.cat-grid .cat-cell')).find((b) => b.textContent?.includes('飲食'))!;
+    await act(async () => { foodBtn.click(); });
+    expect(screen.querySelector('.cat-grid')).toBeNull();
+    const backBar = screen.querySelector<HTMLButtonElement>('.cat-back-bar')!;
+    expect(backBar).not.toBeNull();
+    expect(backBar.textContent).toContain('飲食');
+    expect(backBar.textContent).toContain('點此重選');
+    const subGrid = screen.querySelector('.sub-grid')!;
+    expect(subGrid).not.toBeNull();
+    expect(subGrid.textContent).toContain('早餐');
+    expect(subGrid.textContent).toContain('晚餐');
+
+    // 點上方單行返回列 → 展開回大類別網格重選
+    await act(async () => { backBar.click(); });
+    expect(screen.querySelector('.cat-grid')).not.toBeNull();
+    expect(screen.querySelector('.cat-back-bar')).toBeNull();
+
+    // 重新選「飲食」後切換至「收入」→ 收入尚未選過分類，應顯示收入大類別網格而非直接跳進薪資子項目
+    const foodBtn2 = Array.from(screen.querySelectorAll<HTMLButtonElement>('.cat-grid .cat-cell')).find((b) => b.textContent?.includes('飲食'))!;
+    await act(async () => { foodBtn2.click(); });
+    expect(screen.querySelector('.sub-grid')).not.toBeNull();
+    const incomeTab = Array.from(screen.querySelectorAll<HTMLButtonElement>('.add-topbar .segmented button')).find((b) => b.textContent?.includes('收入'))!;
+    await act(async () => { incomeTab.click(); });
+    expect(screen.querySelector('.cat-grid')).not.toBeNull();
+    expect(screen.querySelector('.sub-grid')).toBeNull();
+
+    // 切回「支出」→ 恢復已選中的「飲食」子項目大格
+    const expenseTab = Array.from(screen.querySelectorAll<HTMLButtonElement>('.add-topbar .segmented button')).find((b) => b.textContent?.includes('支出'))!;
+    await act(async () => { expenseTab.click(); });
+    expect(screen.querySelector('.sub-grid')).not.toBeNull();
+    await act(async () => { screen.querySelector<HTMLButtonElement>('.cat-back-bar')!.click(); });
+
+    // 點選無子項目的「其他」→ 維持大類別網格不收合
+    const otherBtn = Array.from(screen.querySelectorAll<HTMLButtonElement>('.cat-grid .cat-cell')).find((b) => b.textContent?.includes('其他'))!;
+    await act(async () => { otherBtn.click(); });
+    expect(screen.querySelector('.cat-grid')).not.toBeNull();
+    expect(screen.querySelector('.cat-back-bar')).toBeNull();
+  });
 });
