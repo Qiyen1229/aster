@@ -217,7 +217,7 @@ export async function importInvoices(list: Invoice[], opts: { defaultAccountId: 
       if (rate) fxRateDec = rate.toString();
     }
     await addTransaction({
-      type: 'expense', accountId: account.id, categoryId: sug?.categoryId ?? 'exp-other_exp', amountMinor: invTwdMinor,
+      type: 'expense', accountId: account.id, categoryId: sug?.categoryId || 'exp-other_exp', amountMinor: invTwdMinor,
       currency: 'TWD', date: inv.date, ts: new Date(`${inv.date}T${/^\d{2}:\d{2}/.test(inv.time ?? '') ? inv.time!.slice(0, 5) : '12:00'}:00`).getTime(),
       note, merchant: inv.sellerName || undefined, invoiceNo: inv.number, tagIds: sug?.tagIds ?? [],
       fxRateDec,

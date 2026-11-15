@@ -25,6 +25,16 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.43', date: '2026-11-15',
+    features: [
+      {
+        title: '首頁計算機與安全修復',
+        intro: '首頁頂部補回計算機入口，並修復負債帳戶餘額、退款入帳正負號、中文輸入法選字誤送出、載具同步與購物節通知過濾等核心問題。',
+        howto: '點擊首頁右上角計算機圖示即可使用常用折扣、稅率與 AA 分帳計算；自動記帳退款會正確增加帳戶餘額。',
+      },
+    ],
+  },
+  {
     version: '4.1.42', date: '2026-11-15',
     features: [
       {

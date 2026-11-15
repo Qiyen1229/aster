@@ -258,7 +258,7 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     const text = [it.merchant, it.text].filter(Boolean).join(' ');
     const refund = /退款|退貨|refund/i.test(`${it.text} ${it.amount}`) || /^\s*[-−]/.test(it.amount);
     drafts = [{
-      kind: refund ? 'income' : 'expense', amount: hit.value, currency: hit.currency, date, dateGiven: true,
+      kind: refund ? 'income' : 'expense', amount: Math.abs(hit.value), currency: hit.currency, date, dateGiven: true,
       accountId: undefined, note: it.merchant || it.text, raw: text,
     }];
   } else {

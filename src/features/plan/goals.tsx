@@ -14,6 +14,7 @@ import { useAccounts } from '@/app/hooks';
 import { useSettings } from '@/stores/settings';
 import { useUI, ask } from '@/stores/ui';
 import { Amount, EmptyState, SkeletonRows } from '@/ui/controls';
+import { CatIcon } from '@/ui/Icon';
 import { AmountField, CurrencyField, DateField, Ring, TextField } from '@/ui/form';
 import { Sheet } from '@/ui/Sheet';
 import { SwipeRow } from '@/ui/SwipeRow';
@@ -110,7 +111,7 @@ function GoalForm({ goal, onClose }: { goal?: Goal; onClose: () => void }) {
       <div className="section-title">連結帳戶（以餘額計入進度）</div>
       <div className="sub-row" style={{ flexWrap: 'wrap' }}>
         {accounts.list.filter((a) => !a.isLiability).map((a) => (
-          <button key={a.id} className="pill" aria-pressed={linked.includes(a.id)} onClick={() => setLinked((s) => (s.includes(a.id) ? s.filter((x) => x !== a.id) : [...s, a.id]))}>{a.icon} {a.name}</button>
+          <button key={a.id} className="pill" aria-pressed={linked.includes(a.id)} onClick={() => setLinked((s) => (s.includes(a.id) ? s.filter((x) => x !== a.id) : [...s, a.id]))}><CatIcon icon={a.icon} size={14} /> {a.name}</button>
         ))}
       </div>
       <button className="btn" onClick={() => void save()}>儲存</button>

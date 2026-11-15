@@ -27,11 +27,14 @@ MAX_TOKENS = 10
 MAX_PENDING = 500
 RETENTION = timedelta(days=30)
 
-_NOISE_RE = re.compile(
+_HARD_NOISE_RE = re.compile(
     r"驗證碼|動態密碼|安全碼|驗證密碼|\bOTP\b|登入成功|成功登入|登入通知|裝置登入|密碼變更|修改密碼"
     r"|立即登錄|登錄活動|參加抽獎|申請信貸|信貸專案|貸款試算"
-    r"|雙11|雙十一|雙12|雙十二|購物節|滿額抽|抽好禮|回饋送|限時特惠|好康優惠|專屬優惠|刷卡金回饋|行銷活動|紅利點數|折抵活動"
     r"|手續費優惠|手續費折抵|免收手續費|帳單已產|電子帳單|繳款提醒|繳費提醒|對帳單",
+    re.IGNORECASE,
+)
+_PROMO_NOISE_RE = re.compile(
+    r"雙11|雙十一|雙12|雙十二|購物節|滿額抽|抽好禮|回饋送|限時特惠|好康優惠|專屬優惠|刷卡金回饋|行銷活動|紅利點數|折抵活動",
     re.IGNORECASE,
 )
 _TX_SIGNAL_RE = re.compile(
@@ -48,11 +51,13 @@ def is_noise_notification(body: HookItem) -> bool:
     combined = f"{body.text} {body.merchant}".strip()
     if not combined:
         return True
-    if _NOISE_RE.search(combined):
+    if _HARD_NOISE_RE.search(combined):
         return True
-    if not _DIGIT_RE.search(combined) or not _TX_SIGNAL_RE.search(combined):
+    if _TX_SIGNAL_RE.search(combined) and _DIGIT_RE.search(combined):
+        return False
+    if _PROMO_NOISE_RE.search(combined):
         return True
-    return False
+    return True
 
 
 def hash_token(token: str) -> str:

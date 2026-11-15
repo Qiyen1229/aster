@@ -182,6 +182,9 @@ class AiService:
             return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
         from app.db import session_scope  # 避免循環匯入
+        row_id: int | None = None
+        row_cls = None
+        confirmed = False
         try:
             for db in session_scope():
                 user = db.get(User, user_id)
@@ -191,29 +194,38 @@ class AiService:
                     raise ServiceError(503, "伺服器尚未設定 AI 供應商")
                 ai_tasks._global_rpm_guard()  # noqa: SLF001
                 row = ai_quota.reserve(db, user.id, kind, ai_tasks.COST[kind], user.role)
-                confirmed = False
+                row_id = row.id
+                row_cls = type(row)
+            try:
+                full, provider, model, sent, buf = "", "", "", "", ""
+                for ev_kind, payload in ai_providers.stream_text(system, msg, max_tokens=ai_tasks.MAX_TOKENS[kind]):
+                    if ev_kind == "delta":
+                        buf += payload  # type: ignore[operator]
+                        shown = ai_providers.partial_json_string(ai_providers.visible_text(buf), partial_key)
+                        if len(shown) > len(sent) and shown.startswith(sent):
+                            yield ev("delta", {"t": shown[len(sent):]})
+                            sent = shown
+                    else:
+                        full, provider, model = payload  # type: ignore[misc]
                 try:
-                    full, provider, model, sent, buf = "", "", "", "", ""
-                    for ev_kind, payload in ai_providers.stream_text(system, msg, max_tokens=ai_tasks.MAX_TOKENS[kind]):
-                        if ev_kind == "delta":
-                            buf += payload  # type: ignore[operator]
-                            shown = ai_providers.partial_json_string(ai_providers.visible_text(buf), partial_key)
-                            if len(shown) > len(sent) and shown.startswith(sent):
-                                yield ev("delta", {"t": shown[len(sent):]})
-                                sent = shown
-                        else:
-                            full, provider, model = payload  # type: ignore[misc]
-                    try:
-                        result = validate(ai_providers.extract_json(ai_providers.clean_content(full)))
-                    except (ValueError, TypeError, KeyError):
-                        raise ServiceError(422, fail_message) from None
-                    ai_quota.confirm(db, row, provider, model)
+                    result = validate(ai_providers.extract_json(ai_providers.clean_content(full)))
+                except (ValueError, TypeError, KeyError):
+                    raise ServiceError(422, fail_message) from None
+                for db in session_scope():
+                    user = db.get(User, user_id)
+                    row = db.get(row_cls, row_id) if row_cls and row_id is not None else None
+                    if row is not None:
+                        ai_quota.confirm(db, row, provider, model)
                     confirmed = True
-                    log.info("AI %s(stream) user_id=%s provider=%s", kind, user.id, provider)
-                    yield ev("done", {**result, "quota": AiService(db)._quota(user).model_dump(mode="json")})  # noqa: SLF001
-                finally:
-                    if not confirmed:  # 失敗、中斷（含使用者關掉）：不扣額度
-                        ai_quota.release(db, row)
+                    quota_payload = AiService(db)._quota(user).model_dump(mode="json") if user else {}  # noqa: SLF001
+                log.info("AI %s(stream) user_id=%s provider=%s", kind, user_id, provider)
+                yield ev("done", {**result, "quota": quota_payload})
+            finally:
+                if not confirmed and row_cls and row_id is not None:  # 失敗、中斷（含使用者關掉）：不扣額度
+                    for db in session_scope():
+                        row = db.get(row_cls, row_id)
+                        if row is not None:
+                            ai_quota.release(db, row)
         except ServiceError as e:
             yield ev("error", {"status": e.status_code, "detail": e.message})
         except ValueError:

@@ -135,11 +135,17 @@ function Inner({ onClose, account }: { onClose: () => void; account?: Account })
           </select>
         </div>
         <div className="field">
-          <label htmlFor="acc-init">{isLiability ? '目前欠款' : '期初餘額'}</label>
-          <input id="acc-init" inputMode="decimal" value={initial} onChange={(e) => setInitial(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0" />
+          <label htmlFor="acc-init">{isLiability ? '期初欠款' : '期初餘額'}</label>
+          <input id="acc-init" inputMode="decimal" value={initial} disabled={!!account}
+            onChange={(e) => setInitial(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0" />
           <span className="muted">{currencyInfo(currency).symbol}</span>
         </div>
-        {!isLiability && (
+        {account && (
+          <p className="muted" style={{ fontSize: '0.78rem', margin: '4px 12px 8px' }}>
+            開戶基準金額不可直接修改；若要調整目前{isLiability ? '欠款' : '餘額'}，請在帳戶明細使用「校正餘額」。
+          </p>
+        )}
+        {!isLiability && !account && (
           <div className="field"><span className="label" style={{ flex: 1 }}>期初為負數（透支）</span><Switch checked={initialNegative} onChange={setInitialNegative} label="期初為負數" /></div>
         )}
         <div className="field"><span className="label" style={{ flex: 1 }}>計入淨資產</span><Switch checked={include} onChange={setInclude} label="計入淨資產" /></div>

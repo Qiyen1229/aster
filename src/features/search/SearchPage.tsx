@@ -15,7 +15,7 @@ import { describeTerm, parseSearch, preferPlainSearch } from '@/domain/search';
 import { todayKey } from '@/domain/period';
 import { searchLedger } from '@/services/search';
 import { useSettings } from '@/stores/settings';
-import { Icon } from '@/ui/Icon';
+import { CatIcon, Icon } from '@/ui/Icon';
 import { EmptyState, SkeletonRows } from '@/ui/controls';
 import { LedgerRow } from '../ledger/LedgerRow';
 import { isQuestion, rangeText } from '@/domain/nlquery';
@@ -103,7 +103,7 @@ export default function SearchPage() {
               <span className="chip">{answer.query.kind === 'income' ? '收入' : '支出'}</span>
               {answer.query.categoryLabel && <span className="chip">{answer.query.categoryLabel}</span>}
               {answer.query.keyword && <span className="chip">{answer.query.keyword}</span>}
-              {answer.query.accountIds.map((id) => <span key={id} className="chip">{accounts.map.get(id)?.icon} {accounts.map.get(id)?.name}</span>)}
+              {answer.query.accountIds.map((id) => <span key={id} className="chip"><CatIcon icon={accounts.map.get(id)?.icon} size={14} /> {accounts.map.get(id)?.name}</span>)}
             </div>
           </section>
           <div className="section-title">符合的帳目（{answer.items.length}）</div>
@@ -124,7 +124,7 @@ export default function SearchPage() {
               <div className="list">
                 {matchedAccounts.map((a) => (
                   <button key={a.id} className="row" onClick={() => navigate(`/accounts/${a.id}`)}>
-                    <span aria-hidden="true">{a.icon}</span><span className="row-main">{a.name}</span><Icon name="chevronR" className="row-chev" />
+                    <span aria-hidden="true"><CatIcon icon={a.icon} size={16} /></span><span className="row-main">{a.name}</span><Icon name="chevronR" className="row-chev" />
                   </button>
                 ))}
               </div>

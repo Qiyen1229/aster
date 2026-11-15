@@ -115,7 +115,13 @@ export function VoiceSheet() {
             placeholder="例如：今天早餐蛋餅 60，午餐 120 刷玉山卡"
             onFocus={() => { if (listening) toKeyboard(); }}
             onChange={(e) => setVoiceText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submitVoice(); } }} />
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                e.preventDefault();
+                void submitVoice();
+              }
+            }} />
           <button className="icon-btn voice-kb" onClick={toKeyboard} aria-label="用鍵盤修改" aria-pressed={keyboard}><Icon name="keyboard" /></button>
         </div>
         {hint && <p className="quick-hint" role="alert">{hint}</p>}

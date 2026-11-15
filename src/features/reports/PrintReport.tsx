@@ -12,7 +12,7 @@ import { formatMoney } from '@/domain/money';
 import { statAmount } from '@/domain/ledger';
 import { useAccounts, useCategories } from '@/app/hooks';
 import { useSettings } from '@/stores/settings';
-import { Icon } from '@/ui/Icon';
+import { CatIcon, Icon } from '@/ui/Icon';
 
 export default function PrintReport() {
   const [p] = useSearchParams();
@@ -52,7 +52,7 @@ export default function PrintReport() {
       <div className="no-print" style={{ marginBottom: 16 }}>
         <div className="section-title">要印哪些帳戶（不選＝全部）</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {accounts.list.map((ac) => <button key={ac.id} className="pill" aria-pressed={accSel.includes(ac.id)} onClick={() => toggle(setAccSel, ac.id)}>{ac.icon} {ac.name}</button>)}
+          {accounts.list.map((ac) => <button key={ac.id} className="pill" aria-pressed={accSel.includes(ac.id)} onClick={() => toggle(setAccSel, ac.id)}><CatIcon icon={ac.icon} size={14} /> {ac.name}</button>)}
         </div>
         {usedCurrencies.length > 1 && (
           <>

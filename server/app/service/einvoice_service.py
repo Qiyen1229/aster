@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 import uuid as uuidlib
 from calendar import monthrange
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -128,14 +129,17 @@ class EinvoiceService:
         # 分頁或跨月重複出現的同一張發票只留一筆
         seen: set[str] = set()
         out = [i for i in out if i.number and not (i.number in seen or seen.add(i.number))]
-        if q.details:
-            for inv in out[:MAX_DETAILS]:
+        if q.details and out:
+            def _fetch_detail(inv: CarrierInvoice) -> None:
                 resp = _post({**_common(q, device), "version": "0.5", "action": "carrierInvDetail", "invNum": inv.number,
                               "invDate": inv.date.replace("-", "/"), "sellerName": inv.seller_name, "amount": str(int(inv.amount))})
                 if str(resp.get("code")) != "200":
-                    continue  # 明細失敗不影響表頭
+                    return  # 明細失敗不影響表頭
                 inv.items = [CarrierItem(name=str(i.get("description", "")), quantity=str(i.get("quantity", "")),
                                          unit_price=str(i.get("unitPrice", "")), amount=str(i.get("amount", "")))
                              for i in resp.get("details") or []]
+
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                list(pool.map(_fetch_detail, out[:MAX_DETAILS]))
         log.info("載具發票查詢 user_id=%s 筆數=%s", user_id, len(out))
         return CarrierResult(invoices=out)

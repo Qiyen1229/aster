@@ -169,7 +169,7 @@ class SyncService:
         if 0 < since < self.repo.purged_seq(user.id):
             return SyncPullResponse(changes=[], cursor=since, has_more=False, reset=True)
         rows = self.repo.changes_since(user.id, since, limit)
-        cursor = int(rows[-1].seq) if rows else max(since, 0)
+        cursor = int(rows[-1].seq) if rows else max(since, self.repo.last_seq(user.id), self.repo.purged_seq(user.id))
         # 自己上傳的版本本機已有，不必再下載
         changes = [_to_change(r) for r in rows if not device_id or r.device_id != device_id]
         return SyncPullResponse(changes=changes, cursor=cursor, has_more=len(rows) == limit)

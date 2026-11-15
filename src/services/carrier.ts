@@ -38,7 +38,7 @@ export async function carrierServerStatus(): Promise<{ configured: boolean; mess
 export async function fetchCarrierInvoices(start: string, end: string): Promise<Invoice[]> {
   const { cardNo, verifyCode } = useSettings.getState().einvoice;
   const r = await api<{ invoices: ServerInvoice[] }>('/einvoice/carrier', {
-    method: 'POST', body: { card_no: cardNo, verify_code: verifyCode, start, end, details: true },
+    method: 'POST', body: { card_no: cardNo, verify_code: verifyCode, start, end, details: true }, timeoutMs: 60_000,
   });
   return r.invoices.map((i) => ({
     number: i.number, date: i.date, time: i.time, amount: i.amount, sellerId: i.seller_ban, sellerName: i.seller_name, status: i.status || '開立',

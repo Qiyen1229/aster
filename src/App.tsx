@@ -8,7 +8,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate, useSearchParams } fr
 import { TabBar } from './app/TabBar';
 import { SideNav } from './app/SideNav';
 import { useMediaQuery } from './app/hooks';
-import { ActionSheetHost, OrientationGuard, PrivacyShield, SnackbarHost, UpdatePrompt } from './app/overlays';
+import { ActionSheetHost, PrivacyShield, SnackbarHost, UpdatePrompt } from './app/overlays';
 import { WhatsNewHost } from './features/whatsnew/WhatsNew';
 import HomePage from './features/home/HomePage';
 import { TravelScenery } from './features/home/TravelScenery';
@@ -359,7 +359,6 @@ export default function App() {
       </>)}
       <PrivacyShield />
       <LockScreen />
-      <OrientationGuard />
     </div>
   );
 }

@@ -908,7 +908,13 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input className="input" placeholder={mode === 'transfer' ? '備註（例如：提款）' : loan ? '備註（例如：代墊車資）' : '備註、店家…'} value={note}
                   onChange={(e) => setNote(e.target.value)} maxLength={200} aria-label="備註"
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void submit(); } }} />
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                      e.preventDefault();
+                      void submit();
+                    }
+                  }} />
                 {autoCat && catByKind[kind] === autoCat.categoryId && (
                   <button type="button" className="autocat-chip" role="status"
                     aria-label={`已自動分類為「${catMap.get(autoCat.categoryId)?.name}」${autoCat.source === 'rule' ? '（規則）' : '（依過去記帳）'}，點擊還原`}
@@ -939,7 +945,12 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
               <div className="add-advanced-dock" role="region" aria-label="進階選項">
                 <div className="add-adv-head">
                   <h3>進階選項</h3>
-                  <button type="button" className="add-adv-close" onClick={() => setMoreOpen(false)}>收起</button>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button type="button" className="add-adv-close" onClick={() => setMoreOpen(false)}>收起</button>
+                    <button type="button" className="pill accent-pill" onClick={() => void submit()} disabled={busy || !loaded}>
+                      {editing ? '儲存' : '完成'}
+                    </button>
+                  </div>
                 </div>
                 <div className="add-adv-list">
                   <button type="button" className="add-adv-row" onClick={() => setPicker('tags')}>

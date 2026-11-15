@@ -101,7 +101,12 @@ export default function InboxWhitelistPage() {
             aria-label="發送者名稱"
             style={{ flex: 1 }}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                add();
+              }
+            }}
           />
           <button className="pill accent-pill" disabled={!name.trim()} onClick={add}>加入</button>
         </div>

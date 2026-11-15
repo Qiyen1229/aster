@@ -212,4 +212,17 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     expect(drafts2[0].note).toBe('每日咖啡');
     expect(drafts2[0].categoryId).toBe('exp-other_exp');
   });
+
+  it('Apple Pay 負數退款通知：kind 為 income 且金額保持正數，不倒扣餘額', async () => {
+    const { draftsFromItem } = await import('@/services/inbox');
+    const { parseContext } = await import('@/services/quickentry');
+    const ctx = await parseContext();
+    const refundItem: InboxRaw = {
+      id: 12, source: 'applepay', text: 'Apple Store 退款', amount: '-120', merchant: 'Apple Store', card: '中信卡', occurred: '', created_at: new Date().toISOString(),
+    };
+    const drafts = await draftsFromItem(refundItem, ctx, bank);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].kind).toBe('income');
+    expect(drafts[0].amount).toBe(120);
+  });
 });

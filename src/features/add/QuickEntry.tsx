@@ -112,7 +112,13 @@ export function QuickEntry({ initialText, accMap, catMap, onApply, onBooked }: {
         <textarea ref={inputRef} rows={2} value={text} maxLength={300} enterKeyHint="done" aria-label="一句話記帳"
           placeholder="說一句話或打字，例如：昨天午餐麥當勞 150 刷玉山卡"
           onChange={(e) => { setText(e.target.value); setHint(''); }}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void run(); } }} />
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+              e.preventDefault();
+              void run();
+            }
+          }} />
         <div className="quick-actions">
           {SR && (
             <button className="icon-btn" onClick={listen} aria-label="用說的" aria-pressed={listening}

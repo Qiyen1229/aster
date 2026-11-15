@@ -27,6 +27,7 @@ export function Keypad({ onKey, onSubmit, submitLabel, disabled }: Props) {
     const onKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) return;
+      if (e.isComposing || e.keyCode === 229) return;
       const map: Record<string, string> = { '*': '×', '/': '÷', '-': '−', Backspace: '⌫', Escape: '', Delete: 'C' };
       if (/^[0-9.+]$/.test(e.key)) onKey(e.key);
       else if (map[e.key]) onKey(map[e.key]);

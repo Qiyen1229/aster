@@ -27,6 +27,7 @@ import { HomeHero } from './HomeHero';
 import { TravelHero } from './TravelHero';
 import { TravelTimeline } from './TravelTimeline';
 import { RemindersSheet, useUnreadCount } from './RemindersSheet';
+import { CalculatorSheet } from './CalculatorSheet';
 import { useInboxCount } from '@/services/inboxCount';
 import { syncNow } from '@/services/sync';
 import { refreshRates } from '@/services/fx';
@@ -59,6 +60,7 @@ export default function HomePage() {
   const effectiveCalendarMode = travelProject ? 'ledger' : calendarMode;
   const [monthOpen, setMonthOpen] = useState(false);
   const [remindersOpen, setRemindersOpen] = useState(false);
+  const [calcOpen, setCalcOpen] = useState(false);
   const [voicePressing, setVoicePressing] = useState(false);
   const voiceDownAt = useRef(0);
   const unread = useUnreadCount() + useInboxCount((x) => x.n + x.extra);
@@ -334,6 +336,9 @@ export default function HomePage() {
               今天
             </button>
           )}
+          <button className="icon-btn" aria-label="計算機" onClick={() => { haptic('selection'); setCalcOpen(true); }}>
+            <Icon name="calculator" />
+          </button>
           <button className="icon-btn" aria-label="搜尋" onClick={() => { haptic('selection'); navigate('/search'); }}>
             <Icon name="search" />
           </button>
@@ -591,6 +596,7 @@ export default function HomePage() {
 
       <MonthPicker open={monthOpen} onClose={() => setMonthOpen(false)} year={year} month0={month0} onPick={goMonth} />
       <RemindersSheet open={remindersOpen} onClose={() => setRemindersOpen(false)} />
+      <CalculatorSheet open={calcOpen} onClose={() => setCalcOpen(false)} />
     </main>
   );
 }
