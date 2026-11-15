@@ -1,12 +1,14 @@
 /**
- * 記帳面板（Bottom Sheet）：支出／收入／轉帳／應收／應付／餘額調整。
+ * 記帳畫布（全螢幕 100dvh）：支出／收入／轉帳／應收／應付／餘額調整。
+ * - 從底部靈動島「＋」位置平滑展開淡入全螢幕，關閉時平滑收合回去
  * - 自訂計算機鍵盤（四則運算，decimal 精確計算）
  * - 兩層分類、帳戶、日期時間、備註（語音輸入）、標籤、專案、收據照片、外幣與匯率
  * - 再記一筆（連續模式）、常用範本、複製上一筆
  * - 新增與編輯共用；儲存後提供「復原」
  * - 自動分類：輸入備註時依「自動分類規則」與過去的記帳（商家記憶）帶入分類；手動選過分類就不再自動改
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
 import type { Attachment } from '@/db/types';
@@ -25,7 +27,7 @@ import { useSettings } from '@/stores/settings';
 import { askConfirm, snackUndo, useUI, type AddMode } from '@/stores/ui';
 import { confirmDeleteById } from '../ledger/deleteGuard';
 import { Sheet } from '@/ui/Sheet';
-import { Segmented, Switch } from '@/ui/controls';
+import { EmptyState, Segmented, Switch } from '@/ui/controls';
 import { CatIcon, Icon } from '@/ui/Icon';
 import { Keypad } from './Keypad';
 import { AccountPicker, CurrencyPicker, DurablePicker, ProjectPicker, TagPicker } from './pickers';
@@ -50,6 +52,7 @@ const MODES: { value: AddMode | 'loan'; label: string }[] = [
 ];
 
 const isLoanMode = (m: AddMode): m is 'receivable' | 'payable' => m === 'receivable' || m === 'payable';
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 type Picker = null | 'account' | 'toAccount' | 'currency' | 'tags' | 'project' | 'photo' | 'split' | 'durable';
 
@@ -112,11 +115,64 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   const [viewer, setViewer] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [mounted, setMounted] = useState(open);
+  const [phase, setPhase] = useState<'entering' | 'open' | 'closing'>(open ? 'entering' : 'closing');
+  const [origin, setOrigin] = useState<{ x: string; y: string } | null>(null);
+  const screenRef = useRef<HTMLDivElement>(null);
+  const requestCloseRef = useRef<() => void>(() => {});
   /** 使用者是否已手動選過分類（是的話不再自動分類） */
   const catTouched = useRef(!!prefill?.categoryId);
   const [autoCat, setAutoCat] = useState<(CategorySuggestion & { prev: string }) | null>(null);
   const saved = useRef(false);
   const subRowRef = useRef<HTMLDivElement>(null);
+
+  useIsomorphicLayoutEffect(() => {
+    if (!open) return;
+    const fab = document.querySelector<HTMLElement>('.dynamic-fab');
+    if (fab) {
+      const r = fab.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        setOrigin({ x: `${Math.round(r.left + r.width / 2)}px`, y: `${Math.round(r.top + r.height / 2)}px` });
+        return;
+      }
+    }
+    setOrigin(null);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      setPhase('entering');
+      let raf2 = 0;
+      const raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => setPhase('open'));
+      });
+      return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
+    } else if (mounted) {
+      setPhase('closing');
+      const t = window.setTimeout(() => setMounted(false), 240);
+      return () => window.clearTimeout(t);
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!mounted || !open) return;
+    const prevFocus = document.activeElement as HTMLElement | null;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !document.querySelector('.sheet, .dlg-wrap')) {
+        e.preventDefault();
+        requestCloseRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    const t = window.setTimeout(() => screenRef.current?.focus({ preventScroll: true }), 50);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.clearTimeout(t);
+      if (prevFocus?.isConnected) prevFocus.focus({ preventScroll: true });
+    };
+  }, [mounted, open]);
 
   const kind = mode === 'income' ? 'income' : 'expense';
   const tree = useMemo(() => buildTree(allCats, kind), [allCats, kind]);
@@ -258,6 +314,17 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   });
   const handleClose = () => {
     if (!saved.current) void discardAttachments(atts.filter((a) => a.fresh).map((a) => a.id));
+    onClose();
+  };
+  const requestClose = () => {
+    void Promise.resolve(confirmClose()).then((ok) => { if (ok) handleClose(); });
+  };
+  requestCloseRef.current = requestClose;
+  const handleDelete = async () => {
+    if (!(await confirmDeleteById(editTxId ? 'tx' : 'transfer', (editTxId ?? editTransferId)!))) return;
+    if (editTxId) void deleteTransactions([editTxId]).then(() => snackUndo('已刪除', () => restoreTransactions([editTxId])));
+    if (editTransferId) void deleteTransfers([editTransferId]).then(() => snackUndo('已刪除轉帳', () => restoreTransfers([editTransferId])));
+    saved.current = true;
     onClose();
   };
 
@@ -549,316 +616,408 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   const adjustDiff = mode === 'adjust' && account && value ? toMinor(value, account.currency) - adjustBaseline(account) : null;
 
   const title = editing ? '編輯' : '記一筆';
-  const right = !editing && mode !== 'adjust' ? (
-    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-      {pinType && (
-        <button className={`pin-btn${curPin && !pinChanged ? ' on' : ''}`} onClick={() => void doPin()}
-          aria-pressed={!!curPin && !pinChanged} aria-label={curPin ? (pinChanged ? '更新釘選的內容' : '取消釘選這一筆') : '釘選這一筆（之後一點就能套用）'}>
-          <Icon name="pin" size={20} />
-        </button>
-      )}
-      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem' }} className="muted">
-        再記一筆<Switch checked={settings.continuousAdd} onChange={(v) => settings.set('continuousAdd', v)} label="再記一筆模式" />
-      </label>
-    </span>
-  ) : undefined;
+  const advCount =
+    (tagIds.length > 0 ? 1 : 0) +
+    (projectId ? 1 : 0) +
+    (mode === 'expense' && durableYears > 0 ? 1 : 0) +
+    (mode === 'expense' && skipBudget ? 1 : 0) +
+    (mode === 'expense' && !editing && split.people.length > 0 ? 1 : 0) +
+    (atts.length > 0 ? 1 : 0);
+  const showAdvanced = moreOpen && (mode === 'expense' || mode === 'income');
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <>
-      <Sheet open={open} onClose={handleClose} title={title} right={right} full confirmClose={confirmClose}>
-        {/* 上半部可捲動、數字鍵盤固定在下方：內容永遠停在鍵盤上緣，不會被鍵盤蓋住 */}
-        <div className="add-layout">
-          <div className="add-scroll">
-          {!editing && prefill?.quickText && (
-            <QuickEntry initialText={prefill?.quickText} accMap={accMap} catMap={catMap} onApply={applyDraft}
-              onBooked={() => {
-                saved.current = true;
-                if (prefill?.inboxId) void import('@/services/inbox').then((m) => m.finishInboxItem(prefill.inboxId!, {})).catch(() => undefined);
-                onClose();
-              }} />
-          )}
-          {!editTransferId && !(editTxId && mode === 'adjust') && (
-            <>
-              <Segmented value={isLoanMode(mode) ? 'loan' : mode} onChange={(m) => {
-                const next = (m === 'loan' ? 'receivable' : m) as AddMode;
-                setMode(next);
-                if (next === 'adjust') setExpr('');
-                if (next === 'expense' || next === 'income') { const c = catMap.get(catByKind[next]); setMainOpen(c?.parentId || c?.id || ''); }
-              }}
-                options={editing ? MODES.filter((m) => m.value === 'expense' || m.value === 'income') : mode === 'adjust' ? [...MODES, { value: 'adjust', label: '調整' }] : MODES} ariaLabel="記帳類型" />
-              {isLoanMode(mode) && !editing && (
-                <div style={{ marginTop: 10 }}>
+      <div
+        ref={screenRef}
+        className={`add-screen${phase === 'open' ? ' open' : phase === 'closing' ? ' closing' : ''}`}
+        style={origin ? { ['--add-ox' as string]: origin.x, ['--add-oy' as string]: origin.y } : undefined}
+        role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
+        aria-label={title}
+      >
+        <div className="add-shell">
+          {/* 精簡頂列：左側關閉、中間緊湊類型切換（或編輯標題）、右側 ⚡ 常用／釘選或刪除 */}
+          <header className="add-topbar">
+            <button type="button" className="add-top-btn" onClick={requestClose} aria-label="關閉">
+              <Icon name="close" size={19} />
+            </button>
+
+            {!editTransferId && !(editTxId && mode === 'adjust') ? (
+              <Segmented
+                value={isLoanMode(mode) ? 'loan' : mode}
+                onChange={(m) => {
+                  const next = (m === 'loan' ? 'receivable' : m) as AddMode;
+                  setMode(next);
+                  if (next === 'adjust') setExpr('');
+                  if (next !== 'expense' && next !== 'income') setMoreOpen(false);
+                  if (next === 'expense' || next === 'income') {
+                    const c = catMap.get(catByKind[next]);
+                    setMainOpen(c?.parentId || c?.id || '');
+                  }
+                }}
+                options={editing ? MODES.filter((m) => m.value === 'expense' || m.value === 'income') : mode === 'adjust' ? [...MODES, { value: 'adjust', label: '調整' }] : MODES}
+                ariaLabel="記帳類型"
+              />
+            ) : (
+              <h2 className="add-top-title">{editTransferId ? '編輯轉帳' : '編輯餘額調整'}</h2>
+            )}
+
+            {editing ? (
+              <button type="button" className="add-top-btn danger" onClick={() => void handleDelete()} aria-label="刪除">
+                <Icon name="trash" size={18} />
+              </button>
+            ) : (mode === 'expense' || mode === 'income') ? (
+              <LongPressButton
+                className={`add-top-btn${pins.length > 0 || curPin ? ' on' : ''}`}
+                onClick={() => setQuickOpen(true)}
+                onLongPress={() => setQuickOpen(true)}
+                aria-label="常用與釘選"
+              >
+                <Icon name="zap" size={18} />
+              </LongPressButton>
+            ) : (
+              <span aria-hidden="true" />
+            )}
+          </header>
+
+          {/* 上半部可捲動、下半部為數字鍵盤或進階選項列表 */}
+          <div className="add-layout">
+            <div className="add-scroll">
+              {!editing && prefill?.quickText && (
+                <QuickEntry initialText={prefill?.quickText} accMap={accMap} catMap={catMap} onApply={applyDraft}
+                  onBooked={() => {
+                    saved.current = true;
+                    if (prefill?.inboxId) void import('@/services/inbox').then((m) => m.finishInboxItem(prefill.inboxId!, {})).catch(() => undefined);
+                    onClose();
+                  }} />
+              )}
+              {!editTransferId && !(editTxId && mode === 'adjust') && isLoanMode(mode) && !editing && (
+                <div style={{ marginBottom: 6 }}>
                   <Segmented value={mode} onChange={(m) => setMode(m as AddMode)} ariaLabel="借貸方向"
                     options={[{ value: 'receivable', label: '借出（誰欠你）' }, { value: 'payable', label: '借入（你欠誰）' }]} />
                 </div>
               )}
-            </>
-          )}
 
-          {/* 金額 */}
-          <div className="add-amount">
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {mode === 'adjust' ? (
-                <span className="muted" style={{ fontSize: '0.8rem' }}>調整後餘額</span>
-              ) : mode === 'transfer' ? (
-                <span className="muted" style={{ fontSize: '0.8rem' }}>轉出金額 {account?.currency}</span>
-              ) : loan && loanViaAccount ? (
-                <span className="muted" style={{ fontSize: '0.8rem' }}>{mode === 'receivable' ? '借出金額' : '借入金額'} {txCurrency}</span>
-              ) : (
-                <button className="cur-btn" onClick={() => setPicker('currency')} aria-label={`幣別 ${txCurrency}`}>{txCurrency} ▾</button>
-              )}
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <div className="expr num" aria-hidden="true">{hasOperator(expr) ? expr : ''}</div>
-              <div className="value num" style={{ color: amountColor }} aria-live="polite">
-                {currencyInfo(mode === 'transfer' || mode === 'adjust' ? account?.currency ?? txCurrency : txCurrency).symbol}{display}
-              </div>
-            </div>
-          </div>
-
-          {/* 常用與釘選：放在金額下面、分類上面（不用捲動就看得到，一點就帶入金額、分類、帳戶） */}
-          {(() => {
-            // 已經選好、且金額也填了的那筆就不必再列出
-            const list = noteSugs.filter((x) => !(expr && x.note.toLowerCase() === note.trim().toLowerCase()));
-            if ((mode !== 'expense' && mode !== 'income') || editing || !list.length) return null;
-            return (
-              <div className="sub-row note-sugs" aria-label={note.trim() ? '相似的過去備註' : '最近常記與釘選'}>
-                {list.map((x) => {
-                  const c = catMap.get(x.categoryId);
-                  return (
-                    <SugChip key={`${x.pinnedId ?? 'r'}:${x.note}`} onLongPress={() => sugActions(x)} onPick={() => applyNoteSuggestion(x)}
-                      label={`${x.pinnedId ? '釘選的 ' : ''}${x.note}，${formatMoney(x.amountMinor, x.currency)}，${c?.name ?? ''}`}>
-                      <span aria-hidden="true">{x.pinnedId ? '📌' : c?.icon ?? '🕘'}</span> {x.note} <span className="faint num">{formatMoney(x.amountMinor, x.currency)}</span>
-                    </SugChip>
-                  );
-                })}
-              </div>
-            );
-          })()}
-
-          {adjustDiff !== null && (
-            <p className="muted" style={{ margin: '-6px 4px 8px', fontSize: '0.8rem', textAlign: 'right' }}>
-              {editTxId ? '調整前餘額' : '目前餘額'} {formatMoney(adjustBaseline(account!), account!.currency)} → 差額{' '}
-              <b className={adjustDiff >= 0 ? 'pos' : 'neg'}>{formatMoney(adjustDiff, account!.currency, { sign: 'always' })}</b>
-            </p>
-          )}
-
-          {/* 外幣匯率 */}
-          {needRate && mode !== 'adjust' && (
-            <div className="list" style={{ marginBottom: 8 }}>
-              <div className="field">
-                <span className="label">匯率</span>
-                <span className="muted num" style={{ fontSize: '0.85rem' }}>1 {rateFrom} =</span>
-                <input inputMode="decimal" value={fxRate} onChange={(e) => setFxRate(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="匯率" placeholder="取得中…" />
-                <span className="muted num">{rateTo}</span>
-              </div>
-              {mode === 'transfer' ? (
-                <div className="field">
-                  <span className="label">轉入金額</span>
-                  <input inputMode="decimal" value={toAmount !== null ? toAmount : computedToAmount} onChange={(e) => setToAmount(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="轉入金額" />
-                  <span className="muted num">{rateTo}</span>
+              {/* 金額（展開進階選項時，點擊金額區可立刻叫回數字鍵盤） */}
+              <div className="add-amount" onClick={() => { if (moreOpen) setMoreOpen(false); }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {mode === 'adjust' ? (
+                    <span className="muted" style={{ fontSize: '0.8rem' }}>調整後餘額</span>
+                  ) : mode === 'transfer' ? (
+                    <span className="muted" style={{ fontSize: '0.8rem' }}>轉出金額 {account?.currency}</span>
+                  ) : loan && loanViaAccount ? (
+                    <span className="muted" style={{ fontSize: '0.8rem' }}>{mode === 'receivable' ? '借出金額' : '借入金額'} {txCurrency}</span>
+                  ) : (
+                    <button type="button" className="cur-btn" onClick={(e) => { e.stopPropagation(); setPicker('currency'); }} aria-label={`幣別 ${txCurrency}`}>{txCurrency} ▾</button>
+                  )}
                 </div>
-              ) : value && fxRate && account ? (
-                <div className="field">
-                  <span className="label">入帳金額</span>
-                  <span className="row-main num" style={{ textAlign: 'right' }}>
-                    {(() => { try { return formatMoney(convertMinor(amountMinor, txCurrency, account.currency, fxRate), account.currency); } catch { return '—'; } })()}
-                  </span>
-                </div>
-              ) : null}
-            </div>
-          )}
-
-          {/* 分類 */}
-          {(mode === 'expense' || mode === 'income') && (
-            <>
-              <div className="cat-grid" role="radiogroup" aria-label="分類">
-                {tree.map(({ main }) => {
-                  const active = selCat ? (selCat.id === main.id || selCat.parentId === main.id) : false;
-                  return (
-                    <button key={main.id} className="cat-cell" role="radio" aria-checked={active} aria-pressed={active}
-                      onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((s) => ({ ...s, [kind]: main.id })); setMainOpen(main.id); }}>
-                      <span className="cat-icon sm" style={{ ['--c' as string]: main.color }}><CatIcon icon={main.icon} size={16} /></span>
-                      {main.name}
-                    </button>
-                  );
-                })}
-              </div>
-              {mainTree && mainTree.subs.length > 0 && (
-                <div className="sub-row" role="radiogroup" aria-label="子分類" ref={subRowRef}>
-                  <button className="pill" aria-pressed={categoryId === mainTree.main.id}
-                    onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((s) => ({ ...s, [kind]: mainTree.main.id })); }}>全部{mainTree.main.name}</button>
-                  {mainTree.subs.map((s) => (
-                    <button key={s.id} className="pill" aria-pressed={categoryId === s.id}
-                      onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((c) => ({ ...c, [kind]: s.id })); }}><CatIcon icon={s.icon} size={14} style={{ verticalAlign: -2, marginRight: 4 }} />{s.name}</button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* 應收／應付：對象與是否動到帳戶 */}
-          {loan && (
-            <div style={{ marginBottom: 8 }}>
-              <div className="list" style={{ marginBottom: 8 }}>
-                <div className="field">
-                  <span className="label">{mode === 'receivable' ? '誰欠你' : '你欠誰'}</span>
-                  <input value={personName} onChange={(e) => setPersonName(e.target.value)} placeholder="名字" maxLength={30}
-                    aria-label={mode === 'receivable' ? '欠款人' : '債權人'} />
-                </div>
-                <label className="field" style={{ cursor: 'pointer' }}>
-                  <span className="row-main">{mode === 'receivable' ? '從帳戶借出（帳戶扣款）' : '存入帳戶（帳戶入帳）'}</span>
-                  <Switch checked={loanViaAccount} onChange={setLoanViaAccount} label={mode === 'receivable' ? '從帳戶借出' : '存入帳戶'} />
-                </label>
-              </div>
-              {people.length > 0 && (
-                <div className="sub-row" aria-label="常用對象">
-                  {people.map((p) => (
-                    <button key={p.id} className="pill" aria-pressed={personName.trim() === p.name} onClick={() => setPersonName(p.name)}>{p.name}</button>
-                  ))}
-                </div>
-              )}
-              <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 4px 0' }}>
-                {loanViaAccount
-                  ? '借出／借入不算支出或收入，不影響收支統計與預算；收回或還款時到「專案 → 應收應付」結清。'
-                  : '只記錄欠款、不動帳戶餘額；之後到「專案 → 應收應付」結清時再記入帳戶。'}
-              </p>
-            </div>
-          )}
-
-          {/* 屬性列 */}
-          <div className="meta-row">
-            {!(loan && !loanViaAccount) && (
-              <button className="pill" onClick={() => setPicker('account')}>
-                {account ? <><CatIcon icon={account.icon} size={15} style={{ verticalAlign: -2, marginRight: 4 }} />{account.name}</> : '選擇帳戶'}
-              </button>
-            )}
-            {mode === 'transfer' && (
-              <>
-                <span className="muted" style={{ alignSelf: 'center' }}>→</span>
-                <button className="pill" onClick={() => setPicker('toAccount')} aria-pressed={!toAccount}>
-                  {toAccount ? <><CatIcon icon={toAccount.icon} size={15} style={{ verticalAlign: -2, marginRight: 4 }} />{toAccount.name}</> : '轉入帳戶'}
-                </button>
-              </>
-            )}
-            <span className="pill" style={{ position: 'relative' }}>
-              <Icon name="calendar" size={16} /> {dateLabel}
-              <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="日期"
-                style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%' }} />
-            </span>
-            <span className="pill num" style={{ position: 'relative' }}>
-              <Icon name="clock" size={16} /> {time}
-              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="時間"
-                style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%' }} />
-            </span>
-            {mode === 'transfer' && (
-              <span className="pill">
-                手續費
-                <input inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value.replace(/[^0-9.]/g, ''))}
-                  placeholder="0" aria-label="轉帳手續費" style={{ width: 56, border: 0, background: 'transparent', outline: 'none' }} />
-              </span>
-            )}
-            {editing && (
-              <button className="pill" style={{ color: 'var(--danger)' }} onClick={async () => {
-                if (!(await confirmDeleteById(editTxId ? 'tx' : 'transfer', (editTxId ?? editTransferId)!))) return;
-                if (editTxId) void deleteTransactions([editTxId]).then(() => snackUndo('已刪除', () => restoreTransactions([editTxId])));
-                if (editTransferId) void deleteTransfers([editTransferId]).then(() => snackUndo('已刪除轉帳', () => restoreTransfers([editTransferId])));
-                saved.current = true;
-                onClose();
-              }}><Icon name="trash" size={16} />刪除</button>
-            )}
-          </div>
-
-          {/* 少用的欄位收在「更多選項」；已經選了內容就自動展開，不會藏起來 */}
-          {(mode === 'expense' || mode === 'income') && (() => {
-            const active = tagIds.length > 0 || !!projectId || durableYears > 0 || skipBudget || split.people.length > 0 || atts.length > 0;
-            const open = moreOpen || active;
-            return (
-              <>
-                {!open && (
-                  <div className="meta-row">
-                    <button className="pill" onClick={() => setMoreOpen(true)} aria-expanded={false}>更多選項 ▾</button>
-                    {!editing && <button className="pill" onClick={copyLast}><Icon name="copy" size={16} />上一筆</button>}
+                <div style={{ minWidth: 0 }}>
+                  <div className="expr num" aria-hidden="true">{hasOperator(expr) ? expr : ''}</div>
+                  <div className="value num" style={{ color: amountColor }} aria-live="polite">
+                    {currencyInfo(mode === 'transfer' || mode === 'adjust' ? account?.currency ?? txCurrency : txCurrency).symbol}{display}
                   </div>
-                )}
-                {open && (
-                  <div className="meta-row" aria-label="更多選項">
-            {(
-              <>
-                <button className="pill" onClick={() => setPicker('tags')} aria-pressed={tagIds.length > 0}>
-                  <Icon name="tag" size={16} />{tagIds.length ? tagIds.map((id) => tagMap.get(id)?.name).filter(Boolean).join('、') : '標籤'}
-                </button>
-                {projects.length > 0 && (
-                  <button className="pill" onClick={() => setPicker('project')} aria-pressed={!!projectId}>
-                    <Icon name="folder" size={16} />{projMap.get(projectId)?.name ?? '專案'}
+                </div>
+              </div>
+
+              {adjustDiff !== null && (
+                <p className="muted" style={{ margin: '-6px 4px 8px', fontSize: '0.8rem', textAlign: 'right' }}>
+                  {editTxId ? '調整前餘額' : '目前餘額'} {formatMoney(adjustBaseline(account!), account!.currency)} → 差額{' '}
+                  <b className={adjustDiff >= 0 ? 'pos' : 'neg'}>{formatMoney(adjustDiff, account!.currency, { sign: 'always' })}</b>
+                </p>
+              )}
+
+              {/* 外幣匯率 */}
+              {needRate && mode !== 'adjust' && (
+                <div className="list" style={{ marginBottom: 8 }}>
+                  <div className="field">
+                    <span className="label">匯率</span>
+                    <span className="muted num" style={{ fontSize: '0.85rem' }}>1 {rateFrom} =</span>
+                    <input inputMode="decimal" value={fxRate} onChange={(e) => setFxRate(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="匯率" placeholder="取得中…" />
+                    <span className="muted num">{rateTo}</span>
+                  </div>
+                  {mode === 'transfer' ? (
+                    <div className="field">
+                      <span className="label">轉入金額</span>
+                      <input inputMode="decimal" value={toAmount !== null ? toAmount : computedToAmount} onChange={(e) => setToAmount(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="轉入金額" />
+                      <span className="muted num">{rateTo}</span>
+                    </div>
+                  ) : value && fxRate && account ? (
+                    <div className="field">
+                      <span className="label">入帳金額</span>
+                      <span className="row-main num" style={{ textAlign: 'right' }}>
+                        {(() => { try { return formatMoney(convertMinor(amountMinor, txCurrency, account.currency, fxRate), account.currency); } catch { return '—'; } })()}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              {/* 分類 */}
+              {(mode === 'expense' || mode === 'income') && (
+                <>
+                  <div className="cat-grid" role="radiogroup" aria-label="分類">
+                    {tree.map(({ main }) => {
+                      const active = selCat ? (selCat.id === main.id || selCat.parentId === main.id) : false;
+                      return (
+                        <button type="button" key={main.id} className="cat-cell" role="radio" aria-checked={active} aria-pressed={active}
+                          onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((s) => ({ ...s, [kind]: main.id })); setMainOpen(main.id); }}>
+                          <span className="cat-icon sm" style={{ ['--c' as string]: main.color }}><CatIcon icon={main.icon} size={16} /></span>
+                          {main.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {mainTree && mainTree.subs.length > 0 && (
+                    <div className="sub-row" role="radiogroup" aria-label="子分類" ref={subRowRef}>
+                      <button type="button" className="pill" aria-pressed={categoryId === mainTree.main.id}
+                        onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((s) => ({ ...s, [kind]: mainTree.main.id })); }}>全部{mainTree.main.name}</button>
+                      {mainTree.subs.map((s) => (
+                        <button type="button" key={s.id} className="pill" aria-pressed={categoryId === s.id}
+                          onClick={() => { catTouched.current = true; setAutoCat(null); setCatByKind((c) => ({ ...c, [kind]: s.id })); }}><CatIcon icon={s.icon} size={14} style={{ verticalAlign: -2, marginRight: 4 }} />{s.name}</button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* 應收／應付：對象與是否動到帳戶 */}
+              {loan && (
+                <div style={{ marginBottom: 8 }}>
+                  <div className="list" style={{ marginBottom: 8 }}>
+                    <div className="field">
+                      <span className="label">{mode === 'receivable' ? '誰欠你' : '你欠誰'}</span>
+                      <input value={personName} onChange={(e) => setPersonName(e.target.value)} placeholder="名字" maxLength={30}
+                        aria-label={mode === 'receivable' ? '欠款人' : '債權人'} />
+                    </div>
+                    <label className="field" style={{ cursor: 'pointer' }}>
+                      <span className="row-main">{mode === 'receivable' ? '從帳戶借出（帳戶扣款）' : '存入帳戶（帳戶入帳）'}</span>
+                      <Switch checked={loanViaAccount} onChange={setLoanViaAccount} label={mode === 'receivable' ? '從帳戶借出' : '存入帳戶'} />
+                    </label>
+                  </div>
+                  {people.length > 0 && (
+                    <div className="sub-row" aria-label="常用對象">
+                      {people.map((p) => (
+                        <button type="button" key={p.id} className="pill" aria-pressed={personName.trim() === p.name} onClick={() => setPersonName(p.name)}>{p.name}</button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 4px 0' }}>
+                    {loanViaAccount
+                      ? '借出／借入不算支出或收入，不影響收支統計與預算；收回或還款時到「專案 → 應收應付」結清。'
+                      : '只記錄欠款、不動帳戶餘額；之後到「專案 → 應收應付」結清時再記入帳戶。'}
+                  </p>
+                </div>
+              )}
+
+              {/* 核心屬性列：帳戶／日期時間／單一「進階」按鈕 */}
+              <div className="meta-row">
+                {!(loan && !loanViaAccount) && (
+                  <button type="button" className="pill" onClick={() => setPicker('account')}>
+                    {account ? <><CatIcon icon={account.icon} size={15} style={{ verticalAlign: -2, marginRight: 4 }} />{account.name}</> : '選擇帳戶'}
                   </button>
                 )}
-              </>
-            )}
-            {mode === 'expense' && (
-              <button type="button" className="pill" onClick={() => setPicker('durable')} aria-pressed={durableYears > 0}>
-                <Icon name="chart" size={16} />{durableYears > 0 ? `耐用品 ${lifeLabel(durableYears)}` : '耐用品'}
-              </button>
-            )}
-            {mode === 'expense' && (
-              <button className="pill" onClick={() => setSkipBudget((x: boolean) => !x)} aria-pressed={skipBudget}>
-                <Icon name="chart" size={16} />不計入預算
-              </button>
-            )}
-            {mode === 'expense' && !editing && (
-              <button className="pill" onClick={() => setPicker('split')} aria-pressed={split.people.length > 0}>
-                <Icon name="users" size={16} />{split.people.length ? `分帳 ${split.people.length + 1} 人` : '分帳'}
-              </button>
-            )}
-                    {(mode === 'expense' || mode === 'income') && (
-                      <label className="pill" style={{ cursor: 'pointer' }} aria-pressed={atts.length > 0}>
-                        <Icon name="camera" size={16} />收據照片
-                        <input type="file" accept="image/*" multiple className="sr-only" onChange={(e) => { void onPhoto(e.target.files); e.target.value = ''; }} />
-                      </label>
-                    )}
-                    {!editing && <button className="pill" onClick={copyLast}><Icon name="copy" size={16} />上一筆</button>}
-                    {!active && <button className="pill" onClick={() => setMoreOpen(false)}>收合 ▴</button>}
-                  </div>
+                {mode === 'transfer' && (
+                  <>
+                    <span className="muted" style={{ alignSelf: 'center' }}>→</span>
+                    <button type="button" className="pill" onClick={() => setPicker('toAccount')} aria-pressed={!toAccount}>
+                      {toAccount ? <><CatIcon icon={toAccount.icon} size={15} style={{ verticalAlign: -2, marginRight: 4 }} />{toAccount.name}</> : '轉入帳戶'}
+                    </button>
+                  </>
                 )}
-              </>
-            );
-          })()}
+                <span className="pill" style={{ position: 'relative' }}>
+                  <Icon name="calendar" size={16} /> {dateLabel}
+                  <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="日期"
+                    style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%' }} />
+                </span>
+                <span className="pill num" style={{ position: 'relative' }}>
+                  <Icon name="clock" size={16} /> {time}
+                  <input type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="時間"
+                    style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%' }} />
+                </span>
+                {mode === 'transfer' && (
+                  <span className="pill">
+                    手續費
+                    <input inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value.replace(/[^0-9.]/g, ''))}
+                      placeholder="0" aria-label="轉帳手續費" style={{ width: 56, border: 0, background: 'transparent', outline: 'none' }} />
+                  </span>
+                )}
+                {(mode === 'expense' || mode === 'income') && (
+                  <button type="button" className="pill" onClick={() => setMoreOpen((v) => !v)} aria-expanded={showAdvanced} aria-pressed={showAdvanced}>
+                    <Icon name="slidersHorizontal" size={15} />
+                    進階
+                    {advCount > 0 && <span className="adv-badge" aria-label={`已選 ${advCount} 項`}>{advCount}</span>}
+                  </button>
+                )}
+              </div>
 
-          {/* 備註 */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input className="input" placeholder={mode === 'transfer' ? '備註（例如：提款）' : loan ? '備註（例如：代墊車資）' : '備註、店家…'} value={note}
-              onChange={(e) => setNote(e.target.value)} maxLength={200} aria-label="備註"
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void submit(); } }} />
-            {autoCat && catByKind[kind] === autoCat.categoryId && (
-              <button className="autocat-chip" role="status"
-                aria-label={`已自動分類為「${catMap.get(autoCat.categoryId)?.name}」${autoCat.source === 'rule' ? '（規則）' : '（依過去記帳）'}，點擊還原`}
-                title={`依${autoCat.source === 'rule' ? '自動分類規則' : '過去記帳'}選了「${catMap.get(autoCat.categoryId)?.name}」，點擊還原`}
-                onClick={() => {
-                  catTouched.current = true;
-                  setCatByKind((c) => ({ ...c, [kind]: autoCat.prev }));
-                  const p = catMap.get(autoCat.prev);
-                  if (p) setMainOpen(p.parentId || p.id);
-                  setAutoCat(null);
-                }}>🪄 自動分類 ✕</button>
-            )}
-          </div>
-          {atts.length > 0 && (
-            <div className="thumbs">
-              {atts.map((a) => (
-                <div key={a.id} className="thumb">
-                  <img src={a.url} alt="收據" onClick={() => void openViewer(a.id)} />
-                  <button aria-label="移除照片" onClick={() => setAtts((s) => s.filter((x) => x.id !== a.id))}><Icon name="close" /></button>
+              {/* 備註 */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input className="input" placeholder={mode === 'transfer' ? '備註（例如：提款）' : loan ? '備註（例如：代墊車資）' : '備註、店家…'} value={note}
+                  onChange={(e) => setNote(e.target.value)} maxLength={200} aria-label="備註"
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void submit(); } }} />
+                {autoCat && catByKind[kind] === autoCat.categoryId && (
+                  <button type="button" className="autocat-chip" role="status"
+                    aria-label={`已自動分類為「${catMap.get(autoCat.categoryId)?.name}」${autoCat.source === 'rule' ? '（規則）' : '（依過去記帳）'}，點擊還原`}
+                    title={`依${autoCat.source === 'rule' ? '自動分類規則' : '過去記帳'}選了「${catMap.get(autoCat.categoryId)?.name}」，點擊還原`}
+                    onClick={() => {
+                      catTouched.current = true;
+                      setCatByKind((c) => ({ ...c, [kind]: autoCat.prev }));
+                      const p = catMap.get(autoCat.prev);
+                      if (p) setMainOpen(p.parentId || p.id);
+                      setAutoCat(null);
+                    }}>🪄 自動分類 ✕</button>
+                )}
+              </div>
+              {atts.length > 0 && (
+                <div className="thumbs">
+                  {atts.map((a) => (
+                    <div key={a.id} className="thumb">
+                      <img src={a.url} alt="收據" onClick={() => void openViewer(a.id)} />
+                      <button type="button" aria-label="移除照片" onClick={() => setAtts((s) => s.filter((x) => x.id !== a.id))}><Icon name="close" /></button>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          )}
 
-          </div>
-          <div className="keypad-dock">
-            <Keypad onKey={onKey} onSubmit={() => void submit()} disabled={busy || !loaded}
-              submitLabel={hasOperator(expr) ? '=' : editing ? '儲存' : '完成'} />
+            {/* 下半部：進階選項原地展開垂直列表，或底部數字鍵盤 */}
+            {showAdvanced ? (
+              <div className="add-advanced-dock" role="region" aria-label="進階選項">
+                <div className="add-adv-head">
+                  <h3>進階選項</h3>
+                  <button type="button" className="add-adv-close" onClick={() => setMoreOpen(false)}>收起</button>
+                </div>
+                <div className="add-adv-list">
+                  <button type="button" className="add-adv-row" onClick={() => setPicker('tags')}>
+                    <Icon name="tag" size={18} />
+                    <span className="adv-label">標籤</span>
+                    <span className={`adv-val${tagIds.length ? ' on' : ''}`}>
+                      {tagIds.length ? tagIds.map((id) => tagMap.get(id)?.name).filter(Boolean).join('、') : '未選擇'}
+                    </span>
+                    <Icon name="chevronR" size={16} className="muted" />
+                  </button>
+                  {projects.length > 0 && (
+                    <button type="button" className="add-adv-row" onClick={() => setPicker('project')}>
+                      <Icon name="folder" size={18} />
+                      <span className="adv-label">專案</span>
+                      <span className={`adv-val${projectId ? ' on' : ''}`}>{projMap.get(projectId)?.name ?? '未選擇'}</span>
+                      <Icon name="chevronR" size={16} className="muted" />
+                    </button>
+                  )}
+                  {mode === 'expense' && !editing && (
+                    <button type="button" className="add-adv-row" onClick={() => setPicker('split')}>
+                      <Icon name="users" size={18} />
+                      <span className="adv-label">分帳</span>
+                      <span className={`adv-val${split.people.length ? ' on' : ''}`}>
+                        {split.people.length ? `分帳 ${split.people.length + 1} 人` : '未啟用'}
+                      </span>
+                      <Icon name="chevronR" size={16} className="muted" />
+                    </button>
+                  )}
+                  {mode === 'expense' && (
+                    <button type="button" className="add-adv-row" onClick={() => setPicker('durable')}>
+                      <Icon name="chart" size={18} />
+                      <span className="adv-label">耐用品</span>
+                      <span className={`adv-val${durableYears > 0 ? ' on' : ''}`}>
+                        {durableYears > 0 ? lifeLabel(durableYears) : '未啟用'}
+                      </span>
+                      <Icon name="chevronR" size={16} className="muted" />
+                    </button>
+                  )}
+                  <label className="add-adv-row">
+                    <Icon name="camera" size={18} />
+                    <span className="adv-label">收據照片</span>
+                    <span className={`adv-val${atts.length ? ' on' : ''}`}>
+                      {atts.length ? `${atts.length} 張` : '新增照片'}
+                    </span>
+                    <Icon name="chevronR" size={16} className="muted" />
+                    <input type="file" accept="image/*" multiple className="sr-only" onChange={(e) => { void onPhoto(e.target.files); e.target.value = ''; }} />
+                  </label>
+                  {mode === 'expense' && (
+                    <label className="add-adv-row">
+                      <Icon name="chart" size={18} />
+                      <span className="adv-label">不計入預算</span>
+                      <Switch checked={skipBudget} onChange={setSkipBudget} label="不計入預算" />
+                    </label>
+                  )}
+                  {!editing && (
+                    <button type="button" className="add-adv-row" onClick={() => { void copyLast(); setMoreOpen(false); }}>
+                      <Icon name="copy" size={18} />
+                      <span className="adv-label">複製上一筆</span>
+                      <span className="adv-val">帶入內容</span>
+                      <Icon name="chevronR" size={16} className="muted" />
+                    </button>
+                  )}
+                  {!editing && (
+                    <label className="add-adv-row">
+                      <Icon name="repeat" size={18} />
+                      <span className="adv-label">再記一筆</span>
+                      <Switch checked={settings.continuousAdd} onChange={(v) => settings.set('continuousAdd', v)} label="再記一筆模式" />
+                    </label>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="keypad-dock">
+                <Keypad onKey={onKey} onSubmit={() => void submit()} disabled={busy || !loaded}
+                  submitLabel={hasOperator(expr) ? '=' : editing ? '儲存' : '完成'} />
+              </div>
+            )}
           </div>
         </div>
+      </div>
+
+      {/* ⚡ 常用與釘選捷徑選單 */}
+      <Sheet open={quickOpen} onClose={() => setQuickOpen(false)} title="常用與釘選">
+        {pinType && (
+          <div className="list" style={{ marginBottom: 12 }}>
+            <button type="button" className="row" onClick={() => void doPin()} style={{ width: '100%', textAlign: 'left' }}>
+              <Icon name="pin" size={18} />
+              <span className="row-main">
+                {curPin && !pinChanged ? `取消釘選「${pinName}」` : curPin ? `更新釘選「${pinName}」` : '釘選目前這筆'}
+              </span>
+              <span className="muted" style={{ fontSize: '0.8rem' }}>{canPin ? formatMoney(amountMinor, txCurrency) : '需先填金額'}</span>
+            </button>
+          </div>
+        )}
+        {noteSugs.length > 0 ? (
+          <div className="list" aria-label="常用與釘選列表">
+            {noteSugs.map((x) => {
+              const c = catMap.get(x.categoryId);
+              return (
+                <div key={`${x.pinnedId ?? 'r'}:${x.note}`} className="row" style={{ padding: 0, gap: 0 }}>
+                  <LongPressButton
+                    className="row"
+                    style={{ flex: 1, minWidth: 0, textAlign: 'left', border: 0 }}
+                    onClick={() => { applyNoteSuggestion(x); setQuickOpen(false); }}
+                    onLongPress={() => sugActions(x)}
+                    aria-label={`${x.pinnedId ? '釘選的 ' : ''}${x.note}，${formatMoney(x.amountMinor, x.currency)}，${c?.name ?? ''}`}
+                  >
+                    <span aria-hidden="true" style={{ fontSize: '1.1rem' }}>{x.pinnedId ? '📌' : c?.icon ?? '🕘'}</span>
+                    <span className="row-main">
+                      <b>{x.note}</b>
+                      {c && <span className="muted" style={{ fontSize: '0.8rem', marginLeft: 6 }}>{c.name}</span>}
+                    </span>
+                    <span className="num" style={{ fontWeight: 600 }}>{formatMoney(x.amountMinor, x.currency)}</span>
+                  </LongPressButton>
+                  <button
+                    type="button"
+                    aria-label={`管理「${x.note}」`}
+                    style={{ padding: '10px 12px', color: 'var(--text-2)', flex: 'none' }}
+                    onClick={() => sugActions(x)}
+                  >
+                    <Icon name="more" size={16} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <EmptyState emoji="⚡" title="還沒有常用或釘選項目" text="常記的項目會自動出現在這裡，也可以把目前的記帳釘選起來。" />
+        )}
       </Sheet>
 
       <AccountPicker open={picker === 'account'} onClose={() => setPicker(null)} accounts={accounts} value={accountId}
@@ -876,22 +1035,28 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       <Sheet open={!!viewer} onClose={() => { if (viewer) URL.revokeObjectURL(viewer); setViewer(null); }} title="收據" full>
         {viewer && <img src={viewer} alt="收據照片" style={{ width: '100%', borderRadius: 12 }} />}
       </Sheet>
-    </>
+    </>,
+    document.body,
   );
 }
 
 
 /**
- * 建議膠囊：點一下套用；長按（約 0.45 秒）跳出「釘選／取消釘選」。
- * 長按成立後放開不會再當成「點一下」，手指移動超過 8px 視為在捲動、取消長按。
+ * 支援長按（約 0.45 秒）的按鈕：長按成立後放開不會再觸發點擊，手指移動超過 8px 視為捲動、取消長按。
  */
-function SugChip({ children, label, onPick, onLongPress }: { children: React.ReactNode; label: string; onPick: () => void; onLongPress: () => void }) {
+function LongPressButton({ children, onClick, onLongPress, ...rest }: Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> & {
+  onClick: () => void;
+  onLongPress: () => void;
+}) {
   const timer = useRef<number | undefined>(undefined);
   const fired = useRef(false);
   const start = useRef<{ x: number; y: number } | null>(null);
-  const clear = () => { window.clearTimeout(timer.current); timer.current = undefined; };
+  const clear = useCallback(() => { window.clearTimeout(timer.current); timer.current = undefined; }, []);
+  useEffect(() => clear, [clear]);
   return (
-    <button className="pill sug-chip" aria-label={label}
+    <button
+      type="button"
+      {...rest}
       onPointerDown={(e) => {
         fired.current = false;
         start.current = { x: e.clientX, y: e.clientY };
@@ -901,7 +1066,8 @@ function SugChip({ children, label, onPick, onLongPress }: { children: React.Rea
       onPointerMove={(e) => { if (start.current && Math.hypot(e.clientX - start.current.x, e.clientY - start.current.y) > 8) clear(); }}
       onPointerUp={clear} onPointerLeave={clear} onPointerCancel={clear}
       onContextMenu={(e) => e.preventDefault()}
-      onClick={() => { if (fired.current) { fired.current = false; return; } onPick(); }}>
+      onClick={() => { if (fired.current) { fired.current = false; return; } onClick(); }}
+    >
       {children}
     </button>
   );
