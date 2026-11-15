@@ -112,7 +112,7 @@ export default function ShortcutsPage() {
         <p className="muted">設定好後，刷卡、網購、LINE Pay 掃碼付款或收到銀行通知時，iPhone 會自動將消費送進 Aster 收件匣，方便你在首頁隨時核對記帳。</p>
         <ol className="inbox-steps">
           <li><span>💳</span><div><b>照常付款或呼叫 Siri</b><br />刷實體卡、網購、LINE Pay 掃碼，或先對 Siri 說「嘿 Siri，Aster 隨手記」，等 Siri 回應後再說「早餐 65 現金」</div></li>
-          <li><span>📨</span><div><b>設定「收到通知」自動化</b><br />iOS 匯入捷徑不會自動建立自動化規則，加入後需到 iPhone「<b>捷徑 → 自動化 → ＋ → 收到通知</b>」（勾選銀行 App 與 LINE、開啟「立即執行」），選擇執行「<b>Aster 自動記帳</b>」並傳入通知輸入</div></li>
+          <li><span>📨</span><div><b>捷徑自動寄出</b><br />在捷徑內開啟「<b>自動化操作</b>」後，銀行 App、LINE 或 Apple Pay 跳通知時就會自動把金額與商家送進 Aster</div></li>
           <li><span>✅</span><div><b>首頁核對入帳</b><br />在首頁收件匣一鍵記帳；若開啟「看得懂的直接記帳」，打開 App 會直接入帳到今日帳目</div></li>
         </ol>
       </details>
@@ -140,7 +140,7 @@ export default function ShortcutsPage() {
 
       <div className="section-title">已連結的裝置</div>
       <p className="muted" style={{ margin: '-4px 4px 8px', fontSize: '0.8rem' }}>
-        可在此確認捷徑是否曾成功送出資料（顯示「已傳送 N 次資料」；若仍為「還沒有送過資料」，請確認「捷徑 → 自動化」已設為「立即執行」並傳入通知輸入）。
+        可在此確認捷徑是否曾成功送出資料（顯示「已傳送 N 次資料」；若仍為「還沒有送過資料」，請確認捷徑內的「自動化操作」已開啟）。
       </p>
       <div className="list">
         {tokens?.length === 0 && <div className="row"><span className="row-sub">還沒有。按上面的「加入」會自動建立。</span></div>}

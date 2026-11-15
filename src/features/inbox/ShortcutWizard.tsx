@@ -98,21 +98,26 @@ export function ShortcutWizard({ preparing, onAdd, hasLink }: { preparing: boole
         );
       })}
       {needAuto.length > 0 && (
-        <div className="wiz-auto" role="group" aria-label="還差一步：建立自動化">
-          <b>還差一步：在「捷徑」建立自動化</b>
-          <p className="muted" style={{ margin: '4px 0 8px', fontSize: '0.82rem', lineHeight: 1.5 }}>
-            因為 iOS 匯入 <code>.shortcut</code> 時不會自動建立「自動化」規則，加入捷徑後需手動到 iPhone「捷徑」設定觸發條件，才會在背景自動記帳：
-          </p>
+        <div className="wiz-auto" role="group" aria-label="還差一步：啟用自動化">
+          <b>還差一步：啟用自動化</b>
           {needAuto.map((s) => (
             <div key={s.key} className="wiz-auto-item">
               <p className="wiz-auto-title"><b>{s.title}</b></p>
               <ol className="wiz-auto-steps" style={{ paddingLeft: '1.2rem' }}>
-                <li>打開 iPhone「<b>捷徑</b>」App ➔ 點下方「<b>自動化</b>」➔ 點右上角「<b>＋</b>」➔ 搜尋並選擇「<b>收到通知</b>」（若要感應 Apple Pay，另建一組「<b>交易</b>」自動化）。</li>
-                <li>「App」勾選你的銀行 App 與 <b>LINE</b>（收 LINE Pay／銀行官方帳號通知）➔ 選「<b>立即執行</b>」（建議關閉「執行時通知」）。</li>
-                <li>下一步選擇「<b>執行捷徑</b>」➔ 選「<b>{s.name}</b>」，並在輸入欄位傳入「<b>通知的輸入</b>」。</li>
+                <li style={{ listStyle: 'none', margin: '2px 0 4px -1.2rem', fontWeight: 600, color: 'var(--accent)' }}>
+                  💡 推薦方式（已內建銀行、LINE 與 Apple Pay 觸發條件，直接在捷徑內開啟即可）：
+                </li>
+                <li>打開「捷徑」App，找到剛加入的「<b>{s.name}</b>」進入編輯。</li>
+                <li>將最上方觸發區塊的「<b>自動化操作</b>」切換為開啟（建議關閉下方的「<b>通知</b>」避免每次跳提示）。</li>
+                <li>若要增減監聽的銀行 App 或 LINE，點 App 列表右側「<b>＋</b>」即可調整。</li>
+                <li style={{ listStyle: 'none', margin: '8px 0 4px -1.2rem', fontWeight: 600, color: 'var(--muted)' }}>
+                  備用方式（若捷徑上方未出現觸發區塊，手動建立步驟）：
+                </li>
+                <li>打開「捷徑」App ➔ 下方「自動化」➔ 點「＋」➔ 選「<b>收到通知</b>」（或「交易」）。</li>
+                <li>勾選銀行 App 與 <b>LINE</b> ➔ 選「<b>立即執行</b>」➔ 下一步選「執行捷徑」並指定「<b>{s.name}</b>」。</li>
               </ol>
               <p className="muted" style={{ margin: '4px 0 8px', fontSize: '0.8rem' }}>
-                💡 設定後可到下方「<b>已連結的裝置</b>」確認是否顯示「已傳送 N 次資料」，代表捷徑已成功送出通知。
+                💡 設定後可到下方「<b>已連結的裝置</b>」確認是否顯示「已傳送 N 次資料」，確認捷徑有成功送出。
               </p>
               <button className="pill accent-pill" onClick={() => mark(s.key, 'auto', true)}>我做好了 ✓</button>
             </div>
