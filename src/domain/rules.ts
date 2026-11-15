@@ -13,6 +13,7 @@ export interface RuleLike {
   keyword: string;
   match: RuleMatch;
   kind: CategoryKind | 'any';
+  renameNote?: string;
   categoryId: string;
   tagIds?: string[];
   accountId?: string;

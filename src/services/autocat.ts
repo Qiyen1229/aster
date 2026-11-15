@@ -14,6 +14,7 @@ export interface CategorySuggestion {
   tagIds: string[];
   source: 'rule' | 'memory';
   ruleId?: string;
+  renameNote?: string;
 }
 
 let cache: { at: number; rules: CategoryRule[]; memory: MemoryIndex; accounts: MemoryIndex } | null = null;
@@ -42,7 +43,7 @@ async function load() {
   const accItems = usable.filter((t) => liveAcc.has(t.accountId))
     .flatMap((t) => texts(t).map((text) => ({ text, categoryId: t.accountId, kind: t.type as CategoryKind, ts: t.ts })));
   cache = {
-    at: Date.now(), rules: rules.filter((r) => !r.deletedAt && live.has(r.categoryId)),
+    at: Date.now(), rules: rules.filter((r) => !r.deletedAt && (!r.categoryId || live.has(r.categoryId))),
     memory: buildMemory(items), accounts: buildMemory(accItems),
   };
   return cache;
@@ -53,7 +54,16 @@ export async function suggestCategory(text: string, kind: CategoryKind): Promise
   if (!text.trim()) return null;
   const { rules, memory } = await load();
   const r = matchRule(rules, text, kind);
-  if (r) return { categoryId: r.categoryId, tagIds: r.tagIds ?? [], source: 'rule', ruleId: r.id };
+  if (r) {
+    const fallbackCat = r.categoryId || recallCategory(memory, text, kind) || '';
+    return {
+      categoryId: fallbackCat,
+      tagIds: r.tagIds ?? [],
+      source: 'rule',
+      ruleId: r.id,
+      renameNote: r.renameNote?.trim() || undefined,
+    };
+  }
   const c = recallCategory(memory, text, kind);
   return c ? { categoryId: c, tagIds: [], source: 'memory' } : null;
 }

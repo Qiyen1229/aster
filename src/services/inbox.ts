@@ -291,7 +291,8 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     } else {
       targetAcc = byCard ?? d.accountId;
     }
-    const r = await resolveDraft({ ...d, accountId: targetAcc }, base);
+    const matchText = [d.note, it.merchant, it.text].filter(Boolean).join('\n');
+    const r = await resolveDraft({ ...d, accountId: targetAcc }, base, matchText);
     out.push(targetAcc ? { ...r, accountId: targetAcc, accountSource: 'text' } : r);
   }
   return out;

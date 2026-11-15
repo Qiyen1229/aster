@@ -173,4 +173,43 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     expect(d6[0].kind).toBe('income');
     expect(d6[0].amount).toBe(30000);
   });
+
+  it('自訂自動改名與分類規則：比對原始通知／商家並覆寫名稱與類別', async () => {
+    const { draftsFromItem } = await import('@/services/inbox');
+    const { saveRule } = await import('@/services/autocat');
+    const { parseContext } = await import('@/services/quickentry');
+    await db.categories.add({ id: 'exp-dinner', name: '晚餐', kind: 'expense', parentId: '', icon: '', color: '', sort: 1, archived: 0, createdAt: 1, updatedAt: 1 } as never);
+    await saveRule({
+      keyword: '遠東百貨板橋分公司',
+      match: 'contains',
+      kind: 'expense',
+      renameNote: '牛肉麵',
+      categoryId: 'exp-dinner',
+      priority: 10,
+      enabled: true,
+    });
+    const ctx = await parseContext();
+    const item = raw(10, 'LINE', '遠東百貨板橋分公司 : 回饋: 中信LINE Pay卡一般消費 180 元', '遠東百貨板橋分公司');
+    const drafts = await draftsFromItem(item, ctx, bank);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].note).toBe('牛肉麵');
+    expect(drafts[0].categoryId).toBe('exp-dinner');
+
+    // 僅改名（不指定類別）：保留自動推斷的類別，但名稱改成自訂名稱
+    await saveRule({
+      keyword: '星巴克',
+      match: 'contains',
+      kind: 'expense',
+      renameNote: '每日咖啡',
+      categoryId: '',
+      priority: 10,
+      enabled: true,
+    });
+    const ctx2 = await parseContext();
+    const item2 = raw(11, 'LINE', '星巴克消費 150 元', '星巴克');
+    const drafts2 = await draftsFromItem(item2, ctx2, bank);
+    expect(drafts2).toHaveLength(1);
+    expect(drafts2[0].note).toBe('每日咖啡');
+    expect(drafts2[0].categoryId).toBe('exp-other_exp');
+  });
 });

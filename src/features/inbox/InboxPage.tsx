@@ -22,6 +22,7 @@ import { EmptyState, SkeletonRows } from '@/ui/controls';
 import { AiMark, CatIcon, Icon } from '@/ui/Icon';
 import { bookForecast, confirmRulePending, loadForecast, registerForecast, skipForecast, skipRulePending, type ForecastData } from '@/services/forecast';
 import type { ForecastItem } from '@/domain/forecast';
+import { blankRule, RuleEditorSheet, type RuleDraft } from '@/features/settings/RuleEditorSheet';
 
 const snack = (text: string, duration?: number) => useUI.getState().showSnack({ text, duration });
 
@@ -33,6 +34,7 @@ export default function InboxPage() {
   const [entries, setEntries] = useState<InboxEntry[] | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
   const today = todayKey();
 
   // 預計扣款：週期帳目的待確認 + 看起來是固定扣款、預計日到了的項目（本機推算）
@@ -186,6 +188,7 @@ export default function InboxPage() {
                     </span>
                     <span className="inbox-actions">
                       {aiEnabledLocally() && (e.item.text || e.item.merchant) && <button className="pill accent-pill" disabled={aiBusyId === e.item.id} onClick={() => void aiParse(e)}>{aiBusyId === e.item.id ? '解析中…' : <><AiMark /> Cilo 解析</>}</button>}
+                      <button className="pill" onClick={() => setRuleDraft(blankRule('expense', '', e.item.merchant || e.item.text.slice(0, 60)))}>存為規則</button>
                       <button className="pill" onClick={() => edit(e)}>手動記</button>
                       <button className="pill" onClick={() => void skip(e)} aria-label="略過">略過</button>
                     </span>
@@ -219,12 +222,14 @@ export default function InboxPage() {
                           <>
                             <button className="pill accent-pill" onClick={() => void merge(e)}>合併（不重複記）</button>
                             <button className="pill" disabled={busy} onClick={() => void book([e])}>仍要記帳</button>
+                            <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
                             <button className="pill" onClick={() => edit(e)}>編輯</button>
                           </>
                         ) : (
                           <>
                             <button className="pill accent-pill" disabled={busy} onClick={() => void book([e])}>記帳</button>
                             {e.dup && <button className="pill" onClick={() => void merge(e)}>合併</button>}
+                            <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
                             <button className="pill" onClick={() => edit(e)}>編輯</button>
                             <button className="pill" onClick={() => void skip(e)}>略過</button>
                           </>
@@ -239,6 +244,12 @@ export default function InboxPage() {
           {ready.length > 1 && <button className="btn" disabled={busy} onClick={() => void book(ready)}>全部記帳（{ready.reduce((n, e) => n + e.drafts.length, 0)} 筆）</button>}
         </>
       )}
+      <RuleEditorSheet
+        draft={ruleDraft}
+        onChange={setRuleDraft}
+        onClose={() => setRuleDraft(null)}
+        onSaved={() => void reload()}
+      />
     </main>
   );
 }

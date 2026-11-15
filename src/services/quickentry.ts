@@ -44,29 +44,34 @@ export async function parseContext(today = todayKey()) {
   };
 }
 
-/** 依備註補上分類與帳戶；fallbackAccountId 是沒有任何線索時使用的帳戶 */
-export async function resolveDraft(d: DraftEntry, fallbackAccountId: string): Promise<ResolvedDraft> {
+/** 依備註補上分類、改寫名稱與帳戶；fallbackAccountId 是沒有任何線索時使用的帳戶；matchText 可傳入完整通知原文做雙向比對 */
+export async function resolveDraft(d: DraftEntry, fallbackAccountId: string, matchText?: string): Promise<ResolvedDraft> {
   const kind = d.kind === 'income' ? 'income' : 'expense';
+  const query = matchText?.trim() || d.note;
   let categoryId = d.categoryId;
+  let note = d.note;
   let tagIds: string[] = [];
   let categorySource: ResolvedDraft['categorySource'] = categoryId ? 'text' : 'default';
-  if (d.kind !== 'transfer' && d.note) {
-    const sug = await suggestCategory(d.note, kind).catch(() => null);
+  if (d.kind !== 'transfer' && query) {
+    const sug = await suggestCategory(query, kind).catch(() => null);
     // 規則優先於文字裡的分類名稱（使用者特地設的）；商家記憶只在文字沒寫分類時使用
     if (sug && (sug.source === 'rule' || !categoryId)) {
-      categoryId = sug.categoryId;
-      tagIds = sug.tagIds;
-      categorySource = sug.source;
+      if (sug.categoryId) {
+        categoryId = sug.categoryId;
+        categorySource = sug.source;
+      }
+      if (sug.tagIds.length) tagIds = sug.tagIds;
+      if (sug.renameNote) note = sug.renameNote;
     }
   }
   if (!categoryId && d.kind !== 'transfer') categoryId = kind === 'income' ? 'inc-other_inc' : 'exp-other_exp';
   let accountId = d.accountId;
   let accountSource: ResolvedDraft['accountSource'] = accountId ? 'text' : 'default';
-  if (!accountId && d.note) {
-    const acc = await suggestAccount(d.note, kind).catch(() => undefined);
+  if (!accountId && query) {
+    const acc = await suggestAccount(query, kind).catch(() => undefined);
     if (acc) { accountId = acc.accountId; accountSource = acc.source; }
   }
-  return { ...d, accountId: accountId ?? fallbackAccountId, categoryId, tagIds, categorySource, accountSource };
+  return { ...d, note, accountId: accountId ?? fallbackAccountId, categoryId, tagIds, categorySource, accountSource };
 }
 
 /** 預設帳戶：上次記帳用的帳戶 → 第一個非負債帳戶 */

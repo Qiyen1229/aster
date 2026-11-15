@@ -427,6 +427,8 @@ export interface CategoryRule extends BaseRow {
   keyword: string;
   match: 'contains' | 'equals' | 'regex';
   kind: CategoryKind | 'any';
+  /** 選填：命中後自動改寫的名稱／備註（例如將冗長店家代碼改為「牛肉麵」） */
+  renameNote?: string;
   categoryId: string;
   tagIds?: string[];
   /** 選填：同時指定帳戶（例如「全聯」→ 全支付）；電子發票、對帳單匯入時用來判斷記到哪個帳戶 */

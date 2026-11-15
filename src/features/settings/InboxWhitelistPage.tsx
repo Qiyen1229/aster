@@ -6,13 +6,17 @@
  * 入口：收件匣右上角盾牌圖示、加入 iPhone 捷徑頁的「自動入帳偏好」。
  */
 import { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
-import { useAccounts } from '@/app/hooks';
+import { useAccounts, useCategories } from '@/app/hooks';
+import { db } from '@/db/schema';
+import { deleteRule } from '@/services/autocat';
 import { useSettings } from '@/stores/settings';
 import { askInput, useUI } from '@/stores/ui';
 import { EmptyState } from '@/ui/controls';
 import { AccountField, SwitchField } from '@/ui/form';
 import { Icon, iconEmoji } from '@/ui/Icon';
+import { blankRule, RULE_MATCH_LABEL, RuleEditorSheet, ruleTargetSummary, type RuleDraft } from './RuleEditorSheet';
 
 const snack = (text: string) => useUI.getState().showSnack({ text });
 
@@ -22,6 +26,9 @@ export default function InboxWhitelistPage() {
   const set = useSettings((s) => s.set);
   const update = (patch: Partial<typeof cfg>) => set('inbox', { ...cfg, ...patch });
   const { list: accounts, map: accMap } = useAccounts();
+  const { map: catMap } = useCategories();
+  const rules = useLiveQuery(() => db.rules.orderBy('priority').toArray(), []) ?? [];
+  const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
   const list = cfg.whitelist ?? [];
   const [name, setName] = useState('');
   const [infoOpen, setInfoOpen] = useState(false);
@@ -145,6 +152,33 @@ export default function InboxWhitelistPage() {
           <p className="muted" style={{ fontSize: '0.78rem', margin: '4px 8px' }}>未設定過的卡片會在確認記帳時自動記住；你在這裡手動指定的對應不會被系統自動覆蓋。</p>
         </>
       )}
+
+      <div className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span>自動改名與分類規則（{rules.length}）</span>
+        <button type="button" className="pill accent-pill" onClick={() => setRuleDraft(blankRule())}>＋ 新增</button>
+      </div>
+      {rules.length === 0 ? (
+        <EmptyState emoji="✨" title="還沒有自訂改名／分類規則" text="設定關鍵字（例如通知裡的「遠東百貨板橋分公司」），之後自動入帳就會自動改成你指定的名稱（如「牛肉麵」）與類別（如「晚餐」）。" />
+      ) : (
+        <div className="list">
+          {rules.map((r) => (
+            <div key={r.id} className="row" style={{ opacity: r.enabled ? 1 : 0.55 }}>
+              <span className="row-main">
+                <span className="row-title">「{r.keyword}」</span>
+                <span className="row-sub">
+                  {RULE_MATCH_LABEL[r.match]} · {ruleTargetSummary(r, catMap)}{r.hits > 0 ? ` · 命中 ${r.hits} 次` : ''}
+                </span>
+              </span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="pill" onClick={() => setRuleDraft({ ...r })}>編輯</button>
+                <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => void deleteRule(r.id).then(() => snack('已刪除規則'))}>移除</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <RuleEditorSheet draft={ruleDraft} onChange={setRuleDraft} onClose={() => setRuleDraft(null)} />
 
       {infoOpen && (
         <div className="whatsnew-wrap" role="dialog" aria-modal="true" aria-labelledby="whitelist-info-title">
