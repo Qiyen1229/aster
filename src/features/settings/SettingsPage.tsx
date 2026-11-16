@@ -334,9 +334,9 @@ function AiHubSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
     <Sheet open={open} onClose={onClose} title="Cilo">
       <div className="list">
         {AUTH_ENABLED && (
-          <Row icon="slidersHorizontal" tint="#8E8E93" label="Cilo設定" onClick={() => navTo('/settings/ai')} />
+          <Row icon="ai" tint="#17181c" label="Cilo設定" onClick={() => navTo('/settings/ai')} />
         )}
-        <Row icon="ai" tint="#17181c" label="異常提醒" onClick={() => navTo('/ai')} />
+        <Row icon="slidersHorizontal" tint="#8E8E93" label="異常提醒" onClick={() => navTo('/ai')} />
       </div>
     </Sheet>
   );
@@ -437,21 +437,10 @@ function AboutHubSheet({ open, onClose }: { open: boolean; onClose: () => void }
   );
 }
 
-/** 通知集合面板 */
-function IntegrationHubSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const navTo = useHubNav(onClose);
-  return (
-    <Sheet open={open} onClose={onClose} title="通知">
-      <div className="list">
-        <Row icon="bell" tint="#FF3B30" label="通知與提醒中心" onClick={() => navTo('/settings/notifications')} />
-      </div>
-    </Sheet>
-  );
-}
-
 const PTR_THRESHOLD = 58;
 
 export default function SettingsPage() {
+  const navigate = useNavigate();
   const s = useSettings();
   const auth = useAuth();
   const [pwOpen, setPwOpen] = useState(false);
@@ -464,7 +453,6 @@ export default function SettingsPage() {
   const [secOpen, setSecOpen] = useState(false);
   const [dataOpen, setDataOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [integOpen, setIntegOpen] = useState(false);
 
   // 下拉刷新（Pull-to-Refresh）：硬體加速、零重繪
   const [armed, setArmed] = useState(false);
@@ -691,7 +679,7 @@ export default function SettingsPage() {
         <Row icon="palette" tint="#0A84FF" label="主題" newSince="4.1.29" onClick={() => setLookOpen(true)}>
           <span className="row-value muted" style={{ fontSize: '0.85rem' }}>{s.theme === 'system' ? '跟隨系統' : s.theme === 'dark' ? '深色' : '淺色'} · {PALETTES.find((p) => p.key === (s.themePalette ?? 'default'))?.name ?? '經典'}{(s.themePalette ?? 'default') === 'default' ? ` · ${ACCENTS.find((a) => a.key === s.accent)?.name ?? ''}` : ''}</span>
         </Row>
-        <Row icon="bell" tint="#FF3B30" label="通知" onClick={() => setIntegOpen(true)} />
+        <Row icon="bell" tint="#FF3B30" label="通知與提醒" onClick={() => navigate('/settings/notifications')} />
       </Group>
 
       {/* 4. 系統與資料 */}
@@ -727,7 +715,6 @@ export default function SettingsPage() {
       <AiHubSheet open={aiOpen} onClose={() => setAiOpen(false)} />
       <AppearanceSheet open={lookOpen} onClose={() => setLookOpen(false)} />
       <PrefsSheet open={prefsOpen} onClose={() => setPrefsOpen(false)} />
-      <IntegrationHubSheet open={integOpen} onClose={() => setIntegOpen(false)} />
       <SecurityHubSheet
         open={secOpen}
         onClose={() => setSecOpen(false)}

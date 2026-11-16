@@ -319,7 +319,7 @@ export default function HomePage() {
       </div>
 
       {/* 頂部功能列：月份選取 + 動作按鈕 */}
-      <header className="home-topbar">
+      <header className="home-topbar" key={travelProject ? 'travel' : 'normal'}>
         {travelProject ? (
           <span className="month-selector-text num travel-topbar-range" aria-label="旅程日期">
             {Number(travelProject.start.slice(5, 7))}/{Number(travelProject.start.slice(8, 10))}

@@ -46,5 +46,9 @@ export function applyTheme(s: Partial<Pick<Settings, 'theme' | 'accent' | 'upCol
     delete root.dataset.mode;
   }
   const metaColor = getComputedStyle(root).getPropertyValue('--bg').trim();
-  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', metaColor));
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
+    m.setAttribute('content', metaColor);
+    // iOS Safari / PWA 動態切換模式時，重新掛載同一個節點可強制重繪頂部狀態列
+    m.parentNode?.appendChild(m);
+  });
 }
