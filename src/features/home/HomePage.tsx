@@ -203,6 +203,7 @@ export default function HomePage() {
   }, [selected, travelProject?.id]);
 
   // 投資資料與盈虧日曆計算
+  const fetchedHistRef = useRef<Set<string>>(new Set());
   const invData = useLiveQuery(async () => {
     const [stocks, trades, priceCaches, priceHistories] = await Promise.all([
       db.stocks.toArray(),
@@ -210,11 +211,12 @@ export default function HomePage() {
       db.price_cache.toArray(),
       db.price_history.toArray(),
     ]);
+    const histFrom = addDays(gridStart, -10);
     return {
       stocks,
       trades: trades.filter((t) => !t.deletedAt),
       priceCaches,
-      priceHistories: priceHistories.filter((h) => h.date >= gridStart && h.date <= gridEnd),
+      priceHistories: priceHistories.filter((h) => h.date >= histFrom && h.date <= gridEnd),
     };
   }, [gridStart, gridEnd]);
 
@@ -244,22 +246,41 @@ export default function HomePage() {
 
   const selectedDayPnl = pnlData.days.get(selected);
 
-  // 切換到盈虧日曆時，若有持股尚未取得近 30 天日線，於背景預載入
+  // 切換到盈虧日曆時，若有持股尚未取得近 30 天日線、或日線未更新到上一個平日（例如週五缺漏），於背景補抓
   useEffect(() => {
     if (calendarMode !== 'pnl' || !invData) return;
     const heldStockIds = new Set(invData.trades.map((t) => t.stockId));
     const heldStocks = invData.stocks.filter((s) => heldStockIds.has(s.id));
     if (heldStocks.length === 0) return;
 
-    const cachedIds = new Set(invData.priceHistories.map((h) => h.stockId));
-    for (const stock of heldStocks) {
-      if (!cachedIds.has(stock.id)) {
-        import('@/services/quotes/registry').then((m) => {
-          m.fetchHistory(stock, '1m').catch(() => {});
-        });
-      }
+    const today = todayKey();
+    // 找嚴格早於 today（且不超過 gridEnd）的最近一個平日（週一～週五）
+    let expected = addDays(today < gridEnd ? today : addDays(gridEnd, 1), -1);
+    while (fromDateKey(expected).getDay() === 0 || fromDateKey(expected).getDay() === 6) {
+      expected = addDays(expected, -1);
     }
-  }, [calendarMode, invData]);
+
+    const latestByStock = new Map<string, string>();
+    for (const h of invData.priceHistories) {
+      if (h.date >= today) continue;
+      const cur = latestByStock.get(h.stockId);
+      if (!cur || h.date > cur) latestByStock.set(h.stockId, h.date);
+    }
+
+    const stale = heldStocks.filter((stock) => {
+      const latest = latestByStock.get(stock.id);
+      const needsFetch = !latest || (expected >= gridStart && latest < expected);
+      const key = `${stock.id}:${expected}`;
+      if (!needsFetch || fetchedHistRef.current.has(key)) return false;
+      fetchedHistRef.current.add(key);
+      return true;
+    });
+    if (stale.length === 0) return;
+
+    import('@/services/quotes/registry').then((m) => {
+      for (const stock of stale) m.fetchHistory(stock, '1m').catch(() => {});
+    });
+  }, [calendarMode, invData, gridStart, gridEnd]);
 
   const goMonth = (y: number, m0: number) => {
     const target = new Date(y, m0, 1);

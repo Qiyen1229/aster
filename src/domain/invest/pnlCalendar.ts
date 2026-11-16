@@ -123,11 +123,11 @@ export function computePnlCalendar(params: ComputePnlCalendarParams): {
 
   // 取得不重複日期清單（由 startDate 到 endDate）
   const allDates: string[] = [];
-  const currD = new Date(startDate);
-  const endD = new Date(endDate);
+  const currD = new Date(`${startDate}T00:00:00Z`);
+  const endD = new Date(`${endDate}T00:00:00Z`);
   while (currD <= endD) {
     allDates.push(currD.toISOString().slice(0, 10));
-    currD.setDate(currD.getDate() + 1);
+    currD.setUTCDate(currD.getUTCDate() + 1);
   }
 
   // 依標的依序模擬每個日期的持股與損益
@@ -160,10 +160,10 @@ export function computePnlCalendar(params: ComputePnlCalendarParams): {
     const simStart = firstTradeDate < startDate ? firstTradeDate : startDate;
 
     const simDates: string[] = [];
-    const simD = new Date(simStart);
+    const simD = new Date(`${simStart}T00:00:00Z`);
     while (simD <= endD) {
       simDates.push(simD.toISOString().slice(0, 10));
-      simD.setDate(simD.getDate() + 1);
+      simD.setUTCDate(simD.getUTCDate() + 1);
     }
 
     for (const d of simDates) {

@@ -18,6 +18,7 @@ import { db } from '@/db/schema';
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
 import { AUTH_ENABLED, useAuth } from '@/stores/auth';
+import { suggestAccount } from './autocat';
 import { bookDrafts, fallbackAccount, parseContext, resolveDraft, type ResolvedDraft } from './quickentry';
 
 export interface InboxRaw {
@@ -236,9 +237,9 @@ export function itemDate(it: Pick<InboxRaw, 'occurred' | 'created_at'>, today = 
 
 type Ctx = Awaited<ReturnType<typeof parseContext>>;
 
-/** 卡片名稱 → 帳戶：學過的對應優先，其次是名稱比對（「玉山 Pi 卡」→ 玉山銀行） */
+/** 卡片名稱 → 帳戶：學過的對應優先，其次是名稱比對（「玉山 Pi 卡」→ 玉山銀行）；LINE 聊天訊息不當作卡片 */
 export function cardAccount(card: string, ctx: Ctx, cardMap: Record<string, string>): string | undefined {
-  if (!card) return undefined;
+  if (!card || isLineChat(card)) return undefined;
   const learned = cardMap[card];
   if (learned && ctx.accounts.some((a) => a.id === learned)) return learned;
   return findAccounts(card, ctx.accounts)[0]?.id;
@@ -292,8 +293,20 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
       targetAcc = byCard ?? d.accountId;
     }
     const matchText = [d.note, it.merchant, it.text].filter(Boolean).join('\n');
-    const r = await resolveDraft({ ...d, accountId: targetAcc }, base, matchText);
-    out.push(targetAcc ? { ...r, accountId: targetAcc, accountSource: 'text' } : r);
+    // 使用者在自動分類規則明確「指定帳戶」時，優先於通知文字／卡片推測
+    const ruleAcc = d.kind !== 'transfer' && matchText
+      ? await suggestAccount(matchText, d.kind === 'income' ? 'income' : 'expense').catch(() => undefined)
+      : undefined;
+    const explicitRuleAcc = ruleAcc?.source === 'rule' ? ruleAcc.accountId : undefined;
+    const preferredAcc = explicitRuleAcc ?? targetAcc;
+    const r = await resolveDraft({ ...d, accountId: preferredAcc }, base, matchText);
+    out.push(
+      explicitRuleAcc
+        ? { ...r, accountId: explicitRuleAcc, accountSource: 'rule' }
+        : targetAcc
+          ? { ...r, accountId: targetAcc, accountSource: 'text' }
+          : r,
+    );
   }
   return out;
 }
@@ -407,9 +420,10 @@ export async function mergeDuplicate(e: InboxEntry): Promise<boolean> {
   return true;
 }
 
-/** 記住「這張卡 → 這個帳戶」（使用者已設定過的對應不會被自動覆蓋） */
+/** 記住「這張卡 → 這個帳戶」（使用者已設定過的對應不會被自動覆蓋；LINE 聊天不學習） */
 export function learnCard(card: string | undefined, accountId: string | undefined, opts: { overwrite?: boolean } = {}) {
   if (!card || !accountId) return;
+  if (!opts.overwrite && isLineChat(card)) return;
   const s = useSettings.getState();
   const existing = s.inbox.cardMap[card];
   if (existing && !opts.overwrite) return;
@@ -432,7 +446,10 @@ export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplic
       txIds.push(...res.txIds);
       transferIds.push(...res.transferIds);
       bookedItemIds.push(e.item.id);
-      learnCard(e.item.card, e.drafts[0]?.accountId);
+      const first = e.drafts[0];
+      if (first && first.accountSource !== 'default' && !(e.item.source === 'notify' && isLineChat(e.item.card))) {
+        learnCard(e.item.card, first.accountId);
+      }
     } catch (err) {
       console.warn(`[inbox] 入帳失敗，保留於收件匣：item ${e.item.id}`, err);
     }

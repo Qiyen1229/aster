@@ -6,6 +6,11 @@ export interface NlpAccount { id: string; name: string; type?: string }
 export interface NlpCategory { id: string; name: string; kind: 'expense' | 'income'; parentId: string }
 
 const ACCOUNT_SUFFIX = /(銀行|帳戶|账户|戶頭|信用卡|金融卡|簽帳卡|卡片|卡|錢包|帳號)$/;
+/** 多詞帳戶拆詞時略過過於通用的字眼，避免「Line Money」讓所有 LINE 通知都被誤判為該帳戶 */
+const GENERIC_ACCOUNT_WORDS = new Set([
+  'line', 'money', 'pay', 'bank', 'card', 'cash', 'wallet', 'account',
+  'twd', 'usd', 'jpy', 'eur', 'hkd', 'cny', 'rmb', 'plus', 'pro', 'max',
+]);
 
 /** 帳戶的比對詞：完整名稱、去掉「銀行／卡／帳戶」的名稱（至少 2 個字） */
 function accountTerms(a: NlpAccount): string[] {
@@ -13,13 +18,26 @@ function accountTerms(a: NlpAccount): string[] {
   const short = n.replace(ACCOUNT_SUFFIX, '').trim();
   const terms = [n];
   if (short.length >= 2 && short !== n) terms.push(short);
-  // 「台新 Richart」「國泰 CUBE 卡」：每個詞也可以單獨稱呼
-  for (const w of short.split(/\s+/)) if (w.length >= 2 && w !== short && !ACCOUNT_SUFFIX.test(w)) terms.push(w);
+  // 「台新 Richart」「國泰 CUBE 卡」：每個詞也可以單獨稱呼（排除過於通用的字眼）
+  for (const w of short.split(/\s+/)) {
+    if (w.length >= 2 && w !== short && !ACCOUNT_SUFFIX.test(w) && !GENERIC_ACCOUNT_WORDS.has(w.toLowerCase())) {
+      terms.push(w);
+    }
+  }
   if (a.type === 'cash') terms.push('現金');
   return terms.map((x) => x.toLowerCase());
 }
 
 export interface AccountHit { id: string; index: number; term: string }
+
+function findTermIndex(lower: string, term: string): number {
+  if (/^[a-z0-9]+$/.test(term)) {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).exec(lower);
+    return m ? m.index : -1;
+  }
+  return lower.indexOf(term);
+}
 
 /** 依出現位置找出提到的帳戶（同一段文字只算最長的那個詞） */
 export function findAccounts(text: string, accounts: NlpAccount[]): AccountHit[] {
@@ -27,7 +45,7 @@ export function findAccounts(text: string, accounts: NlpAccount[]): AccountHit[]
   const hits: AccountHit[] = [];
   for (const a of accounts) {
     for (const term of accountTerms(a)) {
-      const i = lower.indexOf(term);
+      const i = findTermIndex(lower, term);
       if (i >= 0) hits.push({ id: a.id, index: i, term });
     }
   }

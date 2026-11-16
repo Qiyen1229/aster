@@ -25,6 +25,16 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.44', date: '2026-11-16',
+    features: [
+      {
+        title: '自動記帳與體驗優化',
+        intro: '修復自動記帳「指定帳戶」規則被通知字眼覆蓋及通用詞誤判帳戶的問題、修正 iOS 鍵盤彈出時抽屜上移留白、投資頁下拉更新改為 GPU 零重繪動畫，並自動補齊盈虧日曆缺漏的前一交易日日線。',
+        howto: '在「自動入帳偏好」設定預設帳戶或規則指定帳戶後，自動記帳會優先依規則入帳；切換至盈虧日曆即會自動補齊近期交易日損益。',
+      },
+    ],
+  },
+  {
     version: '4.1.43', date: '2026-11-15',
     features: [
       {

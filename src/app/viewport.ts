@@ -61,21 +61,34 @@ export function installViewportTracking(): () => void {
   const vv = window.visualViewport;
   const root = document.documentElement;
   let raf = 0;
+  const focusTimers: number[] = [];
+  const clearFocusTimers = () => { while (focusTimers.length) clearTimeout(focusTimers.pop()); };
   const update = () => {
     raf = 0;
     if (!vv) return;
-    const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
-    const open = kb > KEYBOARD_MIN_PX && isTextInput(document.activeElement);
-    root.style.setProperty('--kb', open ? `${kb}px` : '0px');
+    const kbHeight = Math.max(0, Math.round(window.innerHeight - vv.height));
+    const open = kbHeight > KEYBOARD_MIN_PX && isTextInput(document.activeElement);
+    const kbBottom = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    const vvt = Math.max(0, Math.round(vv.offsetTop));
+    root.style.setProperty('--kb', open ? `${kbBottom}px` : '0px');
     root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
+    root.style.setProperty('--vvt', open ? `${vvt}px` : '0px');
     root.classList.toggle('kb-open', open);
   };
   const schedule = () => { if (!raf) raf = requestAnimationFrame(update); };
   vv?.addEventListener('resize', schedule);
   vv?.addEventListener('scroll', schedule);
-  // 失焦後鍵盤還在收起中，稍等再量
-  const onFocusOut = () => setTimeout(schedule, 50);
-  window.addEventListener('focusin', schedule);
+  // 失焦後鍵盤還在收起中，稍等再量；聚焦時 iOS 會非同步捲動 visualViewport（offsetTop），補量兩次避免破洞
+  const onFocusIn = () => {
+    schedule();
+    clearFocusTimers();
+    focusTimers.push(window.setTimeout(schedule, 100), window.setTimeout(schedule, 300));
+  };
+  const onFocusOut = () => {
+    clearFocusTimers();
+    focusTimers.push(window.setTimeout(schedule, 50), window.setTimeout(schedule, 200));
+  };
+  window.addEventListener('focusin', onFocusIn);
   window.addEventListener('focusout', onFocusOut);
   // 回到 App（可能在「設定」改了文字大小、或背景休眠喚醒）時重新計算字級與視窗狀態
   const visTimers: number[] = [];
@@ -86,6 +99,7 @@ export function installViewportTracking(): () => void {
     if (!isTextInput(document.activeElement)) {
       root.classList.remove('kb-open');
       root.style.setProperty('--kb', '0px');
+      root.style.setProperty('--vvt', '0px');
       if (vv && vv.offsetTop > 0) {
         window.scrollTo(0, 0);
       }
@@ -102,9 +116,10 @@ export function installViewportTracking(): () => void {
   update();
   return () => {
     clearVisTimers();
+    clearFocusTimers();
     vv?.removeEventListener('resize', schedule);
     vv?.removeEventListener('scroll', schedule);
-    window.removeEventListener('focusin', schedule);
+    window.removeEventListener('focusin', onFocusIn);
     window.removeEventListener('focusout', onFocusOut);
     document.removeEventListener('visibilitychange', onVisible);
   };
