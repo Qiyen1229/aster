@@ -427,6 +427,11 @@ export interface CategoryRule extends BaseRow {
   keyword: string;
   match: 'contains' | 'equals' | 'regex';
   kind: CategoryKind | 'any';
+  /** 選填：排除關鍵字（以逗號／頓號分隔，命中則不套用此規則） */
+  excludeKeyword?: string;
+  /** 選填：金額下限／上限（原幣數值） */
+  minAmount?: number;
+  maxAmount?: number;
   /** 選填：命中後自動改寫的名稱／備註（例如將冗長店家代碼改為「牛肉麵」） */
   renameNote?: string;
   categoryId: string;

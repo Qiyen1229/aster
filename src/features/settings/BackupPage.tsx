@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
 import { AUTH_ENABLED } from '@/stores/auth';
-import { BackupPassphraseError, MIN_BACKUP_PASSPHRASE, exportBackup, exportCSV, exportXLSX, isEncryptedBackup, restoreBackup } from '@/services/backup';
+import { BackupPassphraseError, MIN_BACKUP_PASSPHRASE, exportBackup, exportCSV, exportXLSX, isEncryptedBackup, restoreBackup, verifyBackup, type BackupVerifySummary } from '@/services/backup';
 import { loadSettings } from '@/db/repo/settings';
 import { accountingMonth, todayKey } from '@/domain/period';
 import { useSettings } from '@/stores/settings';
@@ -26,9 +26,10 @@ export default function BackupPage() {
   const [enc, setEnc] = useState(false);
   const [pass, setPass] = useState('');
   const [pass2, setPass2] = useState('');
-  const [pending, setPending] = useState<File | null>(null);
+  const [pending, setPending] = useState<{ file: File; action: 'restore' | 'verify' } | null>(null);
   const [restorePass, setRestorePass] = useState('');
   const [restoreErr, setRestoreErr] = useState('');
+  const [verified, setVerified] = useState<BackupVerifySummary | null>(null);
   const m = accountingMonth(todayKey(), msd);
   const [range, setRange] = useState({ start: `${todayKey().slice(0, 4)}-01-01`, end: todayKey() });
   const info = useLiveQuery(async () => ({
@@ -85,7 +86,7 @@ export default function BackupPage() {
             if (!f) return;
             if (mode === 'replace' && !await ask(AUTH_ENABLED ? '完全取代會刪除目前所有資料，並同步到這個帳號的其他裝置，確定？' : '完全取代會刪除這台裝置上目前所有資料，確定？')) return;
             void (async () => {
-              if (await isEncryptedBackup(f)) { setPending(f); setRestorePass(''); setRestoreErr(''); return; } // 加密檔：先問密碼
+              if (await isEncryptedBackup(f)) { setPending({ file: f, action: 'restore' }); setRestorePass(''); setRestoreErr(''); return; } // 加密檔：先問密碼
               await run('restore', async () => {
                 const r = await restoreBackup(f, mode);
                 useSettings.getState().hydrate(await loadSettings());
@@ -94,27 +95,64 @@ export default function BackupPage() {
             })();
           }} />
         </label>
+        <label className="row" style={{ cursor: 'pointer' }}>
+          <span className="row-main">
+            <span className="row-title">{busy === 'verify' ? '演練驗證中…' : '演練還原（僅檢查備份檔，不寫入）'}</span>
+            <span className="row-sub">測試備份檔是否完整可解密、查看內含筆數</span>
+          </span>
+          <input type="file" accept="application/json,.json" className="sr-only" onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (!f) return;
+            setVerified(null);
+            if (await isEncryptedBackup(f)) { setPending({ file: f, action: 'verify' }); setRestorePass(''); setRestoreErr(''); return; }
+            await run('verify', async () => {
+              const r = await verifyBackup(f);
+              setVerified(r);
+              snack(`演練成功 ✓ 共 ${r.totalRows} 筆資料`);
+            });
+          }} />
+        </label>
       </div>
+
+      {verified && (
+        <div className="card">
+          <div className="row-title">✅ 備份演練通過（未改動任何現有資料）</div>
+          <div className="row-sub" style={{ whiteSpace: 'normal', marginTop: 4 }}>
+            版本 {verified.version || '未知'}{verified.encrypted ? ' · 已加密' : ''} · 匯出時間 {verified.exportedAt ? new Date(verified.exportedAt).toLocaleString('zh-TW') : '未知'}
+          </div>
+          <div className="row-sub" style={{ whiteSpace: 'normal', marginTop: 4 }}>
+            帳目 {verified.counts.transactions} 筆 · 帳戶 {verified.counts.accounts} 個 · 分類 {verified.counts.categories} 個 · 規則 {verified.counts.rules} 條 · 照片 {verified.counts.attachments} 張（共 {verified.totalRows} 筆）
+          </div>
+        </div>
+      )}
 
       {pending && (
         <div className="card" role="dialog" aria-label="輸入備份密碼">
           <div className="row-title">🔐 這是加密的備份檔</div>
-          <div className="row-sub" style={{ whiteSpace: 'normal', margin: '4px 0 8px' }}>{pending.name}。請輸入匯出時設定的備份密碼（還原方式：{mode === 'merge' ? '合併' : '完全取代'}）。</div>
+          <div className="row-sub" style={{ whiteSpace: 'normal', margin: '4px 0 8px' }}>{pending.file.name}。請輸入匯出時設定的備份密碼（{pending.action === 'verify' ? '僅演練驗證，不寫入資料' : `還原方式：${mode === 'merge' ? '合併' : '完全取代'}`}）。</div>
           <input className="input" type="password" autoFocus autoComplete="off" value={restorePass} onChange={(e) => setRestorePass(e.target.value)} aria-label="備份密碼" />
           {restoreErr && <p className="auth-error" role="alert">{restoreErr}</p>}
           <div className="btn-row" style={{ marginTop: 10 }}>
             <button className="btn small secondary" onClick={() => setPending(null)}>取消</button>
-            <button className="btn small" disabled={!restorePass || !!busy} onClick={() => void run('restore', async () => {
+            <button className="btn small" disabled={!restorePass || !!busy} onClick={() => void run(pending.action, async () => {
               try {
-                const r = await restoreBackup(pending, mode, restorePass);
-                useSettings.getState().hydrate(await loadSettings());
-                setPending(null);
-                snack(`已還原 ${r.rows} 筆資料`);
+                if (pending.action === 'verify') {
+                  const r = await verifyBackup(pending.file, restorePass);
+                  setVerified(r);
+                  setPending(null);
+                  snack(`演練成功 ✓ 共 ${r.totalRows} 筆資料`);
+                } else {
+                  const r = await restoreBackup(pending.file, mode, restorePass);
+                  useSettings.getState().hydrate(await loadSettings());
+                  setPending(null);
+                  snack(`已還原 ${r.rows} 筆資料`);
+                }
               } catch (e) {
                 if (e instanceof BackupPassphraseError) { setRestoreErr(e.message); return; }
                 throw e;
               }
-            })}>{busy === 'restore' ? '還原中…' : '解密並還原'}</button>
+            })}>{busy === 'verify' ? '驗證中…' : busy === 'restore' ? '還原中…' : pending.action === 'verify' ? '解密並演練' : '解密並還原'}</button>
           </div>
         </div>
       )}

@@ -98,12 +98,49 @@ async function decryptBackup(env: Record<string, unknown>, passphrase: string | 
 
 export interface RestoreSummary { tables: number; rows: number }
 
-export async function restoreBackup(file: File, mode: 'replace' | 'merge', passphrase?: string): Promise<RestoreSummary> {
+export interface BackupVerifySummary {
+  version: string;
+  schema: number;
+  exportedAt: string;
+  encrypted: boolean;
+  totalRows: number;
+  counts: { transactions: number; accounts: number; categories: number; rules: number; attachments: number };
+}
+
+async function parseBackupPayload(file: File, passphrase?: string): Promise<{ json: any; encrypted: boolean }> {
   let json = JSON.parse(await file.text());
-  if (json?.format === ENC_FORMAT) json = await decryptBackup(json, passphrase);
+  const encrypted = json?.format === ENC_FORMAT;
+  if (encrypted) json = await decryptBackup(json, passphrase);
   // 'clure'：更名為 Aster 前的備份檔，格式相同
   if ((json.app !== 'aster' && json.app !== 'clure') || !json.data) throw new Error('不是 Aster 的備份檔');
   if (json.schema > db.verno) throw new Error('備份檔來自較新版本，請先更新 App');
+  return { json, encrypted };
+}
+
+/** 還原演練：解密並檢查備份檔結構與筆數，不寫入任何資料 */
+export async function verifyBackup(file: File, passphrase?: string): Promise<BackupVerifySummary> {
+  const { json, encrypted } = await parseBackupPayload(file, passphrase);
+  const d = json.data as Record<string, unknown[] | undefined>;
+  const countOf = (k: string) => (Array.isArray(d[k]) ? d[k]!.length : 0);
+  const totalRows = Object.values(d).reduce((s, v) => s + (Array.isArray(v) ? v.length : 0), 0);
+  return {
+    version: String(json.version ?? ''),
+    schema: Number(json.schema ?? 0),
+    exportedAt: String(json.exportedAt ?? ''),
+    encrypted,
+    totalRows,
+    counts: {
+      transactions: countOf('transactions'),
+      accounts: countOf('accounts'),
+      categories: countOf('categories'),
+      rules: countOf('rules'),
+      attachments: countOf('attachments'),
+    },
+  };
+}
+
+export async function restoreBackup(file: File, mode: 'replace' | 'merge', passphrase?: string): Promise<RestoreSummary> {
+  const { json } = await parseBackupPayload(file, passphrase);
   let rows = 0, tables = 0;
   const names = db.tables.map((t) => t.name).filter((n) => !DEVICE_STATE_TABLES.has(n));
   // 這台裝置專屬的設定（App 鎖、Face ID 憑證、通知）維持現狀，不被備份檔覆蓋

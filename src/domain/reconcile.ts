@@ -40,7 +40,7 @@ export interface LedgerRow {
   text: string;
 }
 
-export type VarianceReason = 'fx' | 'overseas_fee' | 'other';
+export type VarianceReason = 'fx' | 'overseas_fee' | 'fee' | 'date_shift' | 'refund' | 'other';
 
 export interface Match {
   stmt: StmtRow;
@@ -56,6 +56,8 @@ export interface ReconcileReport {
   variances: Match[];
   missing: StmtRow[];
   extra: LedgerRow[];
+  /** 多記且疑似與其他帳目重複的列 */
+  extraDuplicates: LedgerRow[];
   /** 帳單明細合計（支出為正、收入為負的淨支出）與已配對帳目合計的差 */
   stmtTotalMinor: number;
   ledgerMatchedTotalMinor: number;
@@ -79,9 +81,13 @@ function score(s: StmtRow, l: LedgerRow): Cand | null {
 }
 
 function reasonOf(c: Cand, accountCurrency: string): VarianceReason {
+  if (/退款|退刷|退貨|refund/i.test(`${c.s.text} ${c.l.text}`) || c.s.kind === 'income') return 'refund';
   if (c.fxMatch || c.l.origCurrency !== accountCurrency || !!c.s.foreignCurrency) return 'fx';
   const ratio = c.l.accountMinor > 0 ? c.diff / c.l.accountMinor : 0;
-  return ratio >= 0.012 && ratio <= 0.018 ? 'overseas_fee' : 'other';
+  if (ratio >= 0.012 && ratio <= 0.018) return 'overseas_fee';
+  if (FEE_LIKE.test(c.s.text)) return 'fee';
+  if (c.gap > 0) return 'date_shift';
+  return 'other';
 }
 
 /** 勾稽：貪婪一對一配對（先配最有把握的），回傳對帳差異報告 */
@@ -113,9 +119,12 @@ export function reconcile(stmt: StmtRow[], ledger: LedgerRow[], accountCurrency:
     const lo = dates[0], hi = dates[dates.length - 1];
     extra = ledger.filter((l) => !usedL.has(l.id) && l.date >= shift(lo, -DAY_TOLERANCE) && l.date <= shift(hi, DAY_TOLERANCE));
   }
+  const extraDuplicates = extra.filter((e) =>
+    ledger.some((other) => other.id !== e.id && other.kind === e.kind && other.accountMinor === e.accountMinor && dayGap(other.date, e.date) <= 1 && (shopSimilar(other.text, e.text) || !e.text.trim())),
+  );
   const net = (k: 'expense' | 'income', v: number) => (k === 'expense' ? v : -v);
   return {
-    matched, variances, missing, extra,
+    matched, variances, missing, extra, extraDuplicates,
     stmtTotalMinor: stmt.reduce((a, s) => a + net(s.kind, s.amountMinor), 0),
     ledgerMatchedTotalMinor: [...matched, ...variances].reduce((a, m) => a + net(m.ledger.kind, m.ledger.accountMinor), 0),
   };
@@ -130,6 +139,9 @@ function shift(date: string, days: number): string {
 export const REASON_LABEL: Record<VarianceReason, string> = {
   fx: '外幣匯差（記帳時用預估匯率，與實際請款金額不同）',
   overseas_fee: '海外交易手續費（約 1.5%）',
+  fee: '手續費／服務費差異',
+  date_shift: '入帳日期差（請款日與消費日相差 1–3 天）',
+  refund: '退款／退刷折抵差異',
   other: '金額不同',
 };
 

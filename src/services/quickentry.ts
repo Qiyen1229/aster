@@ -53,7 +53,7 @@ export async function resolveDraft(d: DraftEntry, fallbackAccountId: string, mat
   let tagIds: string[] = [];
   let categorySource: ResolvedDraft['categorySource'] = categoryId ? 'text' : 'default';
   if (d.kind !== 'transfer' && query) {
-    const sug = await suggestCategory(query, kind).catch(() => null);
+    const sug = await suggestCategory(query, kind, d.amount).catch(() => null);
     // 規則優先於文字裡的分類名稱（使用者特地設的）；商家記憶只在文字沒寫分類時使用
     if (sug && (sug.source === 'rule' || !categoryId)) {
       if (sug.categoryId) {
@@ -68,7 +68,7 @@ export async function resolveDraft(d: DraftEntry, fallbackAccountId: string, mat
   let accountId = d.accountId;
   let accountSource: ResolvedDraft['accountSource'] = accountId ? 'text' : 'default';
   if (!accountId && query) {
-    const acc = await suggestAccount(query, kind).catch(() => undefined);
+    const acc = await suggestAccount(query, kind, d.amount).catch(() => undefined);
     if (acc) { accountId = acc.accountId; accountSource = acc.source; }
   }
   return { ...d, note, accountId: accountId ?? fallbackAccountId, categoryId, tagIds, categorySource, accountSource };

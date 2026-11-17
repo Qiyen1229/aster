@@ -50,10 +50,10 @@ async function load() {
 }
 
 /** 依備註／商家文字建議分類：規則優先，其次是商家記憶 */
-export async function suggestCategory(text: string, kind: CategoryKind): Promise<CategorySuggestion | null> {
+export async function suggestCategory(text: string, kind: CategoryKind, amount?: number): Promise<CategorySuggestion | null> {
   if (!text.trim()) return null;
   const { rules, memory } = await load();
-  const r = matchRule(rules, text, kind);
+  const r = matchRule(rules, text, kind, amount);
   if (r) {
     const fallbackCat = r.categoryId || recallCategory(memory, text, kind) || '';
     return {
@@ -71,10 +71,10 @@ export async function suggestCategory(text: string, kind: CategoryKind): Promise
 /**
  * 判斷帳戶：規則有指定帳戶 → 過去同一個商家最常用的帳戶 → 沒有則回傳 undefined（由呼叫端套用預設帳戶）
  */
-export async function suggestAccount(text: string, kind: CategoryKind = 'expense'): Promise<{ accountId: string; source: 'rule' | 'memory' } | undefined> {
+export async function suggestAccount(text: string, kind: CategoryKind = 'expense', amount?: number): Promise<{ accountId: string; source: 'rule' | 'memory' } | undefined> {
   if (!text.trim()) return undefined;
   const { rules, accounts } = await load();
-  const r = matchRule(rules.filter((x) => x.accountId), text, kind);
+  const r = matchRule(rules.filter((x) => x.accountId), text, kind, amount);
   if (r?.accountId) return { accountId: r.accountId, source: 'rule' };
   const a = recallCategory(accounts, text, kind);
   return a ? { accountId: a, source: 'memory' } : undefined;

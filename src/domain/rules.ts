@@ -13,6 +13,9 @@ export interface RuleLike {
   keyword: string;
   match: RuleMatch;
   kind: CategoryKind | 'any';
+  excludeKeyword?: string;
+  minAmount?: number;
+  maxAmount?: number;
   renameNote?: string;
   categoryId: string;
   tagIds?: string[];
@@ -30,8 +33,17 @@ export function normText(s: string): string {
     .trim();
 }
 
-export function ruleMatches(rule: RuleLike, text: string): boolean {
+export function ruleMatches(rule: RuleLike, text: string, amount?: number): boolean {
   if (!rule.keyword.trim() || rule.enabled === false) return false;
+  if (amount !== undefined) {
+    if (rule.minAmount !== undefined && amount < rule.minAmount) return false;
+    if (rule.maxAmount !== undefined && amount > rule.maxAmount) return false;
+  }
+  if (rule.excludeKeyword?.trim()) {
+    const tNorm = normText(text);
+    const excludes = rule.excludeKeyword.split(/[,，、]/).map((s) => normText(s)).filter(Boolean);
+    if (excludes.some((ex) => tNorm.includes(ex))) return false;
+  }
   if (rule.match === 'regex') {
     try { return new RegExp(rule.keyword, 'i').test(text); } catch { return false; }
   }
@@ -41,12 +53,12 @@ export function ruleMatches(rule: RuleLike, text: string): boolean {
 }
 
 /** 依優先順序找第一條命中的規則（kind 不符的略過） */
-export function matchRule<R extends RuleLike>(rules: R[], text: string, kind: CategoryKind): R | undefined {
+export function matchRule<R extends RuleLike>(rules: R[], text: string, kind: CategoryKind, amount?: number): R | undefined {
   if (!text.trim()) return undefined;
   return [...rules]
     .filter((r) => r.kind === 'any' || r.kind === kind)
     .sort((a, b) => a.priority - b.priority || b.keyword.length - a.keyword.length)
-    .find((r) => ruleMatches(r, text));
+    .find((r) => ruleMatches(r, text, amount));
 }
 
 export interface HistoryItem { text: string; categoryId: string; kind: CategoryKind; ts: number }

@@ -3,6 +3,9 @@
  */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { listDeletedTransactions, restoreTransactions } from '@/db/repo/ledger';
+import type { Transaction } from '@/db/types';
+import { formatMoney } from '@/domain/money';
 import { runHealthCheck, storageEstimate, type HealthIssue } from '@/services/health';
 import { useUI } from '@/stores/ui';
 import { EmptyState, SkeletonRows } from '@/ui/controls';
@@ -11,9 +14,15 @@ import { Icon } from '@/ui/Icon';
 export default function HealthPage() {
   const navigate = useNavigate();
   const [issues, setIssues] = useState<HealthIssue[] | null>(null);
+  const [deleted, setDeleted] = useState<Transaction[]>([]);
   const [store, setStore] = useState<Awaited<ReturnType<typeof storageEstimate>>>(null);
   const [busy, setBusy] = useState('');
-  const check = async () => { setIssues(null); setIssues(await runHealthCheck()); };
+  const check = async () => {
+    setIssues(null);
+    const [iss, del] = await Promise.all([runHealthCheck(), listDeletedTransactions(40)]);
+    setIssues(iss);
+    setDeleted(del);
+  };
   useEffect(() => { void check(); void storageEstimate().then(setStore); }, []);
   const mb = (n: number) => `${(n / 1048576).toFixed(1)} MB`;
 
@@ -46,6 +55,39 @@ export default function HealthPage() {
           }}>{busy === i.id ? '修復中…' : '修復'}</button>
         </div>
       ))}
+      {deleted.length > 0 && (
+        <>
+          <div className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>最近刪除的帳目（{deleted.length}）</span>
+            <button type="button" className="pill accent-pill" disabled={!!busy} onClick={async () => {
+              setBusy('restore-all');
+              try {
+                await restoreTransactions(deleted.map((d) => d.id));
+                useUI.getState().showSnack({ text: `已還原 ${deleted.length} 筆帳目` });
+                await check();
+              } finally { setBusy(''); }
+            }}>全部復原</button>
+          </div>
+          <div className="list">
+            {deleted.map((t) => (
+              <div key={t.id} className="row">
+                <span className="row-main">
+                  <span className="row-title">{t.note || t.merchant || '未命名帳目'}</span>
+                  <span className="row-sub">{t.date} · {formatMoney(t.amountMinor, t.currency)}</span>
+                </span>
+                <button type="button" className="pill" disabled={!!busy} onClick={async () => {
+                  setBusy(t.id);
+                  try {
+                    await restoreTransactions([t.id]);
+                    useUI.getState().showSnack({ text: '已復原帳目' });
+                    await check();
+                  } finally { setBusy(''); }
+                }}>復原</button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </main>
   );
 }

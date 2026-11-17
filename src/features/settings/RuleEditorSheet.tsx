@@ -69,9 +69,18 @@ export function RuleEditorSheet({ draft, onChange, onClose, onSaved }: {
         <>
           <div className="list">
             <TextField label="關鍵字" value={draft.keyword} onChange={(v) => onChange({ ...draft, keyword: v })} placeholder="例如：遠東百貨板橋分公司" maxLength={80} />
+            <TextField label="排除關鍵字" value={draft.excludeKeyword ?? ''} onChange={(v) => onChange({ ...draft, excludeKeyword: v || undefined })} placeholder="選填，如：停車、退貨" maxLength={80} />
             <SelectField label="比對方式" value={draft.match} onChange={(v) => onChange({ ...draft, match: v })}
               options={(Object.keys(RULE_MATCH_LABEL) as RuleDraft['match'][]).map((k) => ({ value: k, label: RULE_MATCH_LABEL[k] }))} />
             <TextField label="改寫名稱" value={draft.renameNote ?? ''} onChange={(v) => onChange({ ...draft, renameNote: v })} placeholder="例如：牛肉麵（留空不改名）" maxLength={60} />
+            <div className="field">
+              <span className="label">金額範圍</span>
+              <input inputMode="decimal" placeholder="最低" style={{ width: 84, textAlign: 'right' }} value={draft.minAmount ?? ''}
+                onChange={(e) => { const n = Number(e.target.value); onChange({ ...draft, minAmount: e.target.value.trim() && Number.isFinite(n) ? n : undefined }); }} />
+              <span className="muted">～</span>
+              <input inputMode="decimal" placeholder="最高" style={{ width: 84, textAlign: 'right' }} value={draft.maxAmount ?? ''}
+                onChange={(e) => { const n = Number(e.target.value); onChange({ ...draft, maxAmount: e.target.value.trim() && Number.isFinite(n) ? n : undefined }); }} />
+            </div>
             <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
               <Segmented value={draft.kind} ariaLabel="適用類型" onChange={(v) => onChange({ ...draft, kind: v, categoryId: v === 'any' || catMap.get(draft.categoryId)?.kind === v ? draft.categoryId : '' })}
                 options={[{ value: 'expense', label: '支出' }, { value: 'income', label: '收入' }, { value: 'any', label: '兩者' }]} />

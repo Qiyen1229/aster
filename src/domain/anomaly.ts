@@ -152,16 +152,18 @@ function detectRecurring(input: DetectInput, pool: Transaction[]): Finding[] {
     const priorMed = median(prior);
     const lastAmt = amounts[amounts.length - 1];
 
-    // 漲價：最近一次比先前的穩定金額高 5% 以上、差額至少 1 元
-    if (prior.length >= 2 && priorMed > 0 && lastAmt >= priorMed * 1.05 && lastAmt - priorMed >= 100 && nearMedian(prior) >= 0.7 && sinceLast <= 100) {
-      const pct = Math.round(((lastAmt - priorMed) / priorMed) * 100);
-      const yearly = Math.round((lastAmt - priorMed) * PER_YEAR[period]);
+    // 週期帳目金額變動（漲價或降價超過 5%、差額至少 1 元）
+    const isRecurringTracked = txs.some((t) => !!t.recurringRuleId);
+    if (prior.length >= (isRecurringTracked ? 1 : 2) && priorMed > 0 && Math.abs(lastAmt - priorMed) >= priorMed * 0.05 && Math.abs(lastAmt - priorMed) >= 100 && (prior.length < 2 || nearMedian(prior) >= 0.7) && sinceLast <= 100) {
+      const up = lastAmt > priorMed;
+      const pct = Math.round((Math.abs(lastAmt - priorMed) / priorMed) * 100);
+      const yearly = Math.round(Math.abs(lastAmt - priorMed) * PER_YEAR[period]);
       out.push({
-        id: `price_up:${g.key}:${last.date}`, kind: 'price_up', severity: 'warn',
-        title: `${g.label} 漲價了（${input.fmt(Math.round(priorMed))} → ${input.fmt(lastAmt)}）`,
-        why: `${g.label} 是${PERIOD_TEXT[period]}固定的扣款，前幾次都是約 ${input.fmt(Math.round(priorMed))}，${last.date.slice(5).replace('-', '/')} 這次變成 ${input.fmt(lastAmt)}，多了 ${pct}%。照這個價格，一年會多花約 ${input.fmt(yearly)}。`,
-        tip: '到服務的帳單頁確認是不是漲價或被加了項目；不需要的話可以降級或取消。',
-        amountMinor: lastAmt - Math.round(priorMed), date: last.date, txIds: [last.id],
+        id: `price_up:${g.key}:${last.date}`, kind: 'price_up', severity: up ? 'warn' : 'info',
+        title: `${g.label} ${up ? '漲價了' : '金額變少'}（${input.fmt(Math.round(priorMed))} → ${input.fmt(lastAmt)}）`,
+        why: `${g.label} 是${PERIOD_TEXT[period]}固定的扣款，前幾次都是約 ${input.fmt(Math.round(priorMed))}，${last.date.slice(5).replace('-', '/')} 這次變成 ${input.fmt(lastAmt)}，${up ? '多了' : '少了'} ${pct}%。照這個價格，一年會${up ? '多花' : '少花'}約 ${input.fmt(yearly)}。`,
+        tip: up ? '到服務的帳單頁確認是不是漲價或被加了項目；不需要的話可以降級或取消。' : '如果這是新的固定方案價格，可到週期帳目更新預設金額。',
+        amountMinor: Math.abs(lastAmt - Math.round(priorMed)), date: last.date, txIds: [last.id],
       });
     }
 

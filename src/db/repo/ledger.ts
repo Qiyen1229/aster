@@ -197,6 +197,11 @@ export async function deleteTransactions(ids: string[]): Promise<void> {
   });
 }
 
+export async function listDeletedTransactions(limit = 50): Promise<Transaction[]> {
+  const rows = await db.transactions.filter((t) => !!t.deletedAt && !t.transferId).toArray();
+  return rows.sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0)).slice(0, limit);
+}
+
 export async function restoreTransactions(ids: string[]): Promise<void> {
   await db.transaction('rw', db.transactions, db.transfers, db.accounts, db.durables, async () => {
     for (const id of ids) {
