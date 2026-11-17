@@ -86,6 +86,24 @@ describe('重複扣款', () => {
   it('金額太小（小於 30 元）不提醒', () => {
     expect(detectInsights(base([...filler(40), tx('2026-10-20', '口香糖', 25), tx('2026-10-20', '口香糖', 25)])).filter((x) => x.kind === 'duplicate')).toHaveLength(0);
   });
+  it('同店同金額出現超過 2 次（日常習慣）即不再跳重複提醒', () => {
+    const txs = [tx('2026-10-10', '牛肉麵', 178), tx('2026-10-19', '牛肉麵', 178), tx('2026-10-20', '牛肉麵', 178)];
+    expect(detectInsights(base([...filler(40), ...txs])).filter((x) => x.kind === 'duplicate')).toHaveLength(0);
+  });
+  it('同一店家／分類＋金額被略過超過 2 次後，後續不再跳重複提醒', () => {
+    const a1 = tx('2026-10-01', '便當店', 120);
+    const a2 = tx('2026-10-02', '便當店', 120);
+    const b1 = tx('2026-10-10', '便當店', 120);
+    const b2 = tx('2026-10-11', '便當店', 120);
+    const c1 = tx('2026-10-20', '便當店', 120);
+    const c2 = tx('2026-10-21', '便當店', 120);
+    const dismissed = new Set([
+      `duplicate:${[a1.id, a2.id].sort().join(':')}`,
+      `duplicate:${[b1.id, b2.id].sort().join(':')}`,
+    ]);
+    // 即使只比對 c1, c2（或同模式已略過 2 次），也不再提醒
+    expect(detectInsights(base([...filler(40), a1, a2, b1, b2, c1, c2]), dismissed).filter((x) => x.kind === 'duplicate')).toHaveLength(0);
+  });
 });
 
 describe('異常大額（先看習慣、再看分類與市價）', () => {

@@ -25,6 +25,16 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.45', date: '2026-11-17',
+    features: [
+      {
+        title: '捷徑與重複提醒降噪',
+        intro: '自動記帳捷徑加入鎖屏喚醒緩衝與強制新連線，減少「網路連線中斷」誤報；同店同金額消費超過 2 次或已略過超過 2 次後不再重複跳出異常提醒。',
+        howto: '建議於「設定 → 自動記帳 → 加入 iPhone 捷徑」重新下載新版「Aster 自動記帳」捷徑以套用連線優化。',
+      },
+    ],
+  },
+  {
     version: '4.1.44', date: '2026-11-16',
     features: [
       {

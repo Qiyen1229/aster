@@ -188,10 +188,22 @@ function detectRecurring(input: DetectInput, pool: Transaction[]): Finding[] {
 
 // ───────────── 重複扣款 ─────────────
 
-function detectDuplicates(input: DetectInput, pool: Transaction[]): Finding[] {
+function detectDuplicates(input: DetectInput, pool: Transaction[], dismissed: ReadonlySet<string> = new Set()): Finding[] {
   const out: Finding[] = [];
   const recent = pool.filter((t) => daysBetween(t.date, input.today) <= 45);
   const seen = new Set<string>();
+  const txById = new Map(pool.map((t) => [t.id, t]));
+  const patternKey = (t: Transaction) => `${merchantKey(t) || t.categoryId}:${statAmount(t)}`;
+  const dismissedByPattern = new Map<string, number>();
+  for (const id of dismissed) {
+    if (!id.startsWith('duplicate:')) continue;
+    const [, aId] = id.split(':');
+    const t = aId ? txById.get(aId) : undefined;
+    if (!t) continue;
+    const pk = patternKey(t);
+    dismissedByPattern.set(pk, (dismissedByPattern.get(pk) ?? 0) + 1);
+  }
+  const emittedByPattern = new Map<string, number>();
   const habit = (key: string, amt: number) => pool.filter((t) => merchantKey(t) === key && statAmount(t) === amt && daysBetween(t.date, input.today) <= 90).length;
   const sorted = [...recent].sort((a, b) => a.ts - b.ts);
   for (let i = 0; i < sorted.length; i++) {
@@ -201,15 +213,18 @@ function detectDuplicates(input: DetectInput, pool: Transaction[]): Finding[] {
       if (gap > 3) { if (b.ts - a.ts > 4 * DAY) break; continue; }
       const amt = statAmount(a);
       if (amt !== statAmount(b) || amt < 3000) continue;
+      const pk = patternKey(a);
+      if ((dismissedByPattern.get(pk) ?? 0) >= 2 || (emittedByPattern.get(pk) ?? 0) >= 2) continue;
       const ka = merchantKey(a), kb = merchantKey(b);
-      // 情況一：同店、同帳戶、同金額，一天內出現兩次，而且平常不是這樣的消費習慣
-      const sameShop = ka.length >= 2 && !input.genericKeys?.has(ka) && ka === kb && a.accountId === b.accountId && gap <= 1 && habit(ka, amt) <= 3;
+      // 情況一：同店、同帳戶、同金額，一天內出現兩次，而且平常不是這樣的消費習慣（超過 2 次即視為日常習慣）
+      const sameShop = ka.length >= 2 && !input.genericKeys?.has(ka) && ka === kb && a.accountId === b.accountId && gap <= 1 && habit(ka, amt) <= 2;
       // 情況二：自動入帳的週期帳目，旁邊又有一筆手動記的同金額同分類
       const autoPlusManual = !!a.recurringRuleId !== !!b.recurringRuleId && a.categoryId === b.categoryId && !a.transferId && !b.transferId;
       if (!sameShop && !autoPlusManual) continue;
       const id = `duplicate:${[a.id, b.id].sort().join(':')}`;
       if (seen.has(id)) continue;
       seen.add(id);
+      emittedByPattern.set(pk, (emittedByPattern.get(pk) ?? 0) + 1);
       const label = labelOf(a) || labelOf(b) || input.catName(a.categoryId);
       out.push({
         id, kind: 'duplicate', severity: 'warn',
@@ -352,7 +367,7 @@ export function detectInsights(input: DetectInput, dismissed: ReadonlySet<string
   if (pool.length < 5) return [];
   const all = [
     ...detectRecurring(input, pool),
-    ...detectDuplicates(input, pool),
+    ...detectDuplicates(input, pool, dismissed),
     ...detectLarge(input, pool),
     ...detectSurge(input, pool),
   ];

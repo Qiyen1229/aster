@@ -143,7 +143,10 @@ def build(
              "WFURL": var_text(output(code_id, "文字")),
              "WFHTTPMethod": "POST",
              "ShowHeaders": True,
-             "WFHTTPHeaders": dict_value([field("Content-Type", text("application/json"))]),
+             "WFHTTPHeaders": dict_value([
+                 field("Content-Type", text("application/json")),
+                 field("Connection", text("close")),
+             ]),
              "WFHTTPBodyType": "JSON",
              "WFJSONValues": dict_value(body),
          }},
@@ -191,6 +194,10 @@ def auto() -> dict:
             field("merchant", var_text(shortcut_input("Merchant"))),
             field("card", multi_var_text([shortcut_input("Card or Pass"), shortcut_input("App")])),
             field("text", multi_var_text([shortcut_input("Title"), shortcut_input("Subtitle"), shortcut_input()])),
+        ],
+        before=[
+            {"WFWorkflowActionIdentifier": "is.workflow.actions.delay",
+             "WFWorkflowActionParameters": {"WFDelayTime": 1}},
         ],
         triggers=[
             {
@@ -255,7 +262,10 @@ def voice() -> dict:
              "WFURL": var_text(output(code_id, "文字")),
              "WFHTTPMethod": "POST",
              "ShowHeaders": True,
-             "WFHTTPHeaders": dict_value([field("Content-Type", text("application/json"))]),
+             "WFHTTPHeaders": dict_value([
+                 field("Content-Type", text("application/json")),
+                 field("Connection", text("close")),
+             ]),
              "WFHTTPBodyType": "JSON",
              "WFJSONValues": dict_value([
                  field("source", text("siri")),
