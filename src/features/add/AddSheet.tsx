@@ -872,9 +872,15 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
               {/* 核心屬性列：帳戶／日期時間／單一「進階」按鈕 */}
               <div className="meta-row">
                 {!(loan && !loanViaAccount) && (
-                  <button type="button" className="pill" onClick={() => setPicker('account')}>
-                    {account ? <><CatIcon icon={account.icon} size={15} style={{ verticalAlign: -2, marginRight: 4 }} />{account.name}</> : '選擇帳戶'}
-                  </button>
+                  accounts.length === 0 ? (
+                    <button type="button" className="pill accent-pill" onClick={() => { onClose(); window.history.pushState({}, '', '/accounts'); window.dispatchEvent(new PopStateEvent('popstate')); }}>
+                      ＋ 先建立第一個帳戶
+                    </button>
+                  ) : (
+                    <button type="button" className="pill" onClick={() => setPicker('account')}>
+                      {account ? <><CatIcon icon={account.icon} size={15} style={{ verticalAlign: -2, marginRight: 4 }} />{account.name}</> : '選擇帳戶'}
+                    </button>
+                  )
                 )}
                 {mode === 'transfer' && (
                   <>
@@ -934,6 +940,19 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                     }}>🪄 自動分類 ✕</button>
                 )}
               </div>
+              {!editing && note.trim().length > 0 && noteSugs.length > 0 && (
+                <div className="sub-row" aria-label="備註聯想" style={{ marginTop: 4 }}>
+                  {noteSugs.slice(0, 3).map((x) => {
+                    const c = catMap.get(x.categoryId);
+                    return (
+                      <button type="button" key={`inline-${x.pinnedId ?? 'r'}:${x.note}`} className="pill"
+                        onClick={() => applyNoteSuggestion(x)}>
+                        {x.note} · {formatMoney(x.amountMinor, x.currency)}{c ? ` · ${c.name}` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {atts.length > 0 && (
                 <div className="thumbs">
                   {atts.map((a) => (

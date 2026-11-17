@@ -80,21 +80,31 @@ export function isTrustedLineNotice(text: string): boolean {
 
 export type NoticeVerdict = { trust: 'ok' } | { trust: 'review'; reason: string } | { trust: 'drop' };
 
-/** 白名單比對：發送者／卡片／App 名稱或通知內容、商家任一命中即放行（不分大小寫、全半形正規化） */
-export function matchesWhitelist(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }, whitelist: string[]): boolean {
-  if (!whitelist.length) return false;
+function matchesList(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }, list: string[]): boolean {
+  if (!list.length) return false;
   const hay = `${it.card ?? ''}\n${it.merchant ?? ''}\n${it.text ?? ''}`.normalize('NFKC').toLowerCase();
-  return whitelist.some((w) => {
+  return list.some((w) => {
     const n = w.trim().normalize('NFKC').toLowerCase();
     return n.length > 0 && hay.includes(n);
   });
 }
 
+/** 白名單比對：發送者／卡片／App 名稱或通知內容、商家任一命中即放行（不分大小寫、全半形正規化） */
+export function matchesWhitelist(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }, whitelist: string[]): boolean {
+  return matchesList(it, whitelist);
+}
+
+/** 黑名單比對：發送者／商家／通知內容任一命中即自動略過並清除 */
+export function matchesBlacklist(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }, blacklist: string[]): boolean {
+  return matchesList(it, blacklist);
+}
+
 /**
- * 通知來源把關：銀行／支付 App 的通知照舊；LINE 聊天只放行重點官方帳號與使用者自訂的白名單。
+ * 通知來源把關：黑名單最優先直接丟棄；銀行／支付 App 的通知放行；LINE 聊天只放行重點官方帳號與使用者自訂的白名單。
  * 不是官方的 LINE 訊息：看不出金額的直接丟掉（聊天雜訊）；剛好有金額的留在收件匣等確認，不自動入帳。
  */
-export function judgeNotice(it: Pick<InboxRaw, 'source' | 'card' | 'text' | 'merchant'>, hasDrafts: boolean, whitelist: string[] = []): NoticeVerdict {
+export function judgeNotice(it: Pick<InboxRaw, 'source' | 'card' | 'text' | 'merchant'>, hasDrafts: boolean, whitelist: string[] = [], blacklist: string[] = []): NoticeVerdict {
+  if (matchesBlacklist(it, blacklist)) return { trust: 'drop' };
   if (matchesWhitelist(it, whitelist)) return { trust: 'ok' };
   if (it.source !== 'notify' || !isLineChat(it.card ?? '')) return { trust: 'ok' };
   if (isTrustedLineNotice(`${it.merchant ?? ''}\n${it.text ?? ''}`)) return { trust: 'ok' };
@@ -371,9 +381,10 @@ export async function loadInbox(): Promise<InboxEntry[]> {
   const [items, ctx, fallback] = await Promise.all([fetchInbox(), parseContext(), fallbackAccount()]);
   const out: InboxEntry[] = [];
   const dropIds: number[] = [];
+  const { whitelist = [], blacklist = [] } = useSettings.getState().inbox;
   for (const item of items) {
     const drafts = await draftsFromItem(item, ctx, fallback).catch(() => []);
-    const v = judgeNotice(item, drafts.length > 0, useSettings.getState().inbox.whitelist ?? []);
+    const v = judgeNotice(item, drafts.length > 0, whitelist, blacklist);
     if (v.trust === 'drop') { dropIds.push(item.id); continue; }
     out.push({ item, drafts, ...(v.trust === 'review' ? { review: v.reason } : {}) });
   }
@@ -476,6 +487,25 @@ export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplic
 export async function finishInboxItem(id: string, opts: { card?: string; accountId?: string }) {
   await ackInbox([Number(id)]);
   learnCard(opts.card, opts.accountId);
+}
+
+/** 規則試跑預覽：輸入測試通知文字，回傳會被黑名單擋掉、或自動記成的名稱／分類／帳戶 */
+export async function previewAutoBook(text: string, card = '', merchant = ''): Promise<{
+  verdict: NoticeVerdict;
+  whitelisted: boolean;
+  drafts: ResolvedDraft[];
+}> {
+  const [ctx, fallback] = await Promise.all([parseContext(), fallbackAccount()]);
+  const fake: InboxRaw = { id: 0, source: 'notify', text, amount: '', merchant, card, occurred: '', created_at: new Date().toISOString() };
+  const cfg = useSettings.getState().inbox;
+  const wl = cfg.whitelist ?? [];
+  const bl = cfg.blacklist ?? [];
+  const drafts = await draftsFromItem(fake, ctx, fallback).catch(() => []);
+  return {
+    verdict: judgeNotice(fake, drafts.length > 0, wl, bl),
+    whitelisted: matchesWhitelist(fake, wl),
+    drafts,
+  };
 }
 
 /** 開啟 App 時：開啟「自動入帳」就直接記下看得懂的項目；白名單發送者即使沒開全域自動入帳也直接記；其餘留在收件匣 */

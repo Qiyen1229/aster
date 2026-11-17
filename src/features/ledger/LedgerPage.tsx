@@ -133,7 +133,7 @@ export default function LedgerPage() {
   return (
     <main className="page">
       <header className="topbar">
-        <div style={{ width: 44 }} />
+        <button className="icon-btn" aria-label="最近刪除" title="最近刪除的帳目" onClick={() => navigate('/settings/health')}><Icon name="trash" /></button>
         <h1>{accountFilter ? accounts.map.get(accountFilter)?.name ?? '帳目' : '帳目明細'}</h1>
         <button className="icon-btn" aria-label="完成，回到首頁" onClick={() => navigate('/')}><Icon name="check" /></button>
       </header>

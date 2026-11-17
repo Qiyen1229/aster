@@ -10,7 +10,7 @@ import { simulateFire } from '@/domain/fire';
 import { loadFireBasis } from '@/services/fireBasis';
 import type { FireSettings } from '@/db/repo/settings';
 import { useSettings } from '@/stores/settings';
-import { SkeletonRows } from '@/ui/controls';
+import { EmptyState, SkeletonRows } from '@/ui/controls';
 import { Icon } from '@/ui/Icon';
 import { chartTheme } from './chart-theme';
 
@@ -116,7 +116,7 @@ export default function FirePage() {
                   門檻＝年支出 ÷ 安全提領率＝<b>{money(expense / (draft.swrPct / 100))}</b>（今日幣值）。不考慮波動時約 {result.deterministicFiAge ?? '—'} 歲達成。
                 </p>
               </>
-            ) : <p className="muted" style={{ margin: 0 }}>請確認出生年與年支出（近 12 個月沒有支出紀錄時請手動輸入）。</p>}
+            ) : <EmptyState emoji="🔥" title="還無法推算財務自由年齡" text="系統會自動帶入你近 12 個月的收支與淨資產；目前資料不足時，可在下方手動填寫出生年、年支出與每年可存金額立即模擬。" />}
           </section>
 
           {option && (

@@ -74,8 +74,6 @@ export function TravelHero({ project, onSwitchNormal, onAddTripExpense, onViewPr
   const todaySpent = stats?.byDay.get(todayKey()) ?? 0;
   const allow = tripAllowance(budgetMinor, info.totalDays, todaySpent);
 
-  const stampLabel = info.phase === 'before' ? '天後出發' : info.phase === 'after' ? '天・已完成' : info.totalDays ? `共 ${info.totalDays} 天` : '旅程進行中';
-
   return (
     <section className="home-hero travel-pass" aria-label="旅遊模式看板">
       <div className="travel-pass-head">
@@ -105,8 +103,6 @@ export function TravelHero({ project, onSwitchNormal, onAddTripExpense, onViewPr
           </span>
         </div>
       </div>
-
-      <div className="travel-pass-tear" aria-hidden="true" />
 
       <div className="travel-pass-body">
         <div className="travel-pass-main">
@@ -178,10 +174,6 @@ export function TravelHero({ project, onSwitchNormal, onAddTripExpense, onViewPr
             </div>
           ) : null}
         </div>
-        <div className="travel-pass-stamp" aria-hidden="true">
-          <span className="travel-pass-stamp-day num">{info.dayNum}</span>
-          <span className="travel-pass-stamp-label">{stampLabel}</span>
-        </div>
       </div>
 
       <div className="travel-hero-actions">
@@ -192,8 +184,6 @@ export function TravelHero({ project, onSwitchNormal, onAddTripExpense, onViewPr
           查看專案詳情
         </button>
       </div>
-
-      <div className="travel-pass-barcode" aria-hidden="true" />
     </section>
   );
 }

@@ -158,6 +158,8 @@ export interface InboxSettings {
   forecast: boolean;
   /** 白名單發送者：這些名稱出現在通知裡就直接入帳，不用手動確認（即使沒開全域自動入帳） */
   whitelist: string[];
+  /** 黑名單發送者或關鍵字：命中就直接忽略並從收件匣清除，不跳審核 */
+  blacklist?: string[];
 }
 
 export interface EinvoiceSettings {
@@ -230,7 +232,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fire: { birthYear: 1995, retireAge: 55, endAge: 90, returnPct: 6, volPct: 15, inflationPct: 2, swrPct: 4, annualExpense: 0, annualSaving: 0, startAssets: 0 },
   tax: { netIncome: 0 },
   einvoice: { cardNo: '', verifyCode: '', defaultAccountId: '', autoSync: true },
-  inbox: { autoBook: false, defaultAccountId: '', cardMap: {}, forecast: true, whitelist: [] },
+  inbox: { autoBook: false, defaultAccountId: '', cardMap: {}, forecast: true, whitelist: [], blacklist: [] },
   ai: { enabled: false, allowData: false, auto: false },
   insights: { anomaly: true, budgetWarn: true, dismissed: [], aiPrice: true },
   seenWhatsNew: '',

@@ -17,7 +17,8 @@ import {
 } from '@/services/inbox';
 import { aiEnabledLocally, aiParseText } from '@/services/ai';
 import { fallbackAccount, resolveDraft } from '@/services/quickentry';
-import { snackUndo, useUI } from '@/stores/ui';
+import { snackUndo, useUI, askInput } from '@/stores/ui';
+import { useSettings } from '@/stores/settings';
 import { EmptyState, SkeletonRows } from '@/ui/controls';
 import { AiMark, CatIcon, Icon } from '@/ui/Icon';
 import { bookForecast, confirmRulePending, loadForecast, registerForecast, skipForecast, skipRulePending, type ForecastData } from '@/services/forecast';
@@ -79,6 +80,27 @@ export default function InboxPage() {
       if (await mergeDuplicate(e)) snack('已合併，沒有重複記帳');
       await reload();
     } catch (err) { snack((err as Error).message); }
+  };
+
+  const blockItem = async (e: InboxEntry) => {
+    const def = (e.item.merchant || e.item.card || e.item.text.slice(0, 20)).trim();
+    const word = await askInput({
+      title: '加入自動記帳黑名單',
+      message: '之後通知或發送者包含這個字詞時，會直接略過不進收件匣：',
+      defaultValue: def,
+      required: true,
+      maxLength: 40,
+      confirmText: '封鎖並清除',
+    });
+    if (!word) return;
+    const st = useSettings.getState();
+    const prev = st.inbox.blacklist ?? [];
+    if (!prev.some((x) => x.toLowerCase() === word.toLowerCase())) {
+      st.set('inbox', { ...st.inbox, blacklist: [...prev, word] });
+    }
+    await ackInbox([e.item.id]).catch(() => undefined);
+    snack(`已封鎖「${word}」`);
+    await reload();
   };
 
   /** 規則看不懂的簡訊／通知：請 AI 解析成草稿（扣 1 點額度）。解析結果只改在畫面上，確認記帳才會寫入帳本 */
@@ -189,6 +211,7 @@ export default function InboxPage() {
                     <span className="inbox-actions">
                       {aiEnabledLocally() && (e.item.text || e.item.merchant) && <button className="pill accent-pill" disabled={aiBusyId === e.item.id} onClick={() => void aiParse(e)}>{aiBusyId === e.item.id ? '解析中…' : <><AiMark /> Cilo 解析</>}</button>}
                       <button className="pill" onClick={() => setRuleDraft(blankRule('expense', '', e.item.merchant || e.item.text.slice(0, 60)))}>存為規則</button>
+                      <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
                       <button className="pill" onClick={() => edit(e)}>手動記</button>
                       <button className="pill" onClick={() => void skip(e)} aria-label="略過">略過</button>
                     </span>
@@ -230,6 +253,7 @@ export default function InboxPage() {
                             <button className="pill accent-pill" disabled={busy} onClick={() => void book([e])}>記帳</button>
                             {e.dup && <button className="pill" onClick={() => void merge(e)}>合併</button>}
                             <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
+                            <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
                             <button className="pill" onClick={() => edit(e)}>編輯</button>
                             <button className="pill" onClick={() => void skip(e)}>略過</button>
                           </>

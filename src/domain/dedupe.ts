@@ -31,9 +31,27 @@ export function dayGap(a: string, b: string): number {
 
 const NOISE = /[\s\d.,，。:：;；()（）[\]「」\-_/\\#*＊·・]|nt\$|twd|台幣|新台幣|元|刷卡|消費|交易|付款|支付|行動支付|apple\s*pay/gi;
 
-/** 比對用的店名：去掉空白、數字、標點與「刷卡」「消費」等通用字 */
+const CHAIN_ALIASES: [RegExp, string][] = [
+  [/familymart/gi, '全家'],
+  [/7eleven|7-?11|統一超商/gi, '711'],
+  [/starbucks/gi, '星巴克'],
+  [/mcdonald'?s?/gi, '麥當勞'],
+  [/pxmart/gi, '全聯'],
+  [/carrefour/gi, '家樂福'],
+  [/costco/gi, '好市多'],
+  [/uniqlo/gi, '優衣庫'],
+  [/ikea/gi, '宜家'],
+  [/hilife/gi, '萊爾富'],
+  [/okmart|ok超商/gi, 'ok超商'],
+  [/watsons/gi, '屈臣氏'],
+  [/cosmed/gi, '康是美'],
+];
+
+/** 比對用的店名：統一常見連鎖店中英文別名，並去掉空白、數字、標點與「刷卡」「消費」等通用字 */
 export function normalizeShop(s: string): string {
-  return s.toLowerCase().replace(NOISE, '');
+  let out = s.toLowerCase();
+  for (const [re, canonical] of CHAIN_ALIASES) out = out.replace(re, canonical);
+  return out.replace(NOISE, '');
 }
 
 /** 兩段文字的店名相近：其中一個包含另一個，或共用連續 2 個字以上 */

@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '@/db/schema';
 import type { Finding } from '@/domain/anomaly';
 import type { BudgetWarning } from '@/domain/budgetwarn';
 import { createSubscriptionFrom, dismissFinding, loadSnapshot, runInsights, type InsightsSnapshot } from '@/services/insights';
@@ -121,6 +122,10 @@ function FindingCard({ f }: { f: Finding }) {
   const navigate = useNavigate();
   const snack = (text: string) => useUI.getState().showSnack({ text });
   const [busy, setBusy] = useState(false);
+  const linkedTx = useLiveQuery(
+    () => (f.kind === 'price_up' && f.txIds.length ? db.transactions.get(f.txIds[f.txIds.length - 1]) : undefined),
+    [f.kind, f.txIds],
+  );
   return (
     <section className="card insight-card" style={{ ['--lv' as string]: f.severity === 'warn' ? 'var(--warning)' : 'var(--accent-text)' }}>
       <div className="insight-head">
@@ -138,6 +143,17 @@ function FindingCard({ f }: { f: Finding }) {
             try { await createSubscriptionFrom(f); snack(`已登記「${f.subscription!.name}」（每期到了提醒你確認）`); }
             catch (e) { snack((e as Error).message); } finally { setBusy(false); }
           }}>{f.subscription.kind === 'subscription' ? '建立為訂閱' : '登記為週期帳目'}</button>
+        )}
+        {f.kind === 'price_up' && linkedTx?.recurringRuleId && (
+          <button className="accent" disabled={busy} onClick={async () => {
+            setBusy(true);
+            try {
+              const rule = await db.recurring_rules.get(linkedTx.recurringRuleId!);
+              if (rule) await db.recurring_rules.update(rule.id, { template: { ...rule.template, amountMinor: linkedTx.amountMinor }, updatedAt: Date.now() });
+              await dismissFinding(f.id);
+              snack('已將週期帳目預設金額更新為這次金額');
+            } finally { setBusy(false); }
+          }}>更新週期金額</button>
         )}
         {f.txIds.length > 0 && <button className="accent" onClick={() => useUI.getState().editTx(f.txIds[f.txIds.length - 1])}>查看帳目</button>}
         {f.kind === 'surge' && <button className="accent" onClick={() => navigate('/reports')}>看報表</button>}

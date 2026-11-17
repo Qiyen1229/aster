@@ -225,4 +225,12 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     expect(drafts[0].kind).toBe('income');
     expect(drafts[0].amount).toBe(120);
   });
+
+  it('黑名單攔截與中英文連鎖店別名去重', async () => {
+    const { shopSimilar } = await import('@/domain/dedupe');
+    expect(shopSimilar('FamilyMart', '全家便利商店')).toBe(true);
+    expect(shopSimilar('STARBUCKS', '星巴克')).toBe(true);
+    expect(judgeNotice(n('LINE', '晚餐 500 你先幫我付', '小明'), true, ['小明'], ['小明']).trust).toBe('drop');
+    expect(judgeNotice(n('中國信託', '停車折抵 100 元'), true, [], ['停車折抵']).trust).toBe('drop');
+  });
 });

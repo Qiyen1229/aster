@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAccounts, useCategories } from '@/app/hooks';
 import { db } from '@/db/schema';
 import { deleteRule } from '@/services/autocat';
+import { previewAutoBook } from '@/services/inbox';
 import { useSettings } from '@/stores/settings';
 import { askInput, useUI } from '@/stores/ui';
 import { EmptyState } from '@/ui/controls';
@@ -30,8 +31,40 @@ export default function InboxWhitelistPage() {
   const rules = useLiveQuery(() => db.rules.orderBy('priority').toArray(), []) ?? [];
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
   const list = cfg.whitelist ?? [];
+  const blacklist = cfg.blacklist ?? [];
   const [name, setName] = useState('');
+  const [blockWord, setBlockWord] = useState('');
+  const [testText, setTestText] = useState('');
+  const [testResult, setTestResult] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
+
+  const addBlacklist = () => {
+    const n = blockWord.trim().slice(0, 40);
+    if (!n) return;
+    if (blacklist.some((x) => x.toLowerCase() === n.toLowerCase())) { snack('這個項目已經在黑名單裡了'); return; }
+    update({ blacklist: [...blacklist, n] });
+    setBlockWord('');
+    snack(`已封鎖「${n}」：之後符合的通知將直接忽略`);
+  };
+
+  const runPreview = async () => {
+    const q = testText.trim();
+    if (!q) return;
+    const r = await previewAutoBook(q);
+    if (r.verdict.trust === 'drop') {
+      setTestResult('🚫 會被黑名單或聊天過濾直接忽略（不進收件匣）');
+      return;
+    }
+    if (!r.drafts.length) {
+      setTestResult('📥 看不懂金額，會留在收件匣等你手動記帳');
+      return;
+    }
+    const d = r.drafts[0];
+    const catName = d.categoryId ? (catMap.get(d.categoryId)?.name ?? '未分類') : '轉帳';
+    const accName = accMap.get(d.accountId)?.name ?? '預設帳戶';
+    const modeLabel = (cfg.autoBook || r.whitelisted) && r.verdict.trust === 'ok' ? '⚡ 直接自動入帳' : '📥 留在收件匣待確認';
+    setTestResult(`${modeLabel} →「${d.note}」· $${d.amount} · ${catName} · ${accName}`);
+  };
 
   const add = () => {
     const n = name.trim().slice(0, 40);
@@ -131,6 +164,52 @@ export default function InboxWhitelistPage() {
           ))}
         </div>
       )}
+
+      <div className="section-title">黑名單（{blacklist.length}）</div>
+      <div className="list">
+        <div className="field">
+          <input
+            value={blockWord}
+            maxLength={40}
+            placeholder="封鎖發送者或關鍵字，如：停車折抵、小明"
+            aria-label="新增黑名單"
+            style={{ flex: 1 }}
+            onChange={(e) => setBlockWord(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                addBlacklist();
+              }
+            }}
+          />
+          <button type="button" className="pill" disabled={!blockWord.trim()} onClick={addBlacklist}>封鎖</button>
+        </div>
+        {blacklist.map((b, idx) => (
+          <div key={`${b}-${idx}`} className="row">
+            <span className="row-main">
+              <span className="row-title">{b}</span>
+              <span className="row-sub">命中時自動忽略，不跳審核通知</span>
+            </span>
+            <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => update({ blacklist: blacklist.filter((x) => x !== b) })}>移除</button>
+          </div>
+        ))}
+      </div>
+
+      <div className="section-title">規則試跑測試</div>
+      <div className="card">
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            className="input"
+            value={testText}
+            onChange={(e) => setTestText(e.target.value)}
+            placeholder="貼上一段銀行／LINE 通知試跑看看…"
+            aria-label="測試通知文字"
+            style={{ flex: 1 }}
+          />
+          <button type="button" className="pill accent-pill" disabled={!testText.trim()} onClick={() => void runPreview()}>試跑</button>
+        </div>
+        {testResult && <p style={{ margin: '8px 0 0', fontSize: '0.88rem' }}>{testResult}</p>}
+      </div>
 
       {Object.keys(cfg.cardMap).length > 0 && (
         <>

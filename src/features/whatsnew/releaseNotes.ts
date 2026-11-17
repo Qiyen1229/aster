@@ -25,6 +25,16 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.48', date: '2026-11-17',
+    features: [
+      {
+        title: '黑名單試跑與介面升級',
+        intro: '新增自動記帳黑名單（發送者與關鍵字封鎖）、規則貼上試跑、中英文連鎖店別名去重、週期金額一鍵更新、備註打字聯想、帳目「最近刪除」快捷入口，以及計劃頁單層導覽與旅遊模式簡潔優化。',
+        howto: '在「自動入帳偏好」即可管理黑名單並貼上通知試跑；在收件匣點擊「封鎖」可一鍵將該類訊息加入黑名單。',
+      },
+    ],
+  },
+  {
     version: '4.1.47', date: '2026-11-17',
     features: [
       {

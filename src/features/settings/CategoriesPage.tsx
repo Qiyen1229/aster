@@ -331,8 +331,13 @@ function EditorBody({ edit, onClose }: { edit: NonNullable<Edit>; onClose: () =>
         </div>
         <div className="field">
           <label htmlFor="c-icon">圖示</label>
-          <input id="c-icon" value={icon} onChange={(e) => setIcon([...e.target.value].slice(-2).join(''))} placeholder="🏷️" />
+          <input id="c-icon" value={icon} onChange={(e) => setIcon(e.target.value)} maxLength={16} placeholder="🏷️" />
         </div>
+      </div>
+      <div className="sub-row" role="radiogroup" aria-label="常用圖示" style={{ flexWrap: 'wrap', margin: '8px 0 12px' }}>
+        {['🍽️', '☕', '🛍️', '🚇', '🏠', '🎮', '💊', '📚', '✈️', '🎁', '💼', '💰', '📈', '🏷️'].map((ic) => (
+          <button key={ic} type="button" className="pill" aria-pressed={icon === ic} onClick={() => setIcon(ic)}>{ic}</button>
+        ))}
       </div>
       {!edit.parentId && (
         <div className="swatches" role="radiogroup" aria-label="顏色">
