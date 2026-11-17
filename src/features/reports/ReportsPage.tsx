@@ -562,7 +562,7 @@ function ReportFilter({ value, onChange }: { value: RFilter; onChange: (f: RFilt
   return (
     <>
       {group('帳戶', 'accountIds', accounts.list.map((a) => ({ id: a.id, label: `${iconEmoji(a.icon)} ${a.name}` })))}
-      {group('專案', 'projectIds', projects.list.map((p) => ({ id: p.id, label: `${p.icon} ${p.name}` })))}
+      {group('專案', 'projectIds', projects.list.map((p) => ({ id: p.id, label: `${iconEmoji(p.icon)} ${p.name}` })))}
       {group('標籤', 'tagIds', tags.list.map((t) => ({ id: t.id, label: t.name })))}
       {group('幣別', 'currencies', currencies.map((c) => ({ id: c, label: c })))}
     </>

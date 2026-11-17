@@ -65,10 +65,10 @@ export default function InvestSettingsPage() {
     setTesting(true);
     try {
       const base = (q.proxyUrl || '/proxy').replace(/\/$/, '');
-      const h = await fetch(`${base}/health`, { cache: 'no-store' });
+      const h = await fetch(`${base}/health`, { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
       if (!h.ok) throw new Error(`health HTTP ${h.status}`);
       const { url, headers } = proxied('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
-      const r = await fetch(url, { headers, cache: 'no-store' });
+      const r = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(15_000) });
       if (r.status === 401) throw new Error('代理權杖錯誤');
       if (!r.ok) throw new Error(`證交所 HTTP ${r.status}`);
       const j = await r.json();

@@ -12,6 +12,7 @@ import { Sheet } from '@/ui/Sheet';
 import { EmptyState } from '@/ui/controls';
 import { SwipeRow } from '@/ui/SwipeRow';
 import { Icon } from '@/ui/Icon';
+import { snackUndo } from '@/stores/ui';
 
 const ICON: Record<string, string> = { daily_log: '✍️', card_due: '💳', budget: '🎯', subscription: '🔁', price_alert: '📈', backup: '💾', sync: '☁️', insight: '💡', invoice: '🧾', inbox: '📥' };
 
@@ -59,7 +60,7 @@ export function RemindersSheet({ open, onClose }: { open: boolean; onClose: () =
       {list.length === 0 ? <EmptyState emoji="🔕" title="目前沒有提醒" text="帳單到期、預算警示、訂閱續約、到價提醒都會出現在這裡。" /> : (
         <div className="list">
           {list.map((r, i) => (
-            <SwipeRow key={r.id} flat onDelete={() => void clearReminder(r.id)}
+            <SwipeRow key={r.id} flat onDelete={() => void clearReminder(r.id).then(() => snackUndo(`已清除「${r.title}」`, async () => { await db.reminders.update(r.id, { cleared: undefined }); }))}
               onTap={() => { void db.reminders.update(r.id, { done: 1 }); onClose(); if (r.refId.startsWith('/')) navigate(r.refId); }}>
               <div className={i ? 'row row-sep' : 'row'}>
                 <span aria-hidden="true" style={{ fontSize: 22 }}>{ICON[r.kind] ?? '🔔'}</span>

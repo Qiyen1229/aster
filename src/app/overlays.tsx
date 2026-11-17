@@ -6,7 +6,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useUI } from '@/stores/ui';
 import { useSettings } from '@/stores/settings';
 import { useLock } from '@/services/lock';
-import { Sheet } from '@/ui/Sheet';
+import { Sheet, trapTabKey } from '@/ui/Sheet';
+import { CatIcon } from '@/ui/Icon';
 
 export function SnackbarHost() {
   const snack = useUI((s) => s.snack);
@@ -41,6 +42,7 @@ export function ConfirmHost() {
   const close = useUI((s) => s.closeConfirm);
   const locked = useLock((s) => s.locked);
   const prevFocus = useRef<HTMLElement | null>(null);
+  const dlgRef = useRef<HTMLDivElement>(null);
 
   // App 鎖定時自動關閉確認視窗，杜絕鎖屏繞過
   useEffect(() => {
@@ -55,7 +57,10 @@ export function ConfirmHost() {
   }, [c?.id, locked]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!c || locked) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(false); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); close(false); }
+      else trapTabKey(dlgRef.current, e);
+    };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [c, close, locked]);
@@ -63,7 +68,7 @@ export function ConfirmHost() {
   return (
     <div className="dlg-wrap" key={c.id}>
       <div className="dlg-backdrop" onClick={() => close(false)} aria-hidden="true" />
-      <div className="dlg" role="alertdialog" aria-modal="true" aria-labelledby={`dlg-t-${c.id}`} aria-describedby={c.message ? `dlg-m-${c.id}` : undefined}>
+      <div ref={dlgRef} className="dlg" role="alertdialog" aria-modal="true" aria-labelledby={`dlg-t-${c.id}`} aria-describedby={c.message ? `dlg-m-${c.id}` : undefined}>
         <div className="dlg-body">
           <h2 id={`dlg-t-${c.id}`}>{c.title}</h2>
           {c.message && <p id={`dlg-m-${c.id}`}>{c.message}</p>}
@@ -86,7 +91,7 @@ export function ActionSheetHost() {
         {actions?.items.map((it) => (
           <button key={it.label} className={`row${it.danger ? ' danger' : ''}`}
             onClick={() => { close(); setTimeout(it.onSelect, 120); }}>
-            {it.icon && <span aria-hidden="true">{it.icon}</span>}
+            {it.icon && <span aria-hidden="true"><CatIcon icon={it.icon} size={18} /></span>}
             <span className="row-main row-title" style={{ color: it.danger ? 'var(--danger)' : undefined }}>{it.label}</span>
           </button>
         ))}
@@ -103,6 +108,7 @@ export function InputHost() {
   const locked = useLock((s) => s.locked);
   const [value, setValue] = useState('');
   const prevFocus = useRef<HTMLElement | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     if (locked && r) close(null);
@@ -116,7 +122,10 @@ export function InputHost() {
   }, [r?.id, locked]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!r || locked) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); close(null); } };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); close(null); }
+      else trapTabKey(formRef.current, e);
+    };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [r, close, locked]);
@@ -126,7 +135,7 @@ export function InputHost() {
   return (
     <div className="dlg-wrap" key={r.id}>
       <div className="dlg-backdrop" onClick={() => close(null)} aria-hidden="true" />
-      <form className="dlg" role="dialog" aria-modal="true" aria-labelledby={`dlg-t-${r.id}`} onSubmit={(e) => { e.preventDefault(); if (ok) close(text); }}>
+      <form ref={formRef} className="dlg" role="dialog" aria-modal="true" aria-labelledby={`dlg-t-${r.id}`} onSubmit={(e) => { e.preventDefault(); if (ok) close(text); }}>
         <div className="dlg-body">
           <h2 id={`dlg-t-${r.id}`}>{r.title}</h2>
           {r.message && <p>{r.message}</p>}

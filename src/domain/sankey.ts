@@ -140,7 +140,7 @@ export function buildSankey(txs: Iterable<Transaction>, cats: Map<string, Catego
         const share = isLast ? Math.max(0, left) : Math.min(Math.max(0, Math.round((saving * v) / posSum)), left);
         left -= share;
         const a = accounts.get(accId);
-        node(`a:${accId}`, a ? `${a.icon ? `${a.icon} ` : ''}${a.name}` : '帳戶', 3, COLOR.saving);
+        node(`a:${accId}`, a ? a.name : '帳戶', 3, COLOR.saving);
         if (share > 0) link('g:saving', `a:${accId}`, share);
       });
     }

@@ -108,9 +108,9 @@ export function CategoryField({ label = '分類', value, onChange, categories, k
       <select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
         {allowEmpty && <option value="">{emptyLabel}</option>}
         {tree.map(({ main, subs }) => (
-          <optgroup key={main.id} label={`${main.icon} ${main.name}`}>
-            <option value={main.id}>{main.icon} {main.name}（全部）</option>
-            {subs.map((s) => <option key={s.id} value={s.id}>　{s.icon} {s.name}</option>)}
+          <optgroup key={main.id} label={`${iconEmoji(main.icon)} ${main.name}`}>
+            <option value={main.id}>{iconEmoji(main.icon)} {main.name}（全部）</option>
+            {subs.map((s) => <option key={s.id} value={s.id}>　{iconEmoji(s.icon)} {s.name}</option>)}
           </optgroup>
         ))}
       </select>

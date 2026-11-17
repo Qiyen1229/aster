@@ -47,7 +47,12 @@ export function EChart({ option, height = 240, onClick, ariaLabel }: {
     }, true);
   }, [option, theme]);
 
-  return <div ref={el} style={{ width: '100%', height }} role="img" aria-label={ariaLabel} />;
+  return (
+    <div style={{ position: 'relative', width: '100%', height }}>
+      <div ref={el} style={{ width: '100%', height }} role="img" aria-label={ariaLabel} />
+      {ariaLabel && <p className="sr-only">{ariaLabel}</p>}
+    </div>
+  );
 }
 
 export default EChart;

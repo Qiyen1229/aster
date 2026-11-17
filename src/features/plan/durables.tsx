@@ -17,6 +17,7 @@ import { useAccounts, useCategories } from '@/app/hooks';
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
 import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
+import { CatIcon } from '@/ui/Icon';
 import { AccountField, AmountField, CategoryField, DateField, SelectField, SwitchField, TextField } from '@/ui/form';
 import { Sheet } from '@/ui/Sheet';
 import { SwipeRow } from '@/ui/SwipeRow';
@@ -111,7 +112,7 @@ function ActiveCard({ d, today, onEdit, onSell, onDelete }: { d: Durable; today:
   return (
     <div className="card dur-card">
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span className="dur-icon" aria-hidden="true">{d.icon}</span>
+        <span className="dur-icon" aria-hidden="true"><CatIcon icon={d.icon} size={22} /></span>
         <div className="row-main">
           <div style={{ fontWeight: 650 }}>{d.name}</div>
           <div className="row-sub">{d.purchaseDate.replace(/-/g, '/')}・{fm(d.costMinor, d.currency)}</div>
@@ -158,7 +159,7 @@ function DoneCard({ d, onReopen, onDelete }: { d: Durable; onReopen: () => void;
   return (
     <div className="card dur-card">
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span className="dur-icon" aria-hidden="true">{d.icon}</span>
+        <span className="dur-icon" aria-hidden="true"><CatIcon icon={d.icon} size={22} /></span>
         <div className="row-main">
           <div style={{ fontWeight: 650 }}>{d.name}</div>
           <div className="row-sub">{sold ? '賣掉' : '淘汰'}於 {d.endDate?.replace(/-/g, '/')}</div>

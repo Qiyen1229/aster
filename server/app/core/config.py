@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     smtp_from: str = ""  # 寄件人，空白用 smtp_user
     smtp_security: str = "starttls"  # starttls（587）｜ssl（465）｜none
     public_url: str = ""  # 信中連結用的網址，例如 https://aster.example.com（不設就無法寄重設連結，避免被偽造 Host 標頭）
-    admin_contact_email: str = "giter003@gmail.com"  # 忘記密碼時請使用者聯絡的管理員信箱（未設定寄信功能時使用）
+    admin_contact_email: str = ""  # 忘記密碼時請使用者聯絡的管理員信箱（未設定寄信功能時使用）
     reset_token_minutes: int = Field(30, ge=5, le=1440)
     email_check_dns: bool = True  # 註冊時檢查信箱網域真的有收信伺服器（MX）
 
@@ -142,6 +142,8 @@ def security_warnings() -> list[str]:
     """給管理員後台顯示的設定提醒。"""
     s = get_settings()
     out: list[str] = []
+    if not s.jwt_secret:
+        out.append("未設定 CLURE_JWT_SECRET：多實例部署時請明確設定固定金鑰")
     if s.first_user_admin:
         out.append("CLURE_FIRST_USER_ADMIN 仍為 true：已建立管理員後建議改為 false")
     if "change-me" in s.database_url:

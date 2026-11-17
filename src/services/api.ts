@@ -27,21 +27,21 @@ function csrfToken(): string {
 }
 
 async function ensureCsrf(): Promise<void> {
-  if (!csrfToken()) await fetch(`${BASE}/health`, { credentials: 'same-origin', cache: 'no-store' }).catch(() => undefined);
+  if (!csrfToken()) await fetch(`${BASE}/health`, { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(10_000) }).catch(() => undefined);
 }
 
 async function refreshOnce(): Promise<RefreshResult> {
   refreshing ??= (async (): Promise<RefreshResult> => {
     try {
       await ensureCsrf();
-      let r = await fetch(`${BASE}/auth/refresh`, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'X-CSRF-Token': csrfToken() } });
+      let r = await fetch(`${BASE}/auth/refresh`, { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(10_000), headers: { 'X-CSRF-Token': csrfToken() } });
       if (r.status === 403) {
         const data = await r.clone().json().catch(() => null);
         if (typeof data?.detail === 'string' && data.detail.includes('安全驗證')) {
           document.cookie = 'csrf_token=; Max-Age=0; path=/';
           document.cookie = '__Host-csrf_token=; Max-Age=0; path=/; Secure';
           await ensureCsrf();
-          r = await fetch(`${BASE}/auth/refresh`, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'X-CSRF-Token': csrfToken() } });
+          r = await fetch(`${BASE}/auth/refresh`, { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(10_000), headers: { 'X-CSRF-Token': csrfToken() } });
         }
       }
       if (r.ok) return 'ok';

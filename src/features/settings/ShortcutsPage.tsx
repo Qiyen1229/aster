@@ -81,7 +81,7 @@ export default function ShortcutsPage() {
     if (!url) return;
     try {
       const r = await fetch(url, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...auth },
+        method: 'POST', signal: AbortSignal.timeout(10_000), headers: { 'Content-Type': 'application/json', ...auth },
         body: JSON.stringify({ source: 'siri', text: '測試 午餐 120' }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => null))?.detail ?? `伺服器錯誤（${r.status}）`);

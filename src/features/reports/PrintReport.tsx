@@ -78,7 +78,7 @@ export default function PrintReport() {
         <tbody>
           {top.map(([id, v]) => (
             <tr key={id}>
-              <td>{cats.map.get(id)?.icon} {cats.map.get(id)?.name}</td>
+              <td><CatIcon icon={cats.map.get(id)?.icon} size={14} /> {cats.map.get(id)?.name}</td>
               <td><div className="print-bar"><i style={{ width: `${(v / a.expense) * 100}%`, background: cats.map.get(id)?.color }} /></div>{((v / a.expense) * 100).toFixed(1)}%</td>
               <td className="num">{f(v)}</td>
             </tr>

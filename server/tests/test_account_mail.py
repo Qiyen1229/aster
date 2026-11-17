@@ -58,7 +58,7 @@ def test_new_reset_link_invalidates_old_and_bad_token(admin_and_user, outbox) ->
 def test_forgot_info_contact_admin_when_mail_off(api: Api, monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr("app.api.auth.mail_configured", lambda: False)
     r = api.get("/api/auth/forgot-info").json()
-    assert r == {"mail": False, "contact": "giter003@gmail.com"}
+    assert r == {"mail": False, "contact": ""}
     monkeypatch.setattr("app.api.auth.mail_configured", lambda: True)
     assert api.get("/api/auth/forgot-info").json()["mail"] is True
 

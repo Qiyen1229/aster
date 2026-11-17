@@ -12,7 +12,7 @@ import { eachDay, fromDateKey, todayKey } from '@/domain/period';
 import { useUI } from '@/stores/ui';
 import { haptic } from '@/services/haptics';
 import { Amount } from '@/ui/controls';
-import { Icon } from '@/ui/Icon';
+import { CatIcon, Icon } from '@/ui/Icon';
 import { LedgerRow } from '../ledger/LedgerRow';
 import { tripDayInfo } from './TravelHero';
 
@@ -192,7 +192,7 @@ export function TravelTimeline({ project, cats, accounts, tags }: TravelTimeline
                   <span className="tt-cats">
                     {catsOfDay.length > 0 ? (
                       catsOfDay.slice(0, 5).map((c) => (
-                        <span key={c.id} className="tt-cat" title={c.name}>{c.icon}</span>
+                        <span key={c.id} className="tt-cat" title={c.name}><CatIcon icon={c.icon} size={14} /></span>
                       ))
                     ) : (
                       <span className="tt-note">{d.isFuture ? '尚未出發' : d.expenseMinor > 0 ? '' : '尚未記帳'}</span>

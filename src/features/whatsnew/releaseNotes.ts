@@ -25,6 +25,16 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.46', date: '2026-11-17',
+    features: [
+      {
+        title: '全站安全與無障礙強化',
+        intro: '補齊彈窗鍵盤焦點鎖定與還原、強化輔助文字對比度與圖表語意摘要、全面統一向量圖示顯示、為登入與代理請求加上逾時與錯誤隔離保護，並補齊刪除復原提示。',
+        howto: '更新後即可直接受惠；提醒中心滑動清除或隱藏「待處理事項」後，皆可點擊下方「復原」立即還原。',
+      },
+    ],
+  },
+  {
     version: '4.1.45', date: '2026-11-17',
     features: [
       {

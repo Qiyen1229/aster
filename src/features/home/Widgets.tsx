@@ -16,6 +16,7 @@ import { accountsNetWorth } from '@/services/snapshots';
 import { usePortfolio } from '@/services/portfolio';
 import { useSettings } from '@/stores/settings';
 import { Amount } from '@/ui/controls';
+import { CatIcon } from '@/ui/Icon';
 import type { WidgetKey } from '@/db/repo/settings';
 
 function Card({ title, children, onClick }: { title: string; children: React.ReactNode; onClick?: () => void }) {
@@ -146,7 +147,7 @@ export function Widgets() {
         const g = data.goal as { g: { name: string; icon: string; targetMinor: number; currency: string }; saved: number } | undefined;
         return <Card key={k} title="存錢目標" onClick={() => navigate('/plan?tab=goal')}>
           {g ? <>
-            <div className="widget-sub">{g.g.icon} {g.g.name}</div>
+            <div className="widget-sub"><CatIcon icon={g.g.icon} size={14} /> {g.g.name}</div>
             <div className="bar" style={{ margin: '6px 0 4px' }}><i style={{ width: `${Math.min(100, (g.saved / g.g.targetMinor) * 100)}%`, ['--c' as string]: 'var(--success)' }} /></div>
             <div className="widget-sub num">{Math.round((g.saved / g.g.targetMinor) * 100)}%</div>
           </> : <div className="widget-sub">尚未設定</div>}

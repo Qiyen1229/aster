@@ -1,9 +1,9 @@
 # Aster Application Bug Inspection & Comprehensive UX Audit Report
 
 **Target Application**: Aster Personal Accounting & Wealth Tracking PWA  
-**Evaluated Version**: 4.1.42 (git branch `feature/v1.2`)  
+**Evaluated Version**: 4.1.46 (git branch `feature/v1.2`)  
 **Inspection Date**: 2026-11-15  
-**Test Account Evaluated**: `aitry@gmail.com` / `Xx97429090`  
+**Test Account Evaluated**: `[REDACTED_TEST_ACCOUNT]`  
 **Evaluation Standard**: Clean and Minimalist Design Aesthetic ("簡潔乾淨"), W3C / WCAG 2.1 AA Accessibility, Modern Web Guidance Best Practices  
 **Integrity Mode**: Strict Read-Only Audit (Application Source Code Unmodified)
 
@@ -17,7 +17,7 @@ Aster is a modern personal accounting and wealth management progressive web appl
 - **Client Synchronization & NLP**: Background Dexie-to-server synchronization (`src/services/sync.ts`), deterministic natural language parsing (`src/domain/nlp-amount.ts`), client-side image compression worker, and Taiwan MOF E-Invoice carrier integration.
 - **Backend Services**: FastAPI (Python 3.14), SQLAlchemy ORM with SQLite (local development WAL) / PostgreSQL (production), Server-Sent Events (SSE) AI streaming, and Ministry of Finance (MOF) E-Invoice Gateway.
 
-The audit was conducted against the authenticated test user account (`aitry@gmail.com` / `Xx97429090`) across all core application routes, navigation structures, modal workflows, calculation engines, and network synchronizations. Every interactive element, typography token, color contrast pair, and API failure mode was systematically tested and cross-referenced with the W3C WCAG 2.1 AA standard and `modern-web-guidance` corpus.
+The audit was conducted against an authenticated test user account (`[REDACTED_TEST_ACCOUNT]`) across all core application routes, navigation structures, modal workflows, calculation engines, and network synchronizations. Every interactive element, typography token, color contrast pair, and API failure mode was systematically tested and cross-referenced with the W3C WCAG 2.1 AA standard and `modern-web-guidance` corpus.
 
 ### 1.2 Summary Breakdown of Cataloged Issues
 

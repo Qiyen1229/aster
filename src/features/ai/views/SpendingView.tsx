@@ -5,6 +5,7 @@ import { useCategories } from '@/app/hooks';
 import { db } from '@/db/schema';
 import { analyze, pctChange } from '@/domain/reports';
 import { formatMoney } from '@/domain/money';
+import { CatIcon } from '@/ui/Icon';
 import { accountingMonth, addMonths, todayKey, yearRange, type Range } from '@/domain/period';
 import { useSettings } from '@/stores/settings';
 import type { ViewSpec } from '@/domain/agent/plan';
@@ -37,7 +38,7 @@ export function SpendingView({ params, refreshKey }: { params: ViewSpec['params'
       </div>
       {items.length === 0 ? <p className="muted" style={{ margin: '8px 0 0' }}>這段期間沒有支出紀錄。</p> : items.map(([id, amt]) => (
         <div key={id} style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '6px 0', fontSize: '0.88rem' }}>
-          <span style={{ width: 76, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cats.get(id)?.icon} {cats.get(id)?.name ?? '其他'}</span>
+          <span style={{ width: 76, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}><CatIcon icon={cats.get(id)?.icon} size={14} /> {cats.get(id)?.name ?? '其他'}</span>
           <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'var(--surface-3)', overflow: 'hidden' }}><div style={{ width: `${(amt / max) * 100}%`, height: '100%', background: cats.get(id)?.color ?? 'var(--accent)' }} /></div>
           <span className="num" style={{ minWidth: 64, textAlign: 'right' }}>{formatMoney(amt, base, { decimals: 0 })}</span>
         </div>

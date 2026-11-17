@@ -26,6 +26,31 @@ interface Props {
   labelledBy?: string;
 }
 
+const FOCUSABLE_SEL = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+/** 將 Tab / Shift+Tab 鎖在對話框容器內（無障礙 focus trap） */
+export function trapTabKey(container: HTMLElement | null, e: KeyboardEvent): void {
+  if (e.key !== 'Tab' || !container) return;
+  const items = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SEL)).filter((el) => el.offsetParent !== null || el === document.activeElement);
+  if (!items.length) {
+    e.preventDefault();
+    container.focus({ preventScroll: true });
+    return;
+  }
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (e.shiftKey) {
+    if (!active || active === first || !container.contains(active)) {
+      e.preventDefault();
+      last.focus({ preventScroll: true });
+    }
+  } else if (!active || active === last || !container.contains(active)) {
+    e.preventDefault();
+    first.focus({ preventScroll: true });
+  }
+}
+
 /** 目前開啟中的抽屜堆疊（記錄 id，用來決定層級與 Esc 只關最上層） */
 const stack: number[] = [];
 let nextId = 1;
@@ -62,17 +87,30 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
     idRef.current = id;
     stack.push(id);
     setDepth(stack.length);
-    const prev = document.body.style.overflow;
+    const prevOverflow = document.body.style.overflow;
+    const prevFocus = document.activeElement as HTMLElement | null;
     document.body.style.overflow = 'hidden';
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && stack[stack.length - 1] === id) requestClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (stack[stack.length - 1] !== id) return;
+      if (e.key === 'Escape') requestClose();
+      else trapTabKey(sheetRef.current, e);
+    };
     window.addEventListener('keydown', onKey);
-    // 焦點移入抽屜（無障礙）
-    setTimeout(() => sheetRef.current?.focus({ preventScroll: true }), 50);
+    // 焦點移入抽屜內第一個可操作元件（無則移入容器），關閉時還原原焦點
+    const focusTimer = window.setTimeout(() => {
+      const root = sheetRef.current;
+      if (!root) return;
+      if (root.contains(document.activeElement)) return;
+      const first = root.querySelector<HTMLElement>(FOCUSABLE_SEL);
+      (first ?? root).focus({ preventScroll: true });
+    }, 50);
     return () => {
+      window.clearTimeout(focusTimer);
       const i = stack.indexOf(id);
       if (i >= 0) stack.splice(i, 1);
-      document.body.style.overflow = stack.length ? 'hidden' : prev;
+      document.body.style.overflow = stack.length ? 'hidden' : prevOverflow;
       window.removeEventListener('keydown', onKey);
+      window.setTimeout(() => prevFocus?.isConnected && prevFocus.focus?.({ preventScroll: true }), 0);
     };
   }, [mounted]); // eslint-disable-line react-hooks/exhaustive-deps
 

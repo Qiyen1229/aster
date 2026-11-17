@@ -117,12 +117,12 @@ export function FilterSheet({ open, onClose, value, onChange }: { open: boolean;
       <div className="section-title">分類</div>
       <Segmented value={catKind} onChange={setCatKind} options={[{ value: 'expense', label: '支出' }, { value: 'income', label: '收入' }]} ariaLabel="分類類型" />
       <div style={{ marginTop: 8 }}>
-        <Chips items={tree.map(({ main }) => ({ id: main.id, label: `${main.icon} ${main.name}` }))} value={f.categoryIds} onChange={(v) => set({ categoryIds: v.length ? v : undefined })} />
+        <Chips items={tree.map(({ main }) => ({ id: main.id, label: `${iconEmoji(main.icon)} ${main.name}` }))} value={f.categoryIds} onChange={(v) => set({ categoryIds: v.length ? v : undefined })} />
       </div>
       {projects.list.length > 0 && (
         <>
           <div className="section-title">專案</div>
-          <Chips items={projects.list.map((p) => ({ id: p.id, label: `${p.icon} ${p.name}` }))} value={f.projectIds} onChange={(v) => set({ projectIds: v.length ? v : undefined })} />
+          <Chips items={projects.list.map((p) => ({ id: p.id, label: `${iconEmoji(p.icon)} ${p.name}` }))} value={f.projectIds} onChange={(v) => set({ projectIds: v.length ? v : undefined })} />
         </>
       )}
       {tags.list.length > 0 && (

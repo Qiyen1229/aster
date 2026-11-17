@@ -13,6 +13,7 @@ import { loadSnapshot } from '@/services/insightsCache';
 import { useSettings } from '@/stores/settings';
 import { AiMark, Icon } from '@/ui/Icon';
 import { SwipeRow } from '@/ui/SwipeRow';
+import { snackUndo } from '@/stores/ui';
 
 const KEY = 'aster.home.weekly.open';
 const readOpen = () => { try { return localStorage.getItem(KEY) === '1'; } catch { return false; } };
@@ -73,11 +74,16 @@ export function AttentionCard({ onGo }: { onGo?: () => void }) {
   if (!visible.length && !showWeekly) return null;
 
   const hideAll = () => {
+    const prev = hidden;
     const next: HiddenMap = { ...hidden };
     for (const r of rows) next[r.key] = r.amount;
     if (weeklyKey) next[weeklyKey] = 1;
     setHidden(next);
     writeHidden(next);
+    snackUndo('已隱藏待處理事項', () => {
+      setHidden(prev);
+      writeHidden(prev);
+    });
   };
   const toggleWeekly = () => setOpen((o) => { try { localStorage.setItem(KEY, o ? '0' : '1'); } catch { /* 忽略 */ } return !o; });
   const shown = visible.slice(0, 4);

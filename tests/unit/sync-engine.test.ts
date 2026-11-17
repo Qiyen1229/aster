@@ -310,4 +310,20 @@ describe('跨裝置同步', () => {
     // 5. 過大帳目未進入伺服器
     expect([...server.recs.values()].some((r) => (r.payload as any)?.note === bigString)).toBe(false);
   });
+
+  it('伺服器清空重建（游標倒退）→ 重置本機游標並重新上傳既有資料', async () => {
+    await useDevice('phone');
+    await bootstrap();
+    const acc = await addAccount({ name: '中信', icon: 'landmark', color: '', type: 'bank', currency: 'TWD', initialBalanceMinor: 0, includeInNetWorth: true, isLiability: false });
+    await addTransaction({ type: 'expense', accountId: acc.id, categoryId: 'exp-food', amountMinor: 15000, currency: 'TWD', date: '2026-10-12', ts: 1, note: '重建後仍須保留' });
+    await sync.syncNow();
+    expect([...server.recs.values()].some((r) => (r.payload as { note?: string })?.note === '重建後仍須保留')).toBe(true);
+
+    // 模擬伺服器資料被清空重建（seq 歸零）
+    server = fakeServer();
+
+    await sync.syncNow();
+    expect(sync.useSync.getState().phase).toBe('idle');
+    expect([...server.recs.values()].some((r) => (r.payload as { note?: string })?.note === '重建後仍須保留')).toBe(true);
+  });
 });

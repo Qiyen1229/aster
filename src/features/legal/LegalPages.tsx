@@ -31,7 +31,7 @@ const H = ({ children }: { children: ReactNode }) => <h2 className="legal-h">{ch
 function useContact(): string {
   const [contact, setContact] = useState('');
   useEffect(() => {
-    void fetch('/api/auth/forgot-info', { credentials: 'same-origin' }).then((r) => (r.ok ? r.json() : null)).then((j: { contact?: string } | null) => setContact(j?.contact ?? ''), () => undefined);
+    void fetch('/api/auth/forgot-info', { credentials: 'same-origin', signal: AbortSignal.timeout(10_000) }).then((r) => (r.ok ? r.json() : null)).then((j: { contact?: string } | null) => setContact(j?.contact ?? ''), () => undefined);
   }, []);
   return contact;
 }

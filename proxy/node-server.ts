@@ -20,8 +20,9 @@ createServer(async (req, res) => {
     res.writeHead(r.status, Object.fromEntries(r.headers));
     res.end(Buffer.from(await r.arrayBuffer()));
   } catch (e) {
+    console.error('quote-proxy error:', e);
     res.writeHead(500, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: String(e) }));
+    res.end(JSON.stringify({ error: 'Upstream proxy error' }));
   }
 }).listen(port, () => {
   console.log(`clure-quote-proxy listening on :${port}`);

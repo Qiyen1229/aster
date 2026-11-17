@@ -8,7 +8,7 @@ import { buildSankey, DEFAULT_ESSENTIAL_MAIN_IDS } from '@/domain/sankey';
 import { formatMoney } from '@/domain/money';
 import { useSettings } from '@/stores/settings';
 import { Segmented } from '@/ui/controls';
-import { Icon } from '@/ui/Icon';
+import { CatIcon, Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { chartTheme } from './chart-theme';
 
@@ -102,7 +102,7 @@ export function SankeyCard({ txs, cats, accounts, base, onOpenCategory }: {
             {mains.map((c) => (
               <button key={c.id} className="pill" aria-pressed={essential.has(c.id)}
                 onClick={() => { const next = new Set(essential); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); set('sankeyEssential', [...next]); }}>
-                {c.icon} {c.name}
+                <CatIcon icon={c.icon} size={14} /> {c.name}
               </button>
             ))}
           </div>

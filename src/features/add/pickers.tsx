@@ -106,7 +106,7 @@ export function ProjectPicker({ open, onClose, projects, value, onPick }: {
         </button>
         {active.map((p) => (
           <button key={p.id} className="row" onClick={() => { onPick(p.id); onClose(); }}>
-            <span aria-hidden="true">{p.icon}</span>
+            <span aria-hidden="true"><CatIcon icon={p.icon} size={16} /></span>
             <span className="row-main">{p.name}</span>
             {p.id === value && <Icon name="check" className="accent" />}
           </button>

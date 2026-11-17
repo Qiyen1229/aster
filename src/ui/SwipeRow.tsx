@@ -120,6 +120,7 @@ export function SwipeRow({ children, onTap, onEdit, onDelete, onLongPress, disab
         onContextMenu={(e) => { if (onLongPress) { e.preventDefault(); onLongPress(); } }}
         role="button" tabIndex={0}
         onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
           if (e.key === 'Enter') onTap?.();
           if ((e.key === 'Delete' || e.key === 'Backspace') && onDelete) onDelete();
         }}>
