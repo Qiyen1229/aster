@@ -25,6 +25,16 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.49', date: '2026-11-17',
+    features: [
+      {
+        title: '自動入帳偏好介面重整',
+        intro: '將自動入帳偏好整理為「白名單｜黑名單｜規則｜試跑與卡片」四個清晰分頁，並把規則編輯器的「符合條件」與「套用結果」分組呈現，閱讀更舒服、不混雜。',
+        howto: '到「設定 → 自動記帳 → 自動入帳偏好」即可用頂部分頁輕鬆切換管理。',
+      },
+    ],
+  },
+  {
     version: '4.1.48', date: '2026-11-17',
     features: [
       {

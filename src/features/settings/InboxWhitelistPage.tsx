@@ -14,7 +14,7 @@ import { deleteRule } from '@/services/autocat';
 import { previewAutoBook } from '@/services/inbox';
 import { useSettings } from '@/stores/settings';
 import { askInput, useUI } from '@/stores/ui';
-import { EmptyState } from '@/ui/controls';
+import { EmptyState, Segmented } from '@/ui/controls';
 import { AccountField, SwitchField } from '@/ui/form';
 import { Icon, iconEmoji } from '@/ui/Icon';
 import { blankRule, RULE_MATCH_LABEL, RuleEditorSheet, ruleTargetSummary, type RuleDraft } from './RuleEditorSheet';
@@ -32,6 +32,7 @@ export default function InboxWhitelistPage() {
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
   const list = cfg.whitelist ?? [];
   const blacklist = cfg.blacklist ?? [];
+  const [tab, setTab] = useState<'white' | 'black' | 'rules' | 'tools'>('white');
   const [name, setName] = useState('');
   const [blockWord, setBlockWord] = useState('');
   const [testText, setTestText] = useState('');
@@ -124,142 +125,182 @@ export default function InboxWhitelistPage() {
         />
       </div>
 
-      <div className="section-title">新增白名單發送者</div>
-      <div className="list">
-        <div className="field">
-          <input
-            value={name}
-            maxLength={40}
-            placeholder="發送者名稱，例如 中國信託 或 LINE 帳號"
-            aria-label="發送者名稱"
-            style={{ flex: 1 }}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                add();
-              }
-            }}
-          />
-          <button className="pill accent-pill" disabled={!name.trim()} onClick={add}>加入</button>
-        </div>
+      <div style={{ margin: '14px 0 12px' }}>
+        <Segmented
+          value={tab}
+          onChange={setTab}
+          ariaLabel="自動入帳管理分頁"
+          options={[
+            { value: 'white', label: `白名單 (${list.length})` },
+            { value: 'black', label: `黑名單 (${blacklist.length})` },
+            { value: 'rules', label: `規則 (${rules.length})` },
+            { value: 'tools', label: '試跑與卡片' },
+          ]}
+        />
       </div>
 
-      <div className="section-title">白名單（{list.length}）</div>
-      {list.length === 0 ? (
-        <EmptyState emoji="🛡️" title="白名單是空的" text="加入信任的發送者後，即使沒開「看得懂的直接記帳」，它的消費通知也會直接入帳。" />
-      ) : (
-        <div className="list">
-          {list.map((n, idx) => (
-            <div key={`${n}-${idx}`} className="row">
-              <span className="row-main">
-                <span className="row-title">{n}</span>
-                <span className="row-sub">名稱或內容符合時直接記帳</span>
-              </span>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button className="pill" onClick={() => void edit(n, idx)}>編輯</button>
-                <button className="pill" style={{ color: 'var(--danger)' }} onClick={() => remove(n)}>移除</button>
-              </div>
+      {tab === 'white' && (
+        <section aria-label="白名單管理">
+          <div className="card" style={{ marginBottom: 10, padding: '10px 14px', fontSize: '0.84rem', color: 'var(--text-2)', borderLeft: '3px solid var(--success)' }}>
+            ✅ <b>直接放行入帳</b>：以下發送者、LINE 官方帳號或關鍵字命中時，通知會直接記帳，不需手動確認。
+          </div>
+          <div className="list" style={{ marginBottom: 10 }}>
+            <div className="field">
+              <input
+                value={name}
+                maxLength={40}
+                placeholder="新增發送者，例如：中國信託、LINE Pay"
+                aria-label="發送者名稱"
+                style={{ flex: 1 }}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                    add();
+                  }
+                }}
+              />
+              <button className="pill accent-pill" disabled={!name.trim()} onClick={add}>加入</button>
             </div>
-          ))}
-        </div>
+          </div>
+          {list.length === 0 ? (
+            <EmptyState emoji="🛡️" title="白名單是空的" text="加入信任的發送者後，即使沒開「看得懂的直接記帳」，它的消費通知也會直接入帳。" />
+          ) : (
+            <div className="list">
+              {list.map((n, idx) => (
+                <div key={`${n}-${idx}`} className="row">
+                  <span className="row-main">
+                    <span className="row-title">✅ {n}</span>
+                    <span className="row-sub">名稱或內容符合時直接記帳</span>
+                  </span>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button className="pill" onClick={() => void edit(n, idx)}>編輯</button>
+                    <button className="pill" style={{ color: 'var(--danger)' }} onClick={() => remove(n)}>移除</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
-      <div className="section-title">黑名單（{blacklist.length}）</div>
-      <div className="list">
-        <div className="field">
-          <input
-            value={blockWord}
-            maxLength={40}
-            placeholder="封鎖發送者或關鍵字，如：停車折抵、小明"
-            aria-label="新增黑名單"
-            style={{ flex: 1 }}
-            onChange={(e) => setBlockWord(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-                addBlacklist();
-              }
-            }}
-          />
-          <button type="button" className="pill" disabled={!blockWord.trim()} onClick={addBlacklist}>封鎖</button>
-        </div>
-        {blacklist.map((b, idx) => (
-          <div key={`${b}-${idx}`} className="row">
-            <span className="row-main">
-              <span className="row-title">{b}</span>
-              <span className="row-sub">命中時自動忽略，不跳審核通知</span>
-            </span>
-            <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => update({ blacklist: blacklist.filter((x) => x !== b) })}>移除</button>
+      {tab === 'black' && (
+        <section aria-label="黑名單管理">
+          <div className="card" style={{ marginBottom: 10, padding: '10px 14px', fontSize: '0.84rem', color: 'var(--text-2)', borderLeft: '3px solid var(--danger)' }}>
+            🚫 <b>自動忽略不打擾</b>：以下發送者（如常聊金額的朋友）或關鍵字（如停車折抵）命中時直接清除，不進收件匣、不跳紅點。
           </div>
-        ))}
-      </div>
-
-      <div className="section-title">規則試跑測試</div>
-      <div className="card">
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            className="input"
-            value={testText}
-            onChange={(e) => setTestText(e.target.value)}
-            placeholder="貼上一段銀行／LINE 通知試跑看看…"
-            aria-label="測試通知文字"
-            style={{ flex: 1 }}
-          />
-          <button type="button" className="pill accent-pill" disabled={!testText.trim()} onClick={() => void runPreview()}>試跑</button>
-        </div>
-        {testResult && <p style={{ margin: '8px 0 0', fontSize: '0.88rem' }}>{testResult}</p>}
-      </div>
-
-      {Object.keys(cfg.cardMap).length > 0 && (
-        <>
-          <div className="section-title">卡片對應的帳戶</div>
-          <div className="list">
-            {Object.entries(cfg.cardMap).map(([card, id]) => (
-              <div key={card} className="field">
-                <span className="label" style={{ flex: 1 }}>{card}</span>
-                <select
-                  value={accMap.has(id) ? id : ''}
-                  aria-label={`${card} 對應的帳戶`}
-                  onChange={(e) => {
-                    const map = { ...cfg.cardMap };
-                    if (e.target.value) map[card] = e.target.value; else delete map[card];
-                    update({ cardMap: map });
-                  }}
-                >
-                  <option value="">（不指定，自動判斷）</option>
-                  {accounts.filter((a) => a.type !== 'loan').map((a) => <option key={a.id} value={a.id}>{iconEmoji(a.icon)} {a.name}</option>)}
-                </select>
-              </div>
-            ))}
+          <div className="list" style={{ marginBottom: 10 }}>
+            <div className="field">
+              <input
+                value={blockWord}
+                maxLength={40}
+                placeholder="封鎖發送者或關鍵字，如：停車折抵、小明"
+                aria-label="新增黑名單"
+                style={{ flex: 1 }}
+                onChange={(e) => setBlockWord(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                    addBlacklist();
+                  }
+                }}
+              />
+              <button type="button" className="pill" disabled={!blockWord.trim()} onClick={addBlacklist}>封鎖</button>
+            </div>
           </div>
-          <p className="muted" style={{ fontSize: '0.78rem', margin: '4px 8px' }}>未設定過的卡片會在確認記帳時自動記住；你在這裡手動指定的對應不會被系統自動覆蓋。</p>
-        </>
+          {blacklist.length === 0 ? (
+            <EmptyState emoji="🤫" title="黑名單是空的" text="如果某些對話或廣告通知常被誤判進收件匣，加入黑名單就會永久安靜。" />
+          ) : (
+            <div className="list">
+              {blacklist.map((b, idx) => (
+                <div key={`${b}-${idx}`} className="row">
+                  <span className="row-main">
+                    <span className="row-title">🚫 {b}</span>
+                    <span className="row-sub">命中時自動忽略，不跳審核通知</span>
+                  </span>
+                  <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => update({ blacklist: blacklist.filter((x) => x !== b) })}>移除</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
-      <div className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span>自動改名與分類規則（{rules.length}）</span>
-        <button type="button" className="pill accent-pill" onClick={() => setRuleDraft(blankRule())}>＋ 新增</button>
-      </div>
-      {rules.length === 0 ? (
-        <EmptyState emoji="✨" title="還沒有自訂改名／分類規則" text="設定關鍵字（例如通知裡的「遠東百貨板橋分公司」），之後自動入帳就會自動改成你指定的名稱（如「牛肉麵」）與類別（如「晚餐」）。" />
-      ) : (
-        <div className="list">
-          {rules.map((r) => (
-            <div key={r.id} className="row" style={{ opacity: r.enabled ? 1 : 0.55 }}>
-              <span className="row-main">
-                <span className="row-title">「{r.keyword}」</span>
-                <span className="row-sub">
-                  {RULE_MATCH_LABEL[r.match]} · {ruleTargetSummary(r, catMap)}{r.hits > 0 ? ` · 命中 ${r.hits} 次` : ''}
-                </span>
-              </span>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button type="button" className="pill" onClick={() => setRuleDraft({ ...r })}>編輯</button>
-                <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => void deleteRule(r.id).then(() => snack('已刪除規則'))}>移除</button>
-              </div>
+      {tab === 'rules' && (
+        <section aria-label="自動改名與分類規則">
+          <div className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
+            <span>自動改名與分類規則（{rules.length}）</span>
+            <button type="button" className="pill accent-pill" onClick={() => setRuleDraft(blankRule())}>＋ 新增規則</button>
+          </div>
+          {rules.length === 0 ? (
+            <EmptyState emoji="✨" title="還沒有自訂改名／分類規則" text="設定關鍵字（例如通知裡的「遠東百貨板橋分公司」），之後自動入帳就會自動改成你指定的名稱（如「牛肉麵」）與類別（如「晚餐」）。" />
+          ) : (
+            <div className="list">
+              {rules.map((r) => (
+                <div key={r.id} className="row" style={{ opacity: r.enabled ? 1 : 0.55 }}>
+                  <span className="row-main">
+                    <span className="row-title">「{r.keyword}」</span>
+                    <span className="row-sub">
+                      {RULE_MATCH_LABEL[r.match]} · {ruleTargetSummary(r, catMap)}{r.hits > 0 ? ` · 命中 ${r.hits} 次` : ''}
+                    </span>
+                  </span>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" className="pill" onClick={() => setRuleDraft({ ...r })}>編輯</button>
+                    <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => void deleteRule(r.id).then(() => snack('已刪除規則'))}>移除</button>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </section>
+      )}
+
+      {tab === 'tools' && (
+        <section aria-label="試跑與卡片對應">
+          <div className="section-title" style={{ marginTop: 4 }}>規則試跑測試</div>
+          <div className="card" style={{ marginBottom: 14 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                className="input"
+                value={testText}
+                onChange={(e) => setTestText(e.target.value)}
+                placeholder="貼上一段銀行／LINE 通知試跑看看…"
+                aria-label="測試通知文字"
+                style={{ flex: 1 }}
+              />
+              <button type="button" className="pill accent-pill" disabled={!testText.trim()} onClick={() => void runPreview()}>試跑</button>
+            </div>
+            {testResult && <p style={{ margin: '10px 0 0', fontSize: '0.88rem', lineHeight: 1.5 }}>{testResult}</p>}
+          </div>
+
+          <div className="section-title">已學習的卡片對應帳戶</div>
+          {Object.keys(cfg.cardMap).length === 0 ? (
+            <EmptyState emoji="💳" title="還沒有卡片對應紀錄" text="之後在確認或自動記帳時，系統會記住每張卡對應的帳戶；你也可以在這裡手動調整。" />
+          ) : (
+            <>
+              <div className="list">
+                {Object.entries(cfg.cardMap).map(([card, id]) => (
+                  <div key={card} className="field">
+                    <span className="label" style={{ flex: 1 }}>{card}</span>
+                    <select
+                      value={accMap.has(id) ? id : ''}
+                      aria-label={`${card} 對應的帳戶`}
+                      onChange={(e) => {
+                        const map = { ...cfg.cardMap };
+                        if (e.target.value) map[card] = e.target.value; else delete map[card];
+                        update({ cardMap: map });
+                      }}
+                    >
+                      <option value="">（不指定，自動判斷）</option>
+                      {accounts.filter((a) => a.type !== 'loan').map((a) => <option key={a.id} value={a.id}>{iconEmoji(a.icon)} {a.name}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <p className="muted" style={{ fontSize: '0.78rem', margin: '6px 8px' }}>你在這裡手動指定的對應不會被系統自動覆蓋。</p>
+            </>
+          )}
+        </section>
       )}
 
       <RuleEditorSheet draft={ruleDraft} onChange={setRuleDraft} onClose={() => setRuleDraft(null)} />
