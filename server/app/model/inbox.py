@@ -27,10 +27,19 @@ class InboxToken(Base):
     use_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class InboxBooking(Base):
+    __tablename__ = "inbox_bookings"
+
+    item_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    shape: Mapped[str] = mapped_column(String(2000))
+
+
 class InboxItem(Base):
     """一則待記帳項目。App 確認記帳或略過後刪除；30 天沒處理自動清除。"""
 
     __tablename__ = "inbox_items"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)

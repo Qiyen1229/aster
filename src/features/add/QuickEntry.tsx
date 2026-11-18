@@ -18,8 +18,9 @@ import { CatIcon, Icon } from '@/ui/Icon';
 const EXAMPLES = ['昨天午餐 150 刷玉山卡', '早餐 60 午餐 120 飲料 55', '計程車兩百三', '領薪水 5萬2'];
 
 
-export function QuickEntry({ initialText, accMap, catMap, onApply, onBooked }: {
+export function QuickEntry({ initialText, sourceId, accMap, catMap, onApply, onBooked }: {
   initialText?: string;
+  sourceId?: string;
   accMap: Map<string, Account>;
   catMap: Map<string, Category>;
   onApply: (d: ResolvedDraft) => void;
@@ -82,8 +83,8 @@ export function QuickEntry({ initialText, accMap, catMap, onApply, onBooked }: {
   const bookAll = async () => {
     setBusy(true);
     try {
-      const r = await bookDrafts(drafts);
-      const total = drafts.length;
+      const r = await bookDrafts(drafts, { sourceId });
+      const total = r.txIds.length + r.transferIds.length;
       snackUndo(`已記下 ${total} 筆`, async () => {
         if (r.txIds.length) await deleteTransactions(r.txIds);
         if (r.transferIds.length) await deleteTransfers(r.transferIds);

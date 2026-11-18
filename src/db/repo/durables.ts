@@ -9,10 +9,10 @@ import { getSetting } from './settings';
 
 const now = () => Date.now();
 
-export type DurableInput = Pick<Durable, 'name' | 'icon' | 'purchaseDate' | 'costMinor' | 'currency'> & Partial<Pick<Durable, 'lifeYears' | 'trackUses' | 'uses' | 'note' | 'txId'>>;
+export type DurableInput = Pick<Durable, 'name' | 'icon' | 'purchaseDate' | 'costMinor' | 'currency'> & Partial<Pick<Durable, 'id' | 'lifeYears' | 'trackUses' | 'uses' | 'note' | 'txId'>>;
 
 export async function addDurable(input: DurableInput): Promise<Durable> {
-  const row: Durable = { ...input, name: input.name.trim() || '耐用物品', id: uid(), status: 'active', createdAt: now(), updatedAt: now() };
+  const row: Durable = { ...input, name: input.name.trim() || '耐用物品', id: input.id ?? uid(), status: 'active', createdAt: now(), updatedAt: now() };
   if (!row.trackUses) { delete row.trackUses; delete row.uses; }
   await db.durables.add(row);
   return row;

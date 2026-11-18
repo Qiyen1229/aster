@@ -17,7 +17,7 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 export interface E2EEConfig { enabled: boolean; salt: string; iterations: number; check: string; version: number }
-export interface Encrypted { $enc: 1; iv: string; ct: string }
+export interface Encrypted { $enc: 1; iv: string; ct: string; v?: number }
 
 export class E2EELockedError extends Error {
   constructor() { super('這個帳號已啟用端對端加密，請到「設定 → 帳號 → 端對端加密」輸入加密密碼'); }
@@ -36,10 +36,10 @@ export async function deriveKey(passphrase: string, saltB64: string, iterations:
   return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: unb64(saltB64), iterations }, base, { name: 'AES-GCM', length: 256 }, extractable, ['encrypt', 'decrypt']);
 }
 
-export async function encryptJson(key: CryptoKey, value: unknown): Promise<Encrypted> {
+export async function encryptJson(key: CryptoKey, value: unknown, version?: number): Promise<Encrypted> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(value)));
-  return { $enc: 1, iv: b64(iv), ct: b64(ct) };
+  return { $enc: 1, iv: b64(iv), ct: b64(ct), ...(version === undefined ? {} : { v: version }) };
 }
 
 export async function decryptJson<T = unknown>(key: CryptoKey, e: Encrypted): Promise<T> {
@@ -64,15 +64,15 @@ export async function localKey(): Promise<CryptoKey | null> {
 }
 
 async function storeKey(key: CryptoKey | null, version: number): Promise<void> {
+  await db.transaction('rw', db.meta, async () => {
+    if (key) {
+      await db.meta.bulkPut([{ key: META_KEY, value: key }, { key: META_VERSION, value: version }]);
+    } else {
+      await db.meta.bulkDelete([META_KEY, META_VERSION]);
+    }
+  });
   memKey = key;
   memDb = db.name;
-  if (key) {
-    // 有些瀏覽器（或測試環境）無法把 CryptoKey 存進 IndexedDB：退回只放記憶體（下次開 App 需重新輸入）
-    try { await db.meta.put({ key: META_KEY, value: key }); } catch { /* 只在記憶體 */ }
-    await db.meta.put({ key: META_VERSION, value: version });
-  } else {
-    await db.meta.bulkDelete([META_KEY, META_VERSION]);
-  }
 }
 
 /** 依伺服器設定調整本機狀態；回傳目前可用的金鑰（未啟用時為 null） */

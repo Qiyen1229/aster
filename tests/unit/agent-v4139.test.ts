@@ -13,6 +13,7 @@ vi.mock('@/services/api', async (importOriginal) => {
     ...actual,
     api: vi.fn(async (path: string, opts?: { body?: unknown }) => {
       if (path === '/inbox/items') return apiState.items;
+      if (path === '/inbox/items/booking') return { message: '已登記' };
       if (path === '/inbox/items/ack') {
         const ids = (opts?.body as { ids: number[] }).ids;
         apiState.acked.push(...ids);
@@ -81,13 +82,13 @@ describe('建立鏈：同一句話新建分類／帳戶／專案，後面的步�
     expect(await bal(bank)).toBe(1_000_000 - 20_000);
   });
 
-  it('一鍵還原：帳目、轉帳、專案、帳戶都消失；分類因曾被使用改為封存', async () => {
+  it('一鍵還原：帳目、轉帳、專案復原；曾被使用的帳戶與分類保留封存', async () => {
     const steps = await previewPlan(plan);
     const log = await applyPlan(steps, '寵物_setup');
     const r = await undoOp(log.id);
     expect(r.skipped).toBe(0);
     expect(await bal(bank)).toBe(1_000_000);
-    expect((await db.accounts.toArray()).filter((x) => x.name === '寵物錢包').length).toBe(0);
+    expect((await db.accounts.toArray()).find((x) => x.name === '寵物錢包')?.archived).toBe(1);
     expect(await db.projects.count()).toBe(0);
     expect((await db.transactions.toArray()).every((t) => t.deletedAt)).toBe(true);
     expect((await db.transfers.toArray()).every((t) => t.deletedAt)).toBe(true);
@@ -400,8 +401,8 @@ describe('觀察清單與股利', () => {
 
   it('買進後記現金股利：扣匯費後實拿入帳；還原後股利、帳目、交易全復原', async () => {
     const steps = await previewPlan([
-      step('buy_stock', { symbol: '0050', shares: 1000, account: '台新' }),
-      step('add_dividend', { symbol: '0050', per_share: 2, account: '台新' }),
+      step('buy_stock', { symbol: '0050', shares: 1000, account: '台新', date: addDays(today, -30) }),
+      step('add_dividend', { symbol: '0050', per_share: 2, account: '台新', ex_date: addDays(today, -14), fee: 10 }),
     ]);
     expect(steps.map((s) => s.preview.blocked)).toEqual([undefined, undefined]);
     expect(steps[1].preview.lines.join('\n')).toContain('實拿');

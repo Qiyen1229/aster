@@ -25,10 +25,12 @@ export const blankRule = (kind: CategoryKind = 'expense', categoryId = '', keywo
 
 export const RULE_MATCH_LABEL = { contains: '包含', equals: '完全相同', regex: '正規表示式' } as const;
 
-export function ruleTargetSummary(r: Pick<CategoryRule, 'renameNote' | 'categoryId'>, catMap: Map<string, Category>): string {
+export function ruleTargetSummary(r: Pick<CategoryRule, 'renameNote' | 'categoryId' | 'accountId' | 'tagIds'>, catMap: Map<string, Category>): string {
   const parts: string[] = [];
   if (r.renameNote?.trim()) parts.push(`改名「${r.renameNote.trim()}」`);
   if (r.categoryId) parts.push(categoryLabel(catMap, r.categoryId));
+  if (r.accountId) parts.push('指定帳戶');
+  if (r.tagIds?.length) parts.push(`${r.tagIds.length} 個標籤`);
   return parts.join(' · ') || '（未指定）';
 }
 
@@ -45,21 +47,23 @@ export function RuleEditorSheet({ draft, onChange, onClose, onSaved }: {
   const save = async () => {
     if (!draft) return;
     if (!draft.keyword.trim()) { useUI.getState().showSnack({ text: '請輸入關鍵字' }); return; }
-    if (!draft.renameNote?.trim() && !draft.categoryId) {
-      useUI.getState().showSnack({ text: '請填寫「改寫名稱」或「指定類別」（至少一項）' });
+    if (!draft.renameNote?.trim() && !draft.categoryId && !draft.accountId && !draft.tagIds?.length) {
+      useUI.getState().showSnack({ text: '請至少指定名稱、分類、帳戶或標籤其中一項' });
       return;
     }
     if (draft.match === 'regex') {
       try { new RegExp(draft.keyword); } catch { useUI.getState().showSnack({ text: '正規表示式格式錯誤' }); return; }
     }
-    await saveRule({
-      ...draft,
-      keyword: draft.keyword.trim(),
-      renameNote: draft.renameNote?.trim() || undefined,
-    });
-    onClose();
-    useUI.getState().showSnack({ text: '已儲存規則' });
-    onSaved?.();
+    try {
+      await saveRule({
+        ...draft,
+        keyword: draft.keyword.trim(),
+        renameNote: draft.renameNote?.trim() || undefined,
+      });
+      onClose();
+      useUI.getState().showSnack({ text: '已儲存規則' });
+      onSaved?.();
+    } catch (e) { useUI.getState().showSnack({ text: (e as Error).message }); }
   };
 
   return (
@@ -87,10 +91,10 @@ export function RuleEditorSheet({ draft, onChange, onClose, onSaved }: {
           <div className="list">
             <TextField label="改寫名稱" value={draft.renameNote ?? ''} onChange={(v) => onChange({ ...draft, renameNote: v })} placeholder="例如：牛肉麵（留空不改名）" maxLength={60} />
             <div className="row" style={{ flexDirection: 'column', alignItems: 'stretch' }}>
-              <Segmented value={draft.kind} ariaLabel="適用類型" onChange={(v) => onChange({ ...draft, kind: v, categoryId: v === 'any' || catMap.get(draft.categoryId)?.kind === v ? draft.categoryId : '' })}
+              <Segmented value={draft.kind} ariaLabel="適用類型" onChange={(v) => onChange({ ...draft, kind: v, categoryId: catMap.get(draft.categoryId)?.kind === v ? draft.categoryId : '' })}
                 options={[{ value: 'expense', label: '支出' }, { value: 'income', label: '收入' }, { value: 'any', label: '兩者' }]} />
             </div>
-            <CategoryField value={draft.categoryId} onChange={(v) => onChange({ ...draft, categoryId: v })} categories={cats}
+            <CategoryField value={draft.categoryId} onChange={(v) => onChange({ ...draft, categoryId: v, kind: v ? catMap.get(v)?.kind ?? draft.kind : draft.kind })} categories={cats}
               kind={draft.kind === 'income' ? 'income' : draft.kind === 'expense' ? 'expense' : catMap.get(draft.categoryId)?.kind ?? 'expense'} allowEmpty emptyLabel="不指定（依原本判斷）" />
             <AccountField label="指定帳戶" value={draft.accountId ?? ''} onChange={(v) => onChange({ ...draft, accountId: v || undefined })} accounts={accounts} allowEmpty emptyLabel="不指定" />
             <SelectField label="優先順序" value={draft.priority} onChange={(v) => onChange({ ...draft, priority: v })}

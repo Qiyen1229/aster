@@ -8,7 +8,7 @@ from app.api.deps import get_client, get_current_user, get_db, rate_limit
 from app.core.rate_limit import RateLimiter
 from app.core.request_info import ClientInfo
 from app.model import User
-from app.schema.sync import DEVICE_ID_PATTERN, E2EEConfig, E2EEUpdate, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncStatus
+from app.schema.sync import DEVICE_ID_PATTERN, E2EEConfig, E2EEUpdate, RekeyBatch, RekeyBegin, RekeyCommit, SyncPullResponse, SyncPushRequest, SyncPushResponse, SyncStatus
 from app.service.sync_service import SyncService
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
@@ -24,7 +24,7 @@ def sync_status(user: User = Depends(get_current_user), db: Session = Depends(ge
 @router.post("/push", response_model=SyncPushResponse, summary="上傳本機變更")
 def push(body: SyncPushRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> SyncPushResponse:
     rate_limit(sync_push_limiter, f"push:{user.id}")
-    return SyncService(db).push(user, body.device_id, body.changes)
+    return SyncService(db).push(user, body.device_id, body.changes, body.key_version)
 
 
 @router.get("/pull", response_model=SyncPullResponse, summary="下載其他裝置的變更")
@@ -47,3 +47,21 @@ def get_keys(user: User = Depends(get_current_user), db: Session = Depends(get_d
 def put_keys(body: E2EEUpdate, user: User = Depends(get_current_user), client: ClientInfo = Depends(get_client),
              db: Session = Depends(get_db)) -> E2EEConfig | None:
     return SyncService(db).set_e2ee(user, body, client)
+
+
+@router.post("/keys/migration", summary="準備加密切換")
+def begin_rekey(body: RekeyBegin, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    SyncService(db).begin_rekey(user, body)
+    return {"ok": True}
+
+
+@router.put("/keys/migration", summary="暫存重新加密資料")
+def stage_rekey(body: RekeyBatch, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    SyncService(db).stage_rekey(user, body)
+    return {"ok": True}
+
+
+@router.post("/keys/migration/commit", response_model=SyncStatus, summary="原子切換完整加密資料")
+def commit_rekey(body: RekeyCommit, user: User = Depends(get_current_user), client: ClientInfo = Depends(get_client),
+                 db: Session = Depends(get_db)) -> SyncStatus:
+    return SyncService(db).commit_rekey(user, body.migration_id, client)

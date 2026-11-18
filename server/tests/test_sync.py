@@ -169,3 +169,100 @@ def test_user_total_sync_bytes_limit(api: Api, monkeypatch) -> None:
     r2 = push(api, DEV_A, [{"table": "transactions", "key": '"t2"', "updated_at": 2000, "deleted": False, "payload": payload2}])
     assert r2.status_code == 413
     assert "容量" in r2.json()["detail"]
+    assert r2.headers["X-Sync-Error"] == "quota_exceeded"
+
+
+def _begin_rekey(api: Api, migration_id: str, enabled: bool = True):
+    st = api.get("/api/sync/status").json()
+    return api.post("/api/sync/keys/migration", {"migration_id": migration_id, "expected_version": st["key_version"],
+                    "cursor": st["cursor"], "enabled": enabled, "salt": "salt", "iterations": 310000, "check": "check"})
+
+
+def _stage_rekey(api: Api, migration_id: str, rows: list[dict], version: int, enabled: bool = True):
+    changes = [{**r, "payload": {"$enc": 1, "v": version, "iv": "iv", "ct": f"cipher-{r['key']}"}
+                if enabled else {"id": r["key"], "note": "明文"}} for r in rows]
+    return api.c.put("/api/sync/keys/migration", json={"migration_id": migration_id, "changes": changes}, headers=api._h())
+
+
+def test_rekey_requires_complete_staging_and_rejects_stale_writes(api: Api) -> None:
+    api.register("alice")
+    push(api, DEV_A, [change("t1", 1, note="原始一"), change("t2", 2, note="原始二")])
+    original = pull(api).json()["changes"]
+    assert api.c.put("/api/sync/keys", json={"enabled": True, "salt": "s", "iterations": 310000, "check": "c"}, headers=api._h()).status_code == 409
+    assert _begin_rekey(api, DEV_A).status_code == 200
+    assert _stage_rekey(api, DEV_A, original[:1], 1).status_code == 200
+    assert api.post("/api/sync/keys/migration/commit", {"migration_id": DEV_A}).status_code == 409
+    assert pull(api).json()["changes"] == original
+    assert api.get("/api/sync/keys").json() is None
+    assert _stage_rekey(api, DEV_A, original[1:], 1).status_code == 200
+    r = api.post("/api/sync/keys/migration/commit", {"migration_id": DEV_A})
+    assert r.status_code == 200 and r.json()["key_version"] == 1
+    encrypted = pull(api).json()["changes"]
+    assert all(c["payload"]["v"] == 1 for c in encrypted)
+    assert [c["updated_at"] for c in encrypted] == [1, 2]
+    assert push(api, DEV_B, [change("t1", 100, note="舊裝置")]).status_code == 409
+    assert api.post("/api/sync/push", {"device_id": DEV_B, "key_version": 1, "changes": [change("t1", 100)]}).status_code == 409
+    assert pull(api).json()["changes"] == encrypted
+
+
+def test_rekey_rotation_and_disable_keep_old_format_until_commit(api: Api) -> None:
+    api.register("alice")
+    push(api, DEV_A, [change("t1", 1)])
+    for version, enabled in [(1, True), (2, True), (3, False)]:
+        old = pull(api).json()["changes"]
+        assert _begin_rekey(api, DEV_A, enabled).status_code == 200
+        assert _stage_rekey(api, DEV_A, old, version, enabled).status_code == 200
+        assert pull(api).json()["changes"] == old
+        r = api.post("/api/sync/keys/migration/commit", {"migration_id": DEV_A})
+        assert r.status_code == 200 and r.json()["key_version"] == version
+        assert bool(r.json()["e2ee"]) == enabled
+    assert api.post("/api/sync/push", {"device_id": DEV_B, "key_version": 2, "changes": []}).status_code == 409
+    assert api.post("/api/sync/push", {"device_id": DEV_B, "key_version": 3, "changes": [change("t2", 2)]}).status_code == 200
+
+
+def test_rekey_conflict_never_overwrites_concurrent_upload(api: Api) -> None:
+    api.register("alice")
+    push(api, DEV_A, [change("t1", 1)])
+    assert _begin_rekey(api, DEV_A).status_code == 200
+    assert _stage_rekey(api, DEV_A, pull(api).json()["changes"], 1).status_code == 200
+    push(api, DEV_B, [change("t1", 2, note="更新")])
+    assert api.post("/api/sync/keys/migration/commit", {"migration_id": DEV_A}).status_code == 409
+    assert api.get("/api/sync/keys").json() is None
+    assert pull(api).json()["changes"][0]["payload"]["note"] == "更新"
+
+
+def test_rekey_commit_failure_rolls_back_payloads_and_config(api: Api, monkeypatch) -> None:
+    import pytest
+    from app.service.audit_service import AuditService
+
+    api.register("alice")
+    push(api, DEV_A, [change("t1", 1)])
+    old = pull(api).json()["changes"]
+    _begin_rekey(api, DEV_A)
+    _stage_rekey(api, DEV_A, old, 1)
+    def fail(*args, **kwargs):
+        raise RuntimeError("audit failed")
+    monkeypatch.setattr(AuditService, "record", fail)
+    with pytest.raises(RuntimeError, match="audit failed"):
+        api.post("/api/sync/keys/migration/commit", {"migration_id": DEV_A})
+    assert api.get("/api/sync/keys").json() is None
+    assert pull(api).json()["changes"] == old
+
+
+def test_rekey_staging_is_user_scoped_and_quota_limited(api: Api, monkeypatch) -> None:
+    from app.core.config import get_settings
+
+    api.register("alice")
+    push(api, DEV_A, [change("t1", 1)])
+    old = pull(api).json()["changes"]
+    _begin_rekey(api, DEV_A)
+    other = Api("10.9.8.1")
+    other.register("bob")
+    assert _stage_rekey(other, DEV_A, old, 1).status_code == 409
+    monkeypatch.setattr(get_settings(), "sync_max_bytes_per_user", 10)
+    assert _stage_rekey(api, DEV_A, old, 1).status_code == 413
+    monkeypatch.setattr(get_settings(), "sync_max_bytes_per_user", 10000)
+    assert api.post("/api/sync/keys/migration/commit", {"migration_id": DEV_A}).status_code == 409
+    assert pull(api).json()["changes"] == old
+    assert _stage_rekey(api, DEV_A, old, 1).status_code == 200
+    assert api.post("/api/sync/keys/migration/commit", {"migration_id": DEV_A}).status_code == 200

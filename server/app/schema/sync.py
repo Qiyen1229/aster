@@ -29,6 +29,16 @@ class E2EEUpdate(BaseModel):
     salt: str = Field("", max_length=64)
     iterations: int = Field(0, ge=0, le=10_000_000)
     check: str = Field("", max_length=1024)
+    expected_version: int = Field(0, ge=0)
+
+
+class RekeyBegin(E2EEUpdate):
+    migration_id: str = Field(pattern=DEVICE_ID_PATTERN)
+    cursor: int = Field(ge=0)
+
+
+class RekeyCommit(BaseModel):
+    migration_id: str = Field(pattern=DEVICE_ID_PATTERN)
 
 
 class SyncStatus(BaseModel):
@@ -41,6 +51,7 @@ class SyncStatus(BaseModel):
     server_time: int = 0
     purged_seq: int = 0
     e2ee: E2EEConfig | None = None
+    key_version: int = 0
 
 
 class SyncChange(BaseModel):
@@ -51,8 +62,13 @@ class SyncChange(BaseModel):
     payload: dict[str, Any] | None = None
 
 
+class RekeyBatch(RekeyCommit):
+    changes: list[SyncChange] = Field(default_factory=list, max_length=500)
+
+
 class SyncPushRequest(BaseModel):
     device_id: str = Field(pattern=DEVICE_ID_PATTERN)
+    key_version: int | None = Field(None, ge=0)
     changes: list[SyncChange] = Field(default_factory=list, max_length=500)
 
 

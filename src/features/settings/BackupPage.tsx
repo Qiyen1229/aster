@@ -97,8 +97,8 @@ export default function BackupPage() {
         </label>
         <label className="row" style={{ cursor: 'pointer' }}>
           <span className="row-main">
-            <span className="row-title">{busy === 'verify' ? '演練驗證中…' : '演練還原（僅檢查備份檔，不寫入）'}</span>
-            <span className="row-sub">測試備份檔是否完整可解密、查看內含筆數</span>
+            <span className="row-title">{busy === 'verify' ? '檔案驗證中…' : '驗證備份（不寫入帳本）'}</span>
+            <span className="row-sub">檢查格式、欄位、資料關聯與餘額；不代表已實際還原</span>
           </span>
           <input type="file" accept="application/json,.json" className="sr-only" onChange={async (e) => {
             const f = e.target.files?.[0];
@@ -109,7 +109,7 @@ export default function BackupPage() {
             await run('verify', async () => {
               const r = await verifyBackup(f);
               setVerified(r);
-              snack(`演練成功 ✓ 共 ${r.totalRows} 筆資料`);
+              snack(`檔案檢查通過，共 ${r.totalRows} 筆資料`);
             });
           }} />
         </label>
@@ -117,7 +117,7 @@ export default function BackupPage() {
 
       {verified && (
         <div className="card">
-          <div className="row-title">✅ 備份演練通過（未改動任何現有資料）</div>
+          <div className="row-title">備份檔案檢查通過（尚未實際還原）</div>
           <div className="row-sub" style={{ whiteSpace: 'normal', marginTop: 4 }}>
             版本 {verified.version || '未知'}{verified.encrypted ? ' · 已加密' : ''} · 匯出時間 {verified.exportedAt ? new Date(verified.exportedAt).toLocaleString('zh-TW') : '未知'}
           </div>
@@ -130,7 +130,7 @@ export default function BackupPage() {
       {pending && (
         <div className="card" role="dialog" aria-label="輸入備份密碼">
           <div className="row-title">🔐 這是加密的備份檔</div>
-          <div className="row-sub" style={{ whiteSpace: 'normal', margin: '4px 0 8px' }}>{pending.file.name}。請輸入匯出時設定的備份密碼（{pending.action === 'verify' ? '僅演練驗證，不寫入資料' : `還原方式：${mode === 'merge' ? '合併' : '完全取代'}`}）。</div>
+          <div className="row-sub" style={{ whiteSpace: 'normal', margin: '4px 0 8px' }}>{pending.file.name}。請輸入匯出時設定的備份密碼（{pending.action === 'verify' ? '僅檢查檔案，不寫入資料' : `還原方式：${mode === 'merge' ? '合併' : '完全取代'}`}）。</div>
           <input className="input" type="password" autoFocus autoComplete="off" value={restorePass} onChange={(e) => setRestorePass(e.target.value)} aria-label="備份密碼" />
           {restoreErr && <p className="auth-error" role="alert">{restoreErr}</p>}
           <div className="btn-row" style={{ marginTop: 10 }}>
@@ -141,7 +141,7 @@ export default function BackupPage() {
                   const r = await verifyBackup(pending.file, restorePass);
                   setVerified(r);
                   setPending(null);
-                  snack(`演練成功 ✓ 共 ${r.totalRows} 筆資料`);
+                  snack(`檔案檢查通過，共 ${r.totalRows} 筆資料`);
                 } else {
                   const r = await restoreBackup(pending.file, mode, restorePass);
                   useSettings.getState().hydrate(await loadSettings());
@@ -152,7 +152,7 @@ export default function BackupPage() {
                 if (e instanceof BackupPassphraseError) { setRestoreErr(e.message); return; }
                 throw e;
               }
-            })}>{busy === 'verify' ? '驗證中…' : busy === 'restore' ? '還原中…' : pending.action === 'verify' ? '解密並演練' : '解密並還原'}</button>
+            })}>{busy === 'verify' ? '驗證中…' : busy === 'restore' ? '還原中…' : pending.action === 'verify' ? '解密並檢查' : '解密並還原'}</button>
           </div>
         </div>
       )}

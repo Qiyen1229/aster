@@ -33,10 +33,10 @@ const NOISE = /[\s\d.,，。:：;；()（）[\]「」\-_/\\#*＊·・]|nt\$|twd|
 
 const CHAIN_ALIASES: [RegExp, string][] = [
   [/familymart/gi, '全家'],
-  [/7eleven|7-?11|統一超商/gi, '711'],
+  [/7[\s-]*eleven|7[\s-]*11|統一超商/gi, '統一超商'],
   [/starbucks/gi, '星巴克'],
   [/mcdonald'?s?/gi, '麥當勞'],
-  [/pxmart/gi, '全聯'],
+  [/pxmart|全聯福利中心/gi, '全聯'],
   [/carrefour/gi, '家樂福'],
   [/costco/gi, '好市多'],
   [/uniqlo/gi, '優衣庫'],
@@ -60,8 +60,6 @@ export function shopSimilar(a: string, b: string): boolean {
   const y = normalizeShop(b);
   if (x.length < 2 || y.length < 2) return false;
   if (x.includes(y) || y.includes(x)) return true;
-  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
-  for (let i = 0; i + 2 <= short.length; i++) if (long.includes(short.slice(i, i + 2))) return true;
   return false;
 }
 
@@ -74,7 +72,7 @@ export function findDuplicate(probe: DupProbe, existing: DupCandidate[]): DupHit
     if (gap > 1) continue;
     const sameShop = shopSimilar(c.text, probe.text);
     const sameAcc = !!probe.accountId && c.accountId === probe.accountId;
-    const strong = gap === 0 && (sameShop || sameAcc);
+    const strong = gap === 0 && sameShop && (!c.accountId || !probe.accountId || sameAcc);
     const rank = (strong ? 4 : 0) + (sameShop ? 2 : 0) + (sameAcc ? 1 : 0) + (gap === 0 ? 0.5 : 0);
     if (!best || rank > best.rank) best = { hit: { id: c.id, level: strong ? 'strong' : 'weak' }, rank };
   }

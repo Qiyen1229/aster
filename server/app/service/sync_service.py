@@ -13,22 +13,23 @@ import logging
 import time
 from datetime import timedelta
 
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import utcnow
 from app.core.request_info import ClientInfo
-from app.model import SyncKey, SyncRecord, User
+from app.model import SyncKey, SyncRecord, SyncRekey, SyncRekeyRecord, User
 from app.service.audit_service import AuditService
 from app.repository.sync_repository import SyncRepository
-from app.schema.sync import SYNC_TABLES, E2EEConfig, E2EEUpdate, SyncChange, SyncPullResponse, SyncPushResponse, SyncStatus
+from app.schema.sync import SYNC_TABLES, E2EEConfig, E2EEUpdate, RekeyBatch, RekeyBegin, SyncChange, SyncPullResponse, SyncPushResponse, SyncStatus
 from app.service.errors import ServiceError
 
 log = logging.getLogger("aster.sync")
 
 MAX_PAYLOAD_BYTES = 256 * 1024
 MAX_RECORDS_PER_USER = 100_000
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 MAX_CLOCK_AHEAD_MS = 5 * 60 * 1000
 TOMBSTONE_DAYS = 90
 # 每位使用者多久檢查一次墓碑清除（行程內記錄即可，漏做只是晚一點清）
@@ -56,7 +57,7 @@ class SyncService:
         return SyncStatus(
             enabled=True, protocol_version=PROTOCOL_VERSION, message="已啟用跨裝置同步",
             records=self.repo.count(user.id), cursor=self.repo.last_seq(user.id), server_time=now_ms(),
-            purged_seq=self.repo.purged_seq(user.id), e2ee=self.e2ee(user),
+            purged_seq=self.repo.purged_seq(user.id), e2ee=self.e2ee(user), key_version=self.key_version(user),
         )
 
     def e2ee(self, user: User) -> E2EEConfig | None:
@@ -65,9 +66,15 @@ class SyncService:
             return None
         return E2EEConfig(enabled=True, salt=k.salt, iterations=k.iterations, check=k.check, version=k.version)
 
-    def set_e2ee(self, user: User, body: E2EEUpdate, client: ClientInfo) -> E2EEConfig | None:
+    def key_version(self, user: User) -> int:
+        k = self.db.get(SyncKey, user.id)
+        return k.version if k else 0
+
+    def _check_config(self, body: E2EEUpdate) -> None:
         if body.enabled and not (body.salt and body.check and body.iterations >= 100_000):
             raise ServiceError(422, "加密設定不完整")
+
+    def _write_config(self, user: User, body: E2EEUpdate, client: ClientInfo) -> None:
         k = self.db.get(SyncKey, user.id)
         if k is None:
             k = SyncKey(user_id=user.id, version=0)
@@ -79,7 +86,86 @@ class SyncService:
         k.version = (k.version or 0) + 1
         self.db.flush()
         AuditService(self.db).record("sync.e2ee_on" if body.enabled else "sync.e2ee_off", client, user_id=user.id)
+
+    def set_e2ee(self, user: User, body: E2EEUpdate, client: ClientInfo) -> E2EEConfig | None:
+        self.repo.reserve_seq(user.id, 0)
+        self._check_config(body)
+        if self.repo.count(user.id) or body.expected_version != self.key_version(user):
+            raise ServiceError(409, "請更新 App，使用完整資料遷移切換加密")
+        self._write_config(user, body, client)
         return self.e2ee(user)
+
+    def begin_rekey(self, user: User, body: RekeyBegin) -> None:
+        self.repo.reserve_seq(user.id, 0)
+        self._check_config(body)
+        if body.expected_version != self.key_version(user) or body.cursor != self.repo.last_seq(user.id):
+            raise ServiceError(409, "同步資料已變更，請重新同步後再切換加密")
+        cfg = E2EEUpdate.model_validate(body.model_dump()).model_dump_json()
+        current = self.db.get(SyncRekey, user.id)
+        if current and current.migration_id == body.migration_id:
+            if current.config != cfg or current.base_cursor != body.cursor:
+                raise ServiceError(409, "加密遷移內容已變更")
+            return
+        self.db.execute(delete(SyncRekey).where(SyncRekey.user_id == user.id))
+        self.db.add(SyncRekey(user_id=user.id, migration_id=body.migration_id, base_version=body.expected_version,
+                              base_cursor=body.cursor, config=cfg))
+        self.db.flush()
+
+    def _migration(self, user: User, migration_id: str) -> SyncRekey:
+        self.repo.reserve_seq(user.id, 0)
+        m = self.db.get(SyncRekey, user.id)
+        if not m or m.migration_id != migration_id:
+            raise ServiceError(409, "加密遷移已失效，請重新同步後再試")
+        if m.base_version != self.key_version(user) or m.base_cursor != self.repo.last_seq(user.id):
+            raise ServiceError(409, "同步資料已變更，舊加密設定保持不變，請重新切換")
+        return m
+
+    def _validate_envelope(self, payload: dict, enabled: bool, version: int) -> None:
+        encrypted = payload.get("$enc") == 1
+        if encrypted != enabled or (enabled and (payload.get("v") != version or not isinstance(payload.get("iv"), str)
+                                                or not isinstance(payload.get("ct"), str))):
+            raise ServiceError(409, "加密版本已變更，請重新同步或更新 App")
+
+    def stage_rekey(self, user: User, body: RekeyBatch) -> None:
+        m = self._migration(user, body.migration_id)
+        cfg = E2EEUpdate.model_validate_json(m.config)
+        existing = self.repo.get_many(user.id, [(c.table, c.key) for c in body.changes])
+        for c in body.changes:
+            rec = existing.get((c.table, c.key))
+            if not rec or rec.deleted or c.deleted or c.payload is None or rec.updated_at != c.updated_at:
+                raise ServiceError(409, "加密遷移與原始資料不一致")
+            self._validate_envelope(c.payload, cfg.enabled, m.base_version + 1)
+            payload = json.dumps(c.payload, ensure_ascii=False, separators=(",", ":"))
+            if len(payload.encode()) > MAX_PAYLOAD_BYTES:
+                raise ServiceError(413, "重新加密後單筆資料過大", {"X-Sync-Error": "payload_too_large"})
+            staged = self.db.get(SyncRekeyRecord, (user.id, rec.id))
+            if staged:
+                staged.payload = payload
+            else:
+                self.db.add(SyncRekeyRecord(user_id=user.id, record_id=rec.id, payload=payload))
+            self.db.flush()
+        staged_rows = self.db.scalars(select(SyncRekeyRecord).where(SyncRekeyRecord.user_id == user.id))
+        if sum(len(r.payload.encode()) for r in staged_rows) > get_settings().sync_max_bytes_per_user:
+            raise ServiceError(413, "重新加密後總容量已達上限", {"X-Sync-Error": "quota_exceeded"})
+
+    def commit_rekey(self, user: User, migration_id: str, client: ClientInfo) -> SyncStatus:
+        m = self._migration(user, migration_id)
+        rows = list(self.db.scalars(select(SyncRecord).where(SyncRecord.user_id == user.id, SyncRecord.deleted.is_(False))))
+        staged = {r.record_id: r.payload for r in self.db.scalars(select(SyncRekeyRecord).where(SyncRekeyRecord.user_id == user.id))}
+        if {r.id for r in rows} != set(staged):
+            raise ServiceError(409, "加密資料尚未完整上傳，原資料與設定保持不變")
+        if sum(len(p.encode()) for p in staged.values()) > get_settings().sync_max_bytes_per_user:
+            raise ServiceError(413, "重新加密後總容量已達上限", {"X-Sync-Error": "quota_exceeded"})
+        seq = self.repo.reserve_seq(user.id, len(rows)) - len(rows)
+        for rec in rows:
+            seq += 1
+            rec.payload = staged[rec.id]
+            rec.seq = seq
+            rec.device_id = ""
+        self._write_config(user, E2EEUpdate.model_validate_json(m.config), client)
+        self.db.execute(delete(SyncRekey).where(SyncRekey.user_id == user.id))
+        self.db.flush()
+        return self.status(user)
 
     def purge_if_due(self, user: User, force: bool = False) -> int:
         last = _last_purge.get(user.id, 0.0)
@@ -91,7 +177,12 @@ class SyncService:
             log.info("清除同步墓碑 user_id=%s 筆數=%s", user.id, n)
         return n
 
-    def push(self, user: User, device_id: str, changes: list[SyncChange]) -> SyncPushResponse:
+    def push(self, user: User, device_id: str, changes: list[SyncChange], key_version: int | None = None) -> SyncPushResponse:
+        self.repo.reserve_seq(user.id, 0)
+        version = self.key_version(user)
+        if (key_version or 0) != version:
+            raise ServiceError(409, "加密版本已變更，請重新同步或更新 App")
+        enabled = self.e2ee(user) is not None
         if not changes:
             return SyncPushResponse(accepted=0, rejected=[], cursor=self.repo.last_seq(user.id))
         encoded: list[tuple[SyncChange, str | None]] = []
@@ -103,15 +194,17 @@ class SyncService:
                 raise ServiceError(422, f"不支援同步的資料表：{c.table}")
             if not c.deleted and c.payload is None:
                 raise ServiceError(422, "缺少資料內容")
+            if not c.deleted:
+                self._validate_envelope(c.payload, enabled, version)
             body = None if c.deleted else json.dumps(c.payload, ensure_ascii=False, separators=(",", ":"))
             if body is not None and len(body.encode()) > MAX_PAYLOAD_BYTES:
-                raise ServiceError(413, "單筆資料過大")
+                raise ServiceError(413, "單筆資料過大", {"X-Sync-Error": "payload_too_large"})
             encoded.append((c, body))
 
         existing = self.repo.get_many(user.id, [(c.table, c.key) for c, _ in encoded])
         new_count = sum(1 for c, _ in encoded if (c.table, c.key) not in existing)
         if new_count and self.repo.count(user.id) + new_count > MAX_RECORDS_PER_USER:
-            raise ServiceError(413, "同步資料筆數已達上限")
+            raise ServiceError(413, "同步資料筆數已達上限", {"X-Sync-Error": "quota_exceeded"})
 
         added_bytes = 0
         for c, body in encoded:
@@ -128,7 +221,7 @@ class SyncService:
             max_bytes = get_settings().sync_max_bytes_per_user
             current_bytes = self.repo.total_bytes(user.id)
             if current_bytes + added_bytes > max_bytes:
-                raise ServiceError(413, "同步資料總容量已達上限")
+                raise ServiceError(413, "同步資料總容量已達上限", {"X-Sync-Error": "quota_exceeded"})
 
         # 先決定哪些要寫入（同一批內同一筆出現多次時，以較新的為準）
         winners: dict[tuple[str, str], tuple[SyncChange, str | None]] = {}

@@ -14,6 +14,7 @@ vi.mock('@/services/api', async (importOriginal) => {
     ...actual,
     api: vi.fn(async (path: string, opts?: { body?: unknown }) => {
       if (path === '/inbox/items') return apiState.items;
+      if (path === '/inbox/items/booking') return { message: '已登記' };
       if (path === '/inbox/items/ack') {
         const ids = (opts?.body as { ids: number[] }).ids;
         apiState.acked.push(...ids);
@@ -33,11 +34,11 @@ import { DEFAULT_SETTINGS } from '@/db/repo/settings';
 const n = (card: string, text: string, merchant = '') => ({ source: 'notify', card, text, merchant }) as Parameters<typeof judgeNotice>[0];
 
 describe('白名單比對', () => {
-  it('名稱出現在發送者名稱（card）、商家或訊息裡就命中；不分大小寫、全半形', () => {
+  it('來源名稱完全相符才命中；不分大小寫、全半形，內文與商家不算來源', () => {
     expect(matchesWhitelist({ card: '中國信託', merchant: '', text: '刷卡消費 250 元' }, ['中國信託'])).toBe(true);
-    expect(matchesWhitelist({ merchant: '玉山銀行', text: '消費 120 元' }, ['玉山銀行'])).toBe(true);
-    expect(matchesWhitelist({ merchant: '', text: '【LINE Pay】付款成功' }, ['line pay'])).toBe(true);
-    expect(matchesWhitelist({ merchant: '', text: 'ＬＩＮＥ Ｐａｙ 付款' }, ['LINE Pay'])).toBe(true);
+    expect(matchesWhitelist({ merchant: '玉山銀行', text: '消費 120 元' }, ['玉山銀行'])).toBe(false);
+    expect(matchesWhitelist({ merchant: '', text: '【LINE Pay】付款成功' }, ['line pay'])).toBe(false);
+    expect(matchesWhitelist({ card: 'ＬＩＮＥ Ｐａｙ', merchant: '', text: '付款' }, ['LINE Pay'])).toBe(true);
     expect(matchesWhitelist({ card: '全家', merchant: '全家', text: '消費 85 元' }, ['玉山'])).toBe(false);
   });
   it('空名單、空白項目不算命中', () => {
@@ -55,17 +56,17 @@ describe('白名單比對', () => {
 
 describe('通知把關：白名單優先', () => {
   it('LINE 聊天有金額：沒白名單留審；白名單命中就放行', () => {
-    const chat = n('LINE', '晚餐 500 你先幫我付', '小明');
+    const chat = n('LINE', '小明\n晚餐 500 你先幫我付', '小明');
     expect(judgeNotice(chat, true).trust).toBe('review');
     expect(judgeNotice(chat, true, ['小明']).trust).toBe('ok');
     expect(judgeNotice(chat, true, ['別人']).trust).toBe('review');
   });
   it('白名單命中時，連沒金額的 LINE 聊天也不會被丟掉', () => {
-    expect(judgeNotice(n('LINE', '今天好冷喔', '小明'), false).trust).toBe('drop');
-    expect(judgeNotice(n('LINE', '今天好冷喔', '小明'), false, ['小明']).trust).toBe('ok');
+    expect(judgeNotice(n('LINE', '小明\n今天好冷喔', '小明'), false).trust).toBe('drop');
+    expect(judgeNotice(n('LINE', '小明\n今天好冷喔', '小明'), false, ['小明']).trust).toBe('ok');
   });
   it('官方通知與非 LINE 來源不受白名單影響', () => {
-    expect(judgeNotice(n('LINE', '【LINE Pay】您已於 全家 消費 NT$85，付款成功'), true).trust).toBe('ok');
+    expect(judgeNotice(n('LINE', 'LINE Pay\n您已於 全家 消費 NT$85，付款成功'), true).trust).toBe('ok');
     expect(judgeNotice(n('國泰世華', '刷卡 120 元'), true).trust).toBe('ok');
   });
 });
@@ -88,7 +89,7 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     apiState.items = [
       raw(1, '玉山銀行', '【玉山銀行】您於 全家 消費 120 元', '全家'),
       raw(2, '國泰世華', '【國泰世華】於 7-ELEVEN 消費 85 元', '7-ELEVEN'),
-      raw(3, 'LINE', '晚餐 500 你先幫我付', '小明'),
+      raw(3, 'LINE', '小明\n晚餐 500 你先幫我付', '小明'),
       raw(4, '玉山銀行', '今天好冷喔'),
     ];
   });
@@ -230,7 +231,7 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     const { shopSimilar } = await import('@/domain/dedupe');
     expect(shopSimilar('FamilyMart', '全家便利商店')).toBe(true);
     expect(shopSimilar('STARBUCKS', '星巴克')).toBe(true);
-    expect(judgeNotice(n('LINE', '晚餐 500 你先幫我付', '小明'), true, ['小明'], ['小明']).trust).toBe('drop');
+    expect(judgeNotice(n('LINE', '小明\n晚餐 500 你先幫我付', '小明'), true, ['小明'], ['小明']).trust).toBe('drop');
     expect(judgeNotice(n('中國信託', '停車折抵 100 元'), true, [], ['停車折抵']).trust).toBe('drop');
   });
 

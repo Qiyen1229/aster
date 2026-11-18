@@ -10,6 +10,24 @@ from app.core.security import utcnow
 from app.model.base import Base
 
 
+class SyncRekey(Base):
+    __tablename__ = "sync_rekeys"
+
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    migration_id: Mapped[str] = mapped_column(String(64))
+    base_version: Mapped[int] = mapped_column(Integer)
+    base_cursor: Mapped[int] = mapped_column(BigInteger)
+    config: Mapped[str] = mapped_column(Text)
+
+
+class SyncRekeyRecord(Base):
+    __tablename__ = "sync_rekey_records"
+
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("sync_rekeys.user_id", ondelete="CASCADE"), primary_key=True)
+    record_id: Mapped[int] = mapped_column(Integer, ForeignKey("sync_records.id", ondelete="CASCADE"), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text)
+
+
 class SyncKey(Base):
     """端對端加密：伺服器只保存「鹽」與「驗證用密文」，永遠拿不到密碼或金鑰。"""
 

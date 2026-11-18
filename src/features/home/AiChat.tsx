@@ -261,8 +261,15 @@ export function AgentBubble({ m }: { m: Extract<Msg, { kind: 'agent' }> }) {
     try {
       const { applyPlan } = await import('@/services/agent');
       const log = await applyPlan(live, m.summary, String(m.id));
-      patch({ phase: 'done', opId: log.id, note: `已執行 ${log.titles.length} 項操作` });
-    } catch (e) { patch({ note: `執行失敗，沒有任何資料被改動：${(e as Error).message}` }); } finally { setBusy(false); }
+      patch({ phase: 'done', opId: log.id, note: [`已完成本機操作（${log.titles.length} 項）`, ...(log.warnings ?? [])].join('；') });
+    } catch (e) {
+      patch({ note: `未完成執行：${(e as Error).message}` });
+      try {
+        const { previewPlan } = await import('@/services/agent');
+        setLive(await previewPlan(m.raw.filter((_, k) => !off.has(k))));
+        patch({ note: `未完成執行：${(e as Error).message}。已更新預覽，請核對後再確認` });
+      } catch { /* 保留原錯誤，讓使用者重新送出 */ }
+    } finally { setBusy(false); }
   };
   const undo = async () => {
     if (!m.opId) return;
@@ -287,7 +294,7 @@ export function AgentBubble({ m }: { m: Extract<Msg, { kind: 'agent' }> }) {
       )}
       {m.phase === 'done' && <button className="btn small tinted" style={{ marginTop: 10 }} disabled={busy} onClick={() => void undo()}>✅ 已執行・一鍵還原</button>}
       {m.note && <p className="row-sub" style={{ whiteSpace: 'normal' }}>{m.note}</p>}
-      {!m.phase && <p className="row-sub" style={{ whiteSpace: 'normal' }}>{m.quota}　執行是「全部成功或全部不動」（可橫跨帳目、帳戶、欠款、股票、目標…），之後 7 天內可整包一鍵還原。</p>}
+      {!m.phase && <p className="row-sub" style={{ whiteSpace: 'normal' }}>{m.quota}　本機帳務與還原紀錄一起儲存；伺服器通知清除另行回報結果。7 天內可還原未被後續修改的資料，略過的通知無法還原。</p>}
       {m.phase !== 'cancelled' && live.filter((s) => s.preview.view && !s.preview.blocked).map((s, i) => (
         <ViewBubble key={i} view={s.preview.view!} refreshKey={m.phase === 'done' ? m.opId : undefined} />
       ))}

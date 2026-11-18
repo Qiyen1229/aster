@@ -107,6 +107,19 @@ class InboxItemOut(BaseModel):
     created_at: datetime
 
 
+class BookingRequest(BaseModel):
+    id: int = Field(gt=0)
+    shape: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("shape")
+    @classmethod
+    def _shape(cls, values: list[str]) -> list[str]:
+        import re
+        if any(not re.fullmatch(r"transactions|transfers|debts|durable|split:[1-9][0-9]?", value) for value in values):
+            raise ValueError("記帳來源結構不正確")
+        return values
+
+
 class AckRequest(BaseModel):
     ids: list[int] = Field(min_length=1, max_length=200)
 

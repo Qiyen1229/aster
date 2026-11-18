@@ -59,7 +59,14 @@ export async function deleteOrArchiveAccount(id: string): Promise<'deleted' | 'a
   const used =
     (await db.transactions.where('accountId').equals(id).count()) +
     (await db.transfers.where('fromAccountId').equals(id).count()) +
-    (await db.transfers.where('toAccountId').equals(id).count());
+    (await db.transfers.where('toAccountId').equals(id).count()) +
+    (await db.recurring_rules.filter((r) => r.template.accountId === id).count()) +
+    (await db.installments.where('accountId').equals(id).count()) +
+    (await db.goals.filter((g) => g.linkedAccountIds.includes(id)).count()) +
+    (await db.rules.filter((r) => r.accountId === id).count()) +
+    (await db.stock_trades.filter((t) => t.accountId === id || t.cashAccountId === id).count()) +
+    (await db.dividends.where('accountId').equals(id).count()) +
+    (await db.accounts.filter((a) => a.id !== id && (a.brokerage?.settlementAccountId === id || a.credit?.autoPayAccountId === id || a.loan?.payFromAccountId === id)).count());
   if (used > 0) {
     await db.accounts.update(id, { archived: 1, updatedAt: Date.now() });
     return 'archived';

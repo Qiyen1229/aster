@@ -6,7 +6,7 @@ const tx = (over: Partial<{ id: string; date: string; amountMinor: number; curre
 
 describe('去重：店名比對', () => {
   it('去掉通用字後比對', () => {
-    expect(normalizeShop('全聯福利中心 刷卡 NT$120')).toBe('全聯福利中心');
+    expect(normalizeShop('全聯福利中心 刷卡 NT$120')).toBe('全聯');
     expect(shopSimilar('全聯', '全聯福利中心')).toBe(true);
     expect(shopSimilar('全聯福利中心', '全聯 板橋店')).toBe(true);
     expect(shopSimilar('全聯', '麥當勞')).toBe(false);
@@ -19,12 +19,13 @@ describe('去重：店名比對', () => {
 });
 
 describe('去重：找重複的帳目', () => {
-  const probe = { date: '2026-10-27', amountMinor: 12000, currency: 'TWD', accountId: 'a2', text: 'Apple Pay 全聯' };
+  const probe = { date: '2026-10-27', amountMinor: 12000, currency: 'TWD', accountId: 'a1', text: 'Apple Pay 全聯' };
   it('同一天、商家相近 → 很可能重複', () => {
     expect(findDuplicate(probe, [tx()])).toEqual({ id: 't1', level: 'strong' });
   });
-  it('同一天、同帳戶、商家不同 → 很可能重複', () => {
-    expect(findDuplicate({ ...probe, text: '', accountId: 'a1' }, [tx({ text: '午餐' })])).toEqual({ id: 't1', level: 'strong' });
+  it('同一天、同帳戶但商家不明或不同 → 只是提醒', () => {
+    expect(findDuplicate({ ...probe, text: '', accountId: 'a1' }, [tx({ text: '午餐' })])).toEqual({ id: 't1', level: 'weak' });
+    expect(findDuplicate({ ...probe, accountId: 'a2' }, [tx()])).toEqual({ id: 't1', level: 'weak' });
   });
   it('同一天但商家與帳戶都不同 → 只是提醒', () => {
     expect(findDuplicate({ ...probe, text: '麥當勞' }, [tx()])).toEqual({ id: 't1', level: 'weak' });

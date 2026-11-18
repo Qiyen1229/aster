@@ -3,13 +3,16 @@
  * 分類：文字中直接寫到的分類名稱 → 自動分類規則 → 商家記憶 → 「其他」
  * 帳戶：文字中寫到的帳戶 → 規則指定的帳戶 → 同一個商家過去最常用的帳戶 → 上次使用的帳戶
  */
+import Dexie from 'dexie';
 import { db } from '@/db/schema';
+import { api } from './api';
 import type { Account, Project } from '@/db/types';
 import { parseEntries, type DraftEntry } from '@/domain/nlp';
 import { todayKey } from '@/domain/period';
 import { toMinor } from '@/domain/money';
 import { useSettings } from '@/stores/settings';
-import { suggestAccount, suggestCategory } from './autocat';
+import { countRuleHit, suggestAccount, suggestCategory } from './autocat';
+import { addTransaction, addTransfer, resolveAmounts, type TxInput, type TransferInput } from '@/db/repo/ledger';
 
 export interface ResolvedDraft extends DraftEntry {
   accountId: string;
@@ -18,6 +21,7 @@ export interface ResolvedDraft extends DraftEntry {
   tagIds: string[];
   categorySource: 'text' | 'rule' | 'memory' | 'default';
   accountSource: 'text' | 'rule' | 'memory' | 'default';
+  ruleIds?: string[];
 }
 
 /** 旅遊模式下未明寫專案／幣別的草稿，預設歸入旅遊專案（與記帳面板同一套規則）；草稿有寫就照草稿 */
@@ -52,6 +56,7 @@ export async function resolveDraft(d: DraftEntry, fallbackAccountId: string, mat
   let categoryId = d.categoryId;
   let note = d.note;
   let tagIds: string[] = [];
+  const ruleIds = new Set<string>();
   let categorySource: ResolvedDraft['categorySource'] = categoryId ? 'text' : 'default';
   if (d.kind !== 'transfer' && query) {
     const sug = await suggestCategory(query, kind, d.amount, memQuery).catch(() => null);
@@ -61,6 +66,7 @@ export async function resolveDraft(d: DraftEntry, fallbackAccountId: string, mat
         categoryId = sug.categoryId;
         categorySource = sug.source;
       }
+      if (sug.ruleId) ruleIds.add(sug.ruleId);
       if (sug.tagIds.length) tagIds = sug.tagIds;
       if (sug.renameNote) note = sug.renameNote;
     }
@@ -70,9 +76,9 @@ export async function resolveDraft(d: DraftEntry, fallbackAccountId: string, mat
   let accountSource: ResolvedDraft['accountSource'] = accountId ? 'text' : 'default';
   if (!accountId && query) {
     const acc = await suggestAccount(query, kind, d.amount, memQuery).catch(() => undefined);
-    if (acc) { accountId = acc.accountId; accountSource = acc.source; }
+    if (acc) { accountId = acc.accountId; accountSource = acc.source; if (acc.ruleId) ruleIds.add(acc.ruleId); }
   }
-  return { ...d, note, accountId: accountId ?? fallbackAccountId, categoryId, tagIds, categorySource, accountSource };
+  return { ...d, note, accountId: accountId ?? fallbackAccountId, categoryId, tagIds, categorySource, accountSource, ruleIds: [...ruleIds] };
 }
 
 /** 預設帳戶：上次記帳用的帳戶 → 第一個非負債帳戶 */
@@ -108,37 +114,87 @@ export async function draftsSmart(text: string): Promise<{ list: ResolvedDraft[]
   }
 }
 
+export const inboxDraftShape = (list: ResolvedDraft[]) => list.map((d) => d.kind === 'transfer' ? 'transfers' : 'transactions');
+
+export async function reserveInboxSource(sourceId: string | undefined, shape: string[]): Promise<void> {
+  const id = sourceId?.match(/^inbox-(\d+)$/)?.[1];
+  if (!id) return;
+  const database = db;
+  const key = `inbox.shape:${id}`;
+  const expected = JSON.stringify(shape);
+  const saved = await database.meta.get(key);
+  if (saved?.value === expected) return;
+  if (saved) throw new Error('這則通知已登記不同的記帳方式，請先同步確認，或用原方式重試');
+  if (Dexie.currentTransaction) throw new Error('請先完成通知來源登記，再寫入帳目');
+  await api('/inbox/items/booking', { method: 'POST', body: { id: Number(id), shape } });
+  if (db !== database) throw new Error('使用者已切換，請重新開啟收件匣');
+  await database.meta.put({ key, value: expected });
+}
+
+export async function commitManualEntry(sourceId: string | undefined, save: () => Promise<void>, shape = ['transactions']): Promise<boolean> {
+  if (sourceId && !await db.meta.get(`booked:${sourceId}`)) await reserveInboxSource(sourceId, shape);
+  return db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.attachments, db.debts, db.people, db.durables, db.rules, db.meta, db.settings, db.exchange_rates, db.categories], async () => {
+    const key = sourceId ? `booked:${sourceId}` : undefined;
+    const rowId = sourceId ? `${sourceId}-0` : undefined;
+    if (key && (await db.meta.get(key) || await db.transactions.get(rowId!) || await db.transfers.get(rowId!) || await db.debts.get(rowId!))) return false;
+    await save();
+    if (key) await db.meta.put({ key, value: true });
+    return true;
+  });
+}
+
 /** 一次記下多筆；回傳新增的帳目與轉帳 id（給「復原」用） */
-export async function bookDrafts(list: ResolvedDraft[]): Promise<{ txIds: string[]; transferIds: string[] }> {
-  const { addTransaction, addTransfer } = await import('@/db/repo/ledger');
+export async function bookDrafts(list: ResolvedDraft[], opts: { sourceId?: string; travelProjectId?: string; updateLastAccount?: boolean } = {}): Promise<{ txIds: string[]; transferIds: string[] }> {
+  const txIds: string[] = [], transferIds: string[] = [];
+  const receiptKey = opts.sourceId ? `booked:${opts.sourceId}` : undefined;
+  if (receiptKey && await db.meta.get(receiptKey)) return { txIds, transferIds };
   const accounts = new Map((await db.accounts.toArray()).map((a) => [a.id, a]));
   const st = useSettings.getState();
-  const travel = st.travelModeProjectId ? await db.projects.get(st.travelModeProjectId) : undefined;
-  const txIds: string[] = [];
-  const transferIds: string[] = [];
+  const travelId = opts.travelProjectId ?? st.travelModeProjectId;
+  const travel = travelId ? await db.projects.get(travelId) : undefined;
+  const prepared: ({ kind: 'tx'; input: TxInput; amounts: Awaited<ReturnType<typeof resolveAmounts>>; rules: string[] } | { kind: 'transfer'; input: TransferInput; rules: string[] })[] = [];
   const now = new Date();
   const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  for (const d of list) {
+  for (const [i, d] of list.entries()) {
     const acc = accounts.get(d.accountId);
-    if (!acc) throw new Error('找不到帳戶，請先新增帳戶');
-    const ts = new Date(`${d.date}T${d.date === todayKey() ? time : '12:00'}:00`).getTime();
+    if (!acc || !usable(acc)) throw new Error('帳戶不存在或已封存，請重新選擇帳戶');
+    if (!Number.isFinite(d.amount) || d.amount <= 0) throw new Error('金額需大於 0');
+    const ts = new Date(`${d.date}T${d.time || (d.date === todayKey() ? time : '12:00')}:00`).getTime();
+    if (!Number.isFinite(ts)) throw new Error('日期或時間格式錯誤');
+    const id = opts.sourceId ? `${opts.sourceId}-${i}` : undefined;
+    const rules = [...new Set(d.ruleIds ?? [])];
     if (d.kind === 'transfer') {
       const to = d.toAccountId ? accounts.get(d.toAccountId) : undefined;
-      if (!to || to.id === acc.id) throw new Error('轉帳需要兩個不同的帳戶');
+      if (!to || !usable(to) || to.id === acc.id) throw new Error('轉帳需要兩個不同且未封存的帳戶');
       if (to.currency !== acc.currency) throw new Error('跨幣別轉帳請用記帳面板輸入匯率');
       const amt = toMinor(d.amount, acc.currency);
-      const tr = await addTransfer({ fromAccountId: acc.id, toAccountId: to.id, fromAmountMinor: amt, toAmountMinor: amt, feeMinor: 0, date: d.date, ts, note: d.note });
-      transferIds.push(tr.id);
+      prepared.push({ kind: 'transfer', input: { id, fromAccountId: acc.id, toAccountId: to.id, fromAmountMinor: amt, toAmountMinor: amt, feeMinor: 0, date: d.date, ts, note: d.note, tagIds: d.tagIds, projectId: d.projectId }, rules });
     } else {
       const { projectId, currency } = travelDraftDefaults(d, travel, acc.currency, st.baseCurrency);
-      const tx = await addTransaction({
-        type: d.kind, accountId: acc.id, categoryId: d.categoryId!, amountMinor: toMinor(d.amount, currency), currency,
+      const input: TxInput = {
+        id, type: d.kind, accountId: acc.id, categoryId: d.categoryId!, amountMinor: toMinor(d.amount, currency), currency,
         date: d.date, ts, note: d.note, tagIds: d.tagIds, projectId,
-      });
-      txIds.push(tx.id);
+      };
+      prepared.push({ kind: 'tx', input, amounts: await resolveAmounts(input), rules });
     }
   }
-  if (list[0]) useSettings.getState().set('lastAccountId', list[list.length - 1].accountId);
+  if (list.length) await reserveInboxSource(opts.sourceId, inboxDraftShape(list));
+  await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.attachments, db.rules, db.meta], async () => {
+    if (receiptKey && await db.meta.get(receiptKey)) return;
+    for (const p of prepared) {
+      if (p.input.id && (await db.transactions.get(p.input.id) || await db.transfers.get(p.input.id))) continue;
+      const ids = p.kind === 'tx' ? [p.input.accountId] : [p.input.fromAccountId, p.input.toAccountId];
+      for (const aid of ids) {
+        const acc = await db.accounts.get(aid);
+        if (!acc || !usable(acc)) throw new Error('帳戶不存在或已封存，請重新選擇帳戶');
+      }
+      if (p.kind === 'tx') txIds.push((await addTransaction(p.input, p.amounts)).id);
+      else transferIds.push((await addTransfer(p.input)).id);
+      for (const ruleId of p.rules) await countRuleHit(ruleId);
+    }
+    if (receiptKey && list.length) await db.meta.put({ key: receiptKey, value: { txIds, transferIds } });
+  });
+  if (opts.updateLastAccount !== false && (txIds.length || transferIds.length)) useSettings.getState().set('lastAccountId', list[list.length - 1].accountId);
   return { txIds, transferIds };
 }
 

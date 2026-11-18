@@ -7,10 +7,9 @@
  */
 import { db } from '@/db/schema';
 import type { Account, Category, Transaction, Transfer } from '@/db/types';
-import { recomputeBalances } from '@/db/repo/accounts';
 import { fromMinor } from '@/domain/money';
 import { toCSV } from './csv';
-import { getSetting } from '@/db/repo/settings';
+import { DEFAULT_SETTINGS, getSetting } from '@/db/repo/settings';
 import { buildXlsx } from './xlsx';
 import { DEVICE_ONLY_SETTINGS, OUTBOX, markRestore } from '@/db/sync-tracking';
 import { E2EE_ITERATIONS, deriveKey } from './e2ee';
@@ -35,17 +34,13 @@ function b64ToBlob(b64: string, type: string): Blob {
 }
 
 export async function buildBackup(includePhotos = true): Promise<Blob> {
-  const data: Record<string, unknown[]> = {};
-  for (const t of db.tables) {
-    if (DEVICE_STATE_TABLES.has(t.name)) continue;
-    if (t.name === 'attachments') {
-      if (!includePhotos) continue;
-      const rows = await t.toArray();
-      data.attachments = await Promise.all(rows.map(async (a: any) => ({ ...a, blob: await blobToB64(a.blob), thumb: await blobToB64(a.thumb) })));
-    } else {
-      data[t.name] = await t.toArray();
-    }
-  }
+  const tables = db.tables.filter((t) => !DEVICE_STATE_TABLES.has(t.name) && (includePhotos || t.name !== 'attachments'));
+  const data: Record<string, unknown[]> = await db.transaction('r', tables, async () =>
+    Object.fromEntries(await Promise.all(tables.map(async (t) => [t.name, await t.toArray()]))));
+  if (data.attachments) data.attachments = await Promise.all(data.attachments.map(async (row) => {
+    const a = row as import('@/db/types').Attachment;
+    return { ...a, blob: await blobToB64(a.blob), thumb: await blobToB64(a.thumb) };
+  }));
   const payload = { app: 'aster', format: BACKUP_FORMAT, version: __APP_VERSION__, schema: db.verno, exportedAt: new Date().toISOString(), data };
   return new Blob([JSON.stringify(payload)], { type: 'application/json' });
 }
@@ -107,20 +102,202 @@ export interface BackupVerifySummary {
   counts: { transactions: number; accounts: number; categories: number; rules: number; attachments: number };
 }
 
-async function parseBackupPayload(file: File, passphrase?: string): Promise<{ json: any; encrypted: boolean }> {
-  let json = JSON.parse(await file.text());
-  const encrypted = json?.format === ENC_FORMAT;
-  if (encrypted) json = await decryptBackup(json, passphrase);
-  // 'clure'：更名為 Aster 前的備份檔，格式相同
-  if ((json.app !== 'aster' && json.app !== 'clure') || !json.data) throw new Error('不是 Aster 的備份檔');
-  if (json.schema > db.verno) throw new Error('備份檔來自較新版本，請先更新 App');
-  return { json, encrypted };
+type BackupRows = Record<string, Record<string, unknown>[]>;
+interface BackupPayload { app: string; format: number; schema: number; version?: string; exportedAt?: string; data: BackupRows }
+const objectRow = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const validDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) &&
+  Number.isFinite(Date.parse(`${v}T12:00:00Z`)) && new Date(`${v}T12:00:00Z`).toISOString().slice(0, 10) === v;
+function badBackup(location: string): never { throw new Error(`備份資料不完整或格式錯誤（${location}）`); }
+
+function validateRows(data: unknown): asserts data is BackupRows {
+  if (!objectRow(data)) badBackup('data');
+  const required: Record<string, string[]> = {
+    accounts: ['name', 'type', 'currency', 'initialBalanceMinor', 'balanceMinor'],
+    categories: ['name', 'kind', 'parentId'],
+    transactions: ['type', 'accountId', 'categoryId', 'amountMinor', 'accountAmountMinor', 'baseAmountMinor', 'currency', 'date', 'ts', 'note', 'tagIds', 'attachmentIds'],
+    transfers: ['fromAccountId', 'toAccountId', 'fromAmountMinor', 'toAmountMinor', 'feeMinor', 'date', 'ts', 'tagIds'],
+    debts: ['personId', 'direction', 'amountMinor', 'currency', 'date', 'settled'],
+    goals: ['name', 'currency', 'targetMinor', 'manualSavedMinor', 'linkedAccountIds', 'status'],
+    budgets: ['name', 'amountMinor', 'currency', 'startDate', 'periodType'],
+    recurring_rules: ['name', 'template', 'rule', 'startDate', 'nextDue', 'pendingDates', 'mode', 'doneCount'],
+    installments: ['name', 'accountId', 'principalMinor', 'currency', 'periods', 'aprDec', 'firstDate', 'schedule'],
+    stocks: ['name', 'symbol', 'market', 'currency'],
+    stock_trades: ['stockId', 'accountId', 'type', 'date', 'sharesDec', 'priceDec', 'feeMinor', 'taxMinor', 'fxRateDec'],
+    dividends: ['stockId', 'accountId', 'kind', 'exDate', 'payDate', 'grossMinor', 'netMinor', 'currency'],
+    rules: ['keyword', 'match', 'kind', 'categoryId', 'enabled', 'priority'],
+    attachments: ['transactionId', 'blob', 'thumb', 'mime'],
+    settings: ['value'], templates: ['name', 'payload'], projects: ['name', 'status', 'currency', 'start'], tags: ['name'],
+    people: ['name'], saved_filters: ['name', 'filter'], budget_periods: ['budgetId', 'start', 'end', 'limitMinor', 'spentMinor', 'carryOverMinor'],
+    exchange_rates: ['base', 'quote', 'rateDec', 'updatedAt'], price_cache: ['stockId', 'priceDec', 'updatedAt'],
+    price_history: ['stockId', 'date', 'closeDec'], portfolio_snapshots: ['date', 'netWorthMinor', 'byAccount', 'byStock'],
+    watchlist: ['stockId', 'alerts'], reminders: ['kind', 'dueAt', 'title'],
+    durables: ['name', 'purchaseDate', 'costMinor', 'currency', 'status'], wishes: ['name', 'priceMinor', 'currency', 'status', 'decideAt'],
+  };
+  const enums: Record<string, Record<string, string[]>> = {
+    accounts: { type: ['cash', 'bank', 'epay', 'credit', 'stored', 'brokerage', 'loan', 'other'] },
+    categories: { kind: ['expense', 'income'] }, transactions: { type: ['expense', 'income', 'adjust', 'transfer_fee'] },
+    debts: { direction: ['they_owe_me', 'i_owe_them'] }, goals: { status: ['active', 'done', 'archived'] },
+    budgets: { periodType: ['month', 'week', 'custom'] }, recurring_rules: { mode: ['auto', 'confirm'] },
+    stock_trades: { type: ['buy', 'sell', 'stock_dividend', 'split'] }, dividends: { kind: ['cash', 'stock'] },
+    rules: { kind: ['expense', 'income', 'any'], match: ['contains', 'equals', 'regex'] },
+  };
+  const numbers = new Set(['ts', 'createdAt', 'updatedAt', 'deletedAt', 'settledAt', 'priority', 'sort', 'hits', 'doneCount', 'periods', 'width', 'height']);
+  const dates = new Set(['date', 'start', 'end', 'startDate', 'nextDue', 'firstDate', 'exDate', 'payDate', 'deadline', 'purchaseDate', 'endDate', 'addedOn', 'decideAt']);
+  const checkSetting = (value: unknown, example: unknown, where: string): void => {
+    if (example === null || example === undefined) return;
+    if (typeof example === 'number') { if (typeof value !== 'number' || !Number.isFinite(value)) badBackup(where); return; }
+    if (Array.isArray(example)) {
+      if (!Array.isArray(value)) badBackup(where);
+      const item = example[0] ?? (/whitelist|blacklist|dismissed|Order$/.test(where) ? '' : undefined);
+      if (item !== undefined) value.forEach((v) => checkSetting(v, item, where));
+      return;
+    }
+    if (objectRow(example)) {
+      if (!objectRow(value)) badBackup(where);
+      for (const [key, v] of Object.entries(value)) checkSetting(v, example[key], `${where}.${key}`);
+      return;
+    }
+    if (typeof value !== typeof example) badBackup(where);
+  };
+  const checkFields = (r: Record<string, unknown>, where: string) => {
+    for (const [field, value] of Object.entries(r)) {
+      if (value == null) continue;
+      if ((field.endsWith('Minor') || numbers.has(field)) && !Number.isSafeInteger(value)) badBackup(`${where}.${field}`);
+      if (field.endsWith('Dec') && (typeof value !== 'string' || !/^[+-]?\d+(?:\.\d+)?$/.test(value) || !Number.isFinite(Number(value)))) badBackup(`${where}.${field}`);
+      if (dates.has(field) && (field === 'date' || value !== '') && !validDate(value)) badBackup(`${where}.${field}`);
+      if ((field.endsWith('Id') || ['name', 'note', 'currency', 'keyword', 'parentId'].includes(field)) && typeof value !== 'string') badBackup(`${where}.${field}`);
+      if (field === 'currency' && !/^[A-Z]{3}$/.test(String(value))) badBackup(`${where}.${field}`);
+      if (field.endsWith('Ids') && (!Array.isArray(value) || value.some((v) => typeof v !== 'string'))) badBackup(`${where}.${field}`);
+      if (['active', 'archived', 'settled'].includes(field) && value !== 0 && value !== 1) badBackup(`${where}.${field}`);
+      if (['enabled', 'includeInNetWorth', 'isLiability', 'excludeFromStats', 'excludeFromBudget'].includes(field) && typeof value !== 'boolean') badBackup(`${where}.${field}`);
+    }
+  };
+  for (const [name, rows] of Object.entries(data)) {
+    if (DEVICE_STATE_TABLES.has(name)) continue;
+    const table = db.tables.find((t) => t.name === name);
+    if (!table || !Array.isArray(rows)) badBackup(name);
+    const keyPath = table.schema.primKey.keyPath;
+    const keys = Array.isArray(keyPath) ? keyPath : [keyPath as string];
+    const seen = new Set<string>();
+    for (const [index, row] of rows.entries()) {
+      const where = `${name}[${index + 1}]`;
+      if (!objectRow(row)) badBackup(where);
+      if (keys.some((k) => typeof row[k] !== 'string' || !row[k] || ['__proto__', 'constructor', 'prototype'].includes(row[k] as string))) badBackup(`${where}.主鍵`);
+      const key = JSON.stringify(keys.map((k) => row[k]));
+      if (seen.has(key)) badBackup(`${where}.重複主鍵`);
+      seen.add(key);
+      if ((required[name] ?? []).some((k) => !(k in row) || (row[k] == null && !(name === 'settings' && k === 'value')))) badBackup(`${where}.必要欄位`);
+      checkFields(row, where);
+      if (name === 'settings' && !DEVICE_ONLY_SETTINGS.has(row.key as string)) checkSetting(row.value, DEFAULT_SETTINGS[row.key as keyof typeof DEFAULT_SETTINGS], `${where}.value`);
+      for (const field of ['template', 'payload', 'filter', 'credit', 'brokerage', 'loan']) {
+        if (row[field] == null) continue;
+        if (!objectRow(row[field])) badBackup(`${where}.${field}`);
+        checkFields(row[field], `${where}.${field}`);
+      }
+      for (const [field, allowed] of Object.entries(enums[name] ?? {})) if (!allowed.includes(String(row[field]))) badBackup(`${where}.${field}`);
+      if (name === 'transactions' && row.type !== 'adjust' && ['amountMinor', 'accountAmountMinor', 'baseAmountMinor'].some((k) => Number(row[k]) < 0)) badBackup(`${where}.金額`);
+      if (name === 'transfers' && (row.fromAccountId === row.toAccountId || ['fromAmountMinor', 'toAmountMinor', 'feeMinor'].some((k) => Number(row[k]) < 0))) badBackup(`${where}.轉帳`);
+      if (objectRow(row.split)) {
+        checkFields(row.split, `${where}.split`);
+        if (!Array.isArray(row.split.debtIds) || !Number.isSafeInteger(row.split.myShareMinor) || Number(row.split.myShareMinor) < 0 || Number(row.split.myShareMinor) > Number(row.amountMinor)) badBackup(`${where}.分帳`);
+      } else if (row.split != null) badBackup(`${where}.split`);
+      if (name === 'recurring_rules') {
+        if (!objectRow(row.template) || !objectRow(row.rule) || !Array.isArray(row.pendingDates) || row.pendingDates.some((d) => !validDate(d))) badBackup(where);
+        checkFields(row.template, `${where}.template`);
+        if (!['day', 'week', 'month', 'year'].includes(String(row.rule.freq)) || !Number.isSafeInteger(row.rule.interval) || Number(row.rule.interval) < 1) badBackup(`${where}.週期`);
+      }
+      if (name === 'installments') {
+        if (!Array.isArray(row.schedule) || !Number.isSafeInteger(row.periods) || Number(row.periods) < 2) badBackup(where);
+        for (const item of row.schedule) { if (!objectRow(item)) badBackup(where); checkFields(item, `${where}.schedule`); }
+      }
+      if (name === 'rules' && (row.minAmount != null || row.maxAmount != null)) {
+        for (const k of ['minAmount', 'maxAmount']) if (row[k] != null && (typeof row[k] !== 'number' || !Number.isFinite(row[k]) || Number(row[k]) < 0)) badBackup(`${where}.${k}`);
+        if (row.minAmount != null && row.maxAmount != null && Number(row.minAmount) > Number(row.maxAmount)) badBackup(`${where}.金額範圍`);
+      }
+      if (name === 'attachments') for (const field of ['blob', 'thumb']) {
+        if (typeof row[field] !== 'string') badBackup(`${where}.${field}`);
+        try { atob(row[field] as string); } catch { badBackup(`${where}.${field}`); }
+      }
+    }
+  }
 }
 
-/** 還原演練：解密並檢查備份檔結構與筆數，不寫入任何資料 */
+function validateRelations(data: BackupRows, includePhotos = 'attachments' in data): Map<string, number> {
+  const ids = new Map(Object.entries(data).map(([name, rows]) => [name, new Set(rows.map((r) => r.id))]));
+  const ref = (value: unknown, table: string, where: string, required = false) => {
+    if (!value && !required) return;
+    if (typeof value !== 'string' || !ids.get(table)?.has(value)) badBackup(`${where} 缺少關聯${table}`);
+  };
+  const refs: Record<string, string> = {
+    accountId: 'accounts', fromAccountId: 'accounts', toAccountId: 'accounts', cashAccountId: 'accounts', feeAccountId: 'accounts',
+    categoryId: 'categories', projectId: 'projects', personId: 'people', stockId: 'stocks', budgetId: 'budgets',
+    transactionId: 'transactions', feeTransactionId: 'transactions', loanTxId: 'transactions', txId: 'transactions', saleTxId: 'transactions',
+    transferId: 'transfers', settleTransferId: 'transfers', recurringRuleId: 'recurring_rules', installmentId: 'installments',
+    stockTradeId: 'stock_trades', dividendId: 'dividends', autoPayAccountId: 'accounts', settlementAccountId: 'accounts', payFromAccountId: 'accounts',
+  };
+  const relationFields = (row: Record<string, unknown>, where: string) => {
+    for (const [field, table] of Object.entries(refs)) ref(row[field], table, where);
+    for (const [field, table] of [['tagIds', 'tags'], ['linkedAccountIds', 'accounts'], ['debtIds', 'debts']]) {
+      for (const id of (row[field] as string[] | undefined) ?? []) ref(id, table, where, true);
+    }
+  };
+  const balances = new Map<string, bigint>();
+  for (const a of data.accounts ?? []) balances.set(a.id as string, BigInt(a.initialBalanceMinor as number));
+  for (const [name, rows] of Object.entries(data)) {
+    if (DEVICE_STATE_TABLES.has(name) || name === 'settings' || name === 'reminders') continue;
+    for (const row of rows) {
+      relationFields(row, name);
+      if (name === 'categories') ref(row.parentId, 'categories', name);
+      for (const field of ['template', 'payload', 'split', 'credit', 'brokerage', 'loan']) if (objectRow(row[field])) relationFields(row[field], name);
+      if (name === 'installments') for (const item of row.schedule as Record<string, unknown>[]) relationFields(item, name);
+      if (name === 'transactions') {
+        ref(row.accountId, 'accounts', name, true);
+        if (includePhotos) for (const id of row.attachmentIds as string[]) ref(id, 'attachments', name, true);
+        if (objectRow(row.split)) {
+          const debts = new Map((data.debts ?? []).map((d) => [d.id, d]));
+          const total = (row.split.debtIds as string[]).reduce((n, id) => n + BigInt(debts.get(id)!.amountMinor as number), BigInt(row.split.myShareMinor as number));
+          if (total !== BigInt(row.amountMinor as number)) badBackup(`${name}.分帳金額不一致`);
+        }
+      }
+      if (row.deletedAt) continue;
+      if (name === 'transactions') {
+        const id = row.accountId as string;
+        const effect = BigInt(row.accountAmountMinor as number) * (row.type === 'expense' || row.type === 'transfer_fee' ? -1n : 1n);
+        balances.set(id, balances.get(id)! + effect);
+      }
+      if (name === 'transfers') {
+        ref(row.fromAccountId, 'accounts', name, true); ref(row.toAccountId, 'accounts', name, true);
+        const from = row.fromAccountId as string, to = row.toAccountId as string;
+        balances.set(from, balances.get(from)! - BigInt(row.fromAmountMinor as number));
+        balances.set(to, balances.get(to)! + BigInt(row.toAmountMinor as number));
+      }
+    }
+  }
+  const result = new Map<string, number>();
+  for (const [id, balance] of balances) {
+    if (balance > BigInt(Number.MAX_SAFE_INTEGER) || balance < BigInt(Number.MIN_SAFE_INTEGER)) badBackup('帳戶餘額溢位');
+    result.set(id, Number(balance));
+  }
+  return result;
+}
+
+async function parseBackupPayload(file: File, passphrase?: string): Promise<{ json: BackupPayload; encrypted: boolean }> {
+  let json: unknown = JSON.parse(await file.text());
+  const encrypted = objectRow(json) && json.format === ENC_FORMAT;
+  if (encrypted) json = await decryptBackup(json as Record<string, unknown>, passphrase);
+  if (!objectRow(json) || (json.app !== 'aster' && json.app !== 'clure')) throw new Error('不是 Aster 的備份檔');
+  if (json.format !== BACKUP_FORMAT || !Number.isSafeInteger(json.schema) || Number(json.schema) < 1) badBackup('標頭');
+  if (Number(json.schema) > db.verno) throw new Error('備份檔來自較新版本，請先更新 App');
+  validateRows(json.data);
+  json.data = Object.fromEntries(Object.entries(json.data).filter(([name]) => !DEVICE_STATE_TABLES.has(name)));
+  return { json: json as unknown as BackupPayload, encrypted };
+}
+
+/** 僅驗證檔案；不模擬裝置容量、同步狀態或實際寫入。 */
 export async function verifyBackup(file: File, passphrase?: string): Promise<BackupVerifySummary> {
   const { json, encrypted } = await parseBackupPayload(file, passphrase);
-  const d = json.data as Record<string, unknown[] | undefined>;
+  validateRelations(json.data);
+  const d = json.data;
   const countOf = (k: string) => (Array.isArray(d[k]) ? d[k]!.length : 0);
   const totalRows = Object.values(d).reduce((s, v) => s + (Array.isArray(v) ? v.length : 0), 0);
   return {
@@ -143,30 +320,37 @@ export async function restoreBackup(file: File, mode: 'replace' | 'merge', passp
   const { json } = await parseBackupPayload(file, passphrase);
   let rows = 0, tables = 0;
   const names = db.tables.map((t) => t.name).filter((n) => !DEVICE_STATE_TABLES.has(n));
-  // 這台裝置專屬的設定（App 鎖、Face ID 憑證、通知）維持現狀，不被備份檔覆蓋
-  const deviceSettings = await db.settings.bulkGet([...DEVICE_ONLY_SETTINGS]);
-  await db.transaction('rw', names.map((n) => db.table(n)), async (tx) => {
+  await db.transaction('rw', [...names.map((n) => db.table(n)), db.meta], async (tx) => {
     markRestore(tx);
+    const deviceSettings = await db.settings.bulkGet([...DEVICE_ONLY_SETTINGS]);
+    const candidate: BackupRows = {};
     for (const name of names) {
-      const list = json.data[name] as any[] | undefined;
       const table = db.table(name);
-      // 舊版備份檔案中沒有的資料表（例如新版新增的 durables），取代還原時不清空，避免新資料表被永久抹除
+      const existing = mode === 'replace' && name in json.data ? [] : await table.toArray() as Record<string, unknown>[];
+      const kp = table.schema.primKey.keyPath;
+      const keyOf = (row: Record<string, unknown>) => JSON.stringify(Array.isArray(kp) ? kp.map((k) => row[k]) : row[kp as string]);
+      const combined = new Map(existing.map((r) => [keyOf(r), r]));
+      for (const row of json.data[name] ?? []) combined.set(keyOf(row), row);
+      candidate[name] = [...combined.values()];
+    }
+    const balances = validateRelations(candidate, 'attachments' in json.data);
+    for (const name of names) {
+      const list = json.data[name];
+      const table = db.table(name);
       if (mode === 'replace' && name in json.data) await table.clear();
       if (!list?.length) continue;
       const fixed = name === 'attachments'
-        ? list.map((a) => ({ ...a, blob: b64ToBlob(a.blob, a.mime || 'image/jpeg'), thumb: b64ToBlob(a.thumb, 'image/jpeg') }))
-        : name === 'settings'
-          ? list.filter((r) => !DEVICE_ONLY_SETTINGS.has(String(r.key)))
-          : list;
+        ? list.map((a) => ({ ...a, blob: b64ToBlob(a.blob as string, a.mime as string), thumb: b64ToBlob(a.thumb as string, 'image/jpeg') }))
+        : name === 'settings' ? list.filter((r) => !DEVICE_ONLY_SETTINGS.has(String(r.key))) : list;
       await table.bulkPut(fixed);
       rows += fixed.length;
       tables++;
     }
     const keep = deviceSettings.filter((r): r is NonNullable<typeof r> => !!r);
     if (keep.length) await db.settings.bulkPut(keep);
+    for (const [id, balanceMinor] of balances) await db.accounts.update(id, { balanceMinor });
+    await db.meta.put({ key: 'lastRestoreAt', value: Date.now() });
   });
-  await recomputeBalances(true);
-  await db.meta.put({ key: 'lastRestoreAt', value: Date.now() });
   return { tables, rows };
 }
 

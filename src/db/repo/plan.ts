@@ -7,7 +7,7 @@ import { db, uid } from '../schema';
 import type {
   Budget, Debt, Goal, Installment, Person, Project, RecurringRule, SavedFilter, Transaction, TxFilter, Wish,
 } from '../types';
-import { addTransaction, deleteTransactions, type TxInput } from './ledger';
+import { addTransaction, deleteTransactions, resolveAmounts, restoreTransactions, type TxInput } from './ledger';
 import {
   budgetPeriod, budgetStatus, periodsUntil, projectSpend, rolloverChain, suggestBudget, type BudgetStatus, type BudgetSuggestion, type Projection,
 } from '@/domain/budget';
@@ -94,7 +94,7 @@ export async function computeBudgets(today = todayKey()): Promise<BudgetView[]> 
   const opts = { monthStartDay, weekStart };
   const out: BudgetView[] = [];
   for (const b of budgets.filter((x) => x.active)) {
-    const periods = b.rollover ? periodsUntil(b, today, opts, 24) : [budgetPeriod(b, today, opts)];
+    const periods = b.rollover ? periodsUntil(b, today, opts) : [budgetPeriod(b, today, opts)];
     const first = periods[0].start;
     const last = periods[periods.length - 1].end;
     const match = budgetMatcher(b, children);
@@ -208,6 +208,7 @@ export async function processRecurring(today = todayKey()): Promise<{ created: n
     if (r.rule.count === 1 && r.at && today === todayKey() && r.nextDue >= today && nowHm < r.at) continue;
     const due = occurrences(r.rule, r.startDate, r.nextDue, today, 400);
     const pend = [...r.pendingDates];
+    const completed: string[] = [];
     for (const d of due) {
       if (r.mode === 'auto') {
         try {
@@ -215,11 +216,13 @@ export async function processRecurring(today = todayKey()): Promise<{ created: n
           if (r.rule.count === 1) void announceAutoBooked(r); // 單次排程自動記帳：記完要讓使用者知道
         } catch (e) { console.warn('[recurring]', e); break; }
       } else if (!pend.includes(d)) { pend.push(d); pending++; }
+      completed.push(d);
     }
-    const lastDone = due[due.length - 1] ?? r.nextDue;
-    const next = nextAfter(r.rule, r.startDate, due.length ? lastDone : addDaysSafe(r.nextDue, -1));
+    if (due.length && !completed.length) continue;
+    const lastDone = completed[completed.length - 1] ?? r.nextDue;
+    const next = nextAfter(r.rule, r.startDate, completed.length ? lastDone : addDaysSafe(r.nextDue, -1));
     await db.recurring_rules.update(r.id, {
-      nextDue: next ?? '9999-12-31', doneCount: r.doneCount + due.length, pendingDates: pend,
+      nextDue: next ?? '9999-12-31', doneCount: r.doneCount + completed.length, pendingDates: pend,
       active: next ? 1 : 0, updatedAt: now(),
     });
   }
@@ -243,18 +246,27 @@ function addDaysSafe(d: string, n: number) {
 
 export async function confirmPending(ruleId: string, date: string, amountMinor?: number) {
   const r = await db.recurring_rules.get(ruleId);
-  if (!r) return;
+  if (!r || !r.pendingDates.includes(date)) return;
   const input = templateToInput(r, date);
-  if (amountMinor) input.amountMinor = amountMinor;
-  await addTransaction(input);
-  await db.recurring_rules.update(ruleId, { pendingDates: r.pendingDates.filter((d) => d !== date) });
-  if (r.kind === 'subscription' && amountMinor && amountMinor !== r.template.amountMinor) {
-    // 訂閱漲價：更新範本並記錄價格歷史
-    await db.recurring_rules.update(ruleId, {
-      template: { ...r.template, amountMinor },
-      subscription: { ...(r.subscription ?? { service: r.name, priceHistory: [] }), priceHistory: [...(r.subscription?.priceHistory ?? []), { date, amountMinor }] },
-    });
-  }
+  if (amountMinor !== undefined) input.amountMinor = amountMinor;
+  const amounts = await resolveAmounts(input);
+  await db.transaction('rw', [db.recurring_rules, db.transactions, db.accounts, db.attachments, db.transfers, db.durables, db.debts], async () => {
+    const current = await db.recurring_rules.get(ruleId);
+    if (!current?.pendingDates.includes(date)) return;
+    const existing = await db.transactions.get(input.id!);
+    if (existing?.deletedAt) {
+      await db.transactions.update(existing.id, { ...input, ...amounts, updatedAt: now() });
+      await restoreTransactions([existing.id]);
+    } else await addTransaction(input, amounts);
+    await db.recurring_rules.update(ruleId, { pendingDates: current.pendingDates.filter((d) => d !== date), updatedAt: now() });
+    if (current.kind === 'subscription' && amountMinor !== undefined && amountMinor !== current.template.amountMinor) {
+      await db.recurring_rules.update(ruleId, {
+        template: { ...current.template, amountMinor },
+        subscription: { ...(current.subscription ?? { service: current.name, priceHistory: [] }), priceHistory: [...(current.subscription?.priceHistory ?? []), { date, amountMinor }] },
+        updatedAt: now(),
+      });
+    }
+  });
 }
 
 export async function skipPending(ruleId: string, date: string) {
@@ -270,13 +282,13 @@ export async function addInstallment(input: InstallmentInput): Promise<string> {
   const schedule = buildSchedule(input);
   const row: Installment = { ...input, id: uid(), schedule, status: 'active', createdAt: now(), updatedAt: now() };
   await db.installments.add(row);
-  await processInstallments();
+  await processInstallments(todayKey(), row.id);
   return row.id;
 }
 
 /** 到期期數自動拆成帳目 */
-export async function processInstallments(today = todayKey()): Promise<number> {
-  const list = await db.installments.where('status').equals('active').toArray();
+export async function processInstallments(today = todayKey(), installmentId?: string): Promise<number> {
+  const list = (await db.installments.where('status').equals('active').toArray()).filter((r) => !installmentId || r.id === installmentId);
   let created = 0;
   for (const inst of list) {
     const schedule = [...inst.schedule];
@@ -317,13 +329,14 @@ export async function findOrCreatePerson(name: string): Promise<Person> {
   return p;
 }
 
-export async function addDebts(rows: Omit<Debt, 'id' | 'createdAt' | 'updatedAt' | 'settled'>[]): Promise<string[]> {
-  const full: Debt[] = rows.map((r) => ({ ...r, id: uid(), settled: 0, createdAt: now(), updatedAt: now() }));
+export async function addDebts(rows: (Omit<Debt, 'id' | 'createdAt' | 'updatedAt' | 'settled'> & { id?: string })[]): Promise<string[]> {
+  const full: Debt[] = rows.map((r) => ({ ...r, id: r.id ?? uid(), settled: 0, createdAt: now(), updatedAt: now() }));
   await db.debts.bulkAdd(full);
   return full.map((d) => d.id);
 }
 
 export interface LoanInput {
+  id?: string;
   direction: Debt['direction'];
   personName: string;
   amountMinor: number;
@@ -344,24 +357,29 @@ export interface LoanInput {
  * - 不選帳戶：只建立欠款紀錄，結清時再記帳
  */
 export async function addLoan(input: LoanInput): Promise<{ debtId: string; txId?: string }> {
-  const person = await findOrCreatePerson(input.personName);
-  let txId: string | undefined;
-  if (input.accountId) {
-    const out = input.direction === 'they_owe_me';
-    const tx = await addTransaction({
-      type: out ? 'expense' : 'income', accountId: input.accountId, categoryId: out ? 'sys-debt-out' : 'sys-debt-in',
-      amountMinor: input.amountMinor, currency: input.currency, date: input.date, ts: input.ts,
-      note: `${out ? '借給' : '向'} ${person.name}${out ? '' : ' 借入'}${input.note ? `：${input.note}` : ''}`,
-      excludeFromStats: true, excludeFromBudget: true,
-    });
-    txId = tx.id;
-  }
-  const [debtId] = await addDebts([{
-    personId: person.id, direction: input.direction, amountMinor: input.amountMinor, currency: input.currency,
-    date: input.date, note: input.note, loanTxId: txId,
-    categoryId: input.direction === 'i_owe_them' && !txId ? input.categoryId : undefined,
-  }]);
-  return { debtId, txId };
+  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) throw new Error('金額需為正整數最小單位');
+  return db.transaction('rw', [db.people, db.debts, db.transactions, db.accounts, db.attachments, db.settings, db.exchange_rates], async () => {
+    const existing = input.id ? await db.debts.get(input.id) : undefined;
+    if (existing) return { debtId: existing.id, txId: existing.loanTxId };
+    const person = await findOrCreatePerson(input.personName);
+    let txId: string | undefined;
+    if (input.accountId) {
+      const out = input.direction === 'they_owe_me';
+      const tx = await addTransaction({
+        id: input.id, type: out ? 'expense' : 'income', accountId: input.accountId, categoryId: out ? 'sys-debt-out' : 'sys-debt-in',
+        amountMinor: input.amountMinor, currency: input.currency, date: input.date, ts: input.ts,
+        note: `${out ? '借給' : '向'} ${person.name}${out ? '' : ' 借入'}${input.note ? `：${input.note}` : ''}`,
+        excludeFromStats: true, excludeFromBudget: true,
+      });
+      txId = tx.id;
+    }
+    const [debtId] = await addDebts([{
+      id: input.id, personId: person.id, direction: input.direction, amountMinor: input.amountMinor, currency: input.currency,
+      date: input.date, note: input.note, loanTxId: txId,
+      categoryId: input.direction === 'i_owe_them' && !txId ? input.categoryId : undefined,
+    }]);
+    return { debtId, txId };
+  });
 }
 
 /** 復原 addLoan：刪除欠款與帳目 */

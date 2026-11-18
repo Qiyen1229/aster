@@ -15,7 +15,7 @@ from app.core.rate_limit import RateLimiter
 from app.core.request_info import ClientInfo
 from app.model import User
 from app.schema.auth import MessageResponse
-from app.schema.inbox import AckRequest, AckResult, HookItem, HookResult, InboxItemOut, TokenCreate, TokenCreated, TokenOut
+from app.schema.inbox import AckRequest, AckResult, BookingRequest, HookItem, HookResult, InboxItemOut, TokenCreate, TokenCreated, TokenOut
 from app.service.inbox_service import InboxService
 
 log = logging.getLogger("aster.inbox")
@@ -49,6 +49,12 @@ def revoke_token(token_id: int, user: User = Depends(get_current_user), client: 
 @router.get("/items", response_model=list[InboxItemOut], summary="待確認的項目")
 def items(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[InboxItemOut]:
     return [InboxItemOut.model_validate(i) for i in InboxService(db).items(user)]
+
+
+@router.post("/items/booking", response_model=MessageResponse, summary="登記通知的固定記帳結構")
+def reserve_booking(body: BookingRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MessageResponse:
+    InboxService(db).reserve_booking(user, body)
+    return MessageResponse(message="已登記，可安全重試同一記帳方式")
 
 
 @router.post("/items/ack", response_model=AckResult, summary="已記帳或略過，從收件匣移除")

@@ -58,9 +58,6 @@ class SyncRepository:
     def purged_seq(self, user_id: int) -> int:
         return int(self.db.scalar(select(SyncState.purged_seq).where(SyncState.user_id == user_id)) or 0)
 
-    def last_seq(self, user_id: int) -> int:
-        return int(self.db.scalar(select(func.max(SyncRecord.seq)).where(SyncRecord.user_id == user_id)) or 0)
-
     def purge_tombstones(self, user_id: int, before: datetime) -> int:
         """刪除早於 before 的刪除紀錄（墓碑），並記下清除點；回傳清除筆數。"""
         cond = (SyncRecord.user_id == user_id, SyncRecord.deleted.is_(True), SyncRecord.server_updated_at < before)

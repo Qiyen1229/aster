@@ -3,6 +3,7 @@
  * 皆為免費、免金鑰、支援 CORS。手動覆蓋的匯率（source='manual'）不會被自動更新蓋掉。
  */
 import Decimal from 'decimal.js';
+import Dexie from 'dexie';
 import { db } from '@/db/schema';
 import type { ExchangeRate } from '@/db/types';
 
@@ -37,6 +38,7 @@ export function resolveRate(map: RateMap, from: string, to: string): Decimal | n
 
 export async function getRate(from: string, to: string): Promise<Decimal | null> {
   if (from === to) return new Decimal(1);
+  if (Dexie.currentTransaction) return resolveRate(await loadMap(), from, to);
   await refreshRatesIfStale(to).catch(() => undefined);
   let rate = resolveRate(await loadMap(), from, to);
   if (!rate && navigator.onLine) {

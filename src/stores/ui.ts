@@ -17,6 +17,7 @@ export interface AddPrefill {
   toAccountId?: string;
   note?: string;
   date?: string;
+  time?: string;
   tagIds?: string[];
   projectId?: string;
   skipBudget?: boolean;

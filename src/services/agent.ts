@@ -10,12 +10,14 @@
  * 還原紀錄存在本機 meta 表（不同步），保留 7 天、最多 20 筆。還原時逐筆檢查：那一筆在執行後又被改過
  * （updatedAt 不同）就不動它並告知，避免蓋掉使用者之後的修改。寫回時間戳更新，所以其他裝置同步時也會跟著還原。
  */
+import Dexie from 'dexie';
 import { db, uid } from '@/db/schema';
+import { bookDrafts, inboxDraftShape, reserveInboxSource } from './quickentry';
 import { addDebts, addInstallment, addLoan, addWish, confirmPending, decideWish, deleteBudget, extendWish, findOrCreatePerson, removeLoan, saveBudget, saveGoal, saveProject, saveRecurring, settleDebt, skipPending, unsettleDebt } from '@/db/repo/plan';
 import { addTransaction, addTransfer, deleteTransactions, deleteTransfers, restoreTransactions, restoreTransfers, updateTransaction, type TxInput } from '@/db/repo/ledger';
 import { addTrade, addWatch, deleteDividend, deleteTrade, saveDividend, updateAlerts } from '@/db/repo/invest';
 import { addDurable, addUse, sellDurable } from '@/db/repo/durables';
-import { accountTypeInfo, addAccount } from '@/db/repo/accounts';
+import { accountTypeInfo, addAccount, deleteOrArchiveAccount } from '@/db/repo/accounts';
 import { addCategory, deleteOrArchiveCategory } from '@/db/repo/categories';
 import { saveSetting } from '@/db/repo/settings';
 import { twFeeConfig } from './portfolio';
@@ -26,7 +28,7 @@ import type { Transaction } from '@/db/types';
 import { opsOf, resolvePlan, type AgentData, type Op, type RawStep, type ResolvedStep } from '@/domain/agent/plan';
 import { addDays, todayKey } from '@/domain/period';
 import { applyTheme, useSettings } from '@/stores/settings';
-import { ackInbox, bookInboxEntries, invalidateInboxReadOnly, loadInboxReadOnly } from './inbox';
+import { ackInbox, invalidateInboxReadOnly, loadInboxReadOnly, matchesBlacklist } from './inbox';
 
 const OPS_KEY = 'agent.ops';
 const KEEP_DAYS = 7;
@@ -45,6 +47,8 @@ interface Change {
   undo?: 'tx' | 'transfer' | 'settle' | 'trade' | 'txedit' | 'txdel' | 'setting' | 'category' | 'rec_confirm' | 'rec_delete' | 'debt_del' | 'dividend' | 'transfer_del';
   /** 還原時需要的額外參數（例如週期確認的日期） */
   arg?: string;
+  after?: string;
+  guards?: { table: Table; id: string; after: string }[];
 }
 export interface AgentOpLog {
   id: string;
@@ -53,25 +57,40 @@ export interface AgentOpLog {
   titles: string[];
   changes: Change[];
   undoneAt?: number;
+  pendingInboxIds?: number[];
+  warnings?: string[];
 }
 
 /** 執行與還原都會動到的資料表（同一個 Dexie 交易） */
-const TX_TABLES = [db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.budgets, db.budget_periods, db.recurring_rules, db.goals, db.rules,
-  db.debts, db.people, db.stocks, db.stock_trades, db.settings, db.meta, db.categories, db.projects, db.tags, db.wishes, db.installments, db.dividends, db.watchlist];
+const txTables = () => [db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.budgets, db.budget_periods, db.recurring_rules, db.goals, db.rules,
+  db.debts, db.people, db.stocks, db.stock_trades, db.settings, db.meta, db.categories, db.projects, db.tags, db.wishes, db.installments, db.dividends, db.watchlist, db.exchange_rates];
+
+const settingsRevision = () => {
+  const s = useSettings.getState();
+  return JSON.stringify([todayKey(), s.baseCurrency, s.monthStartDay, s.lastAccountId, s.travelModeProjectId, s.inbox, s.invest.costMethod, s.invest.defaultBrokerageId, twFeeConfig(s.invest)]);
+};
+
+async function stateRevision(): Promise<string> {
+  const tables = txTables().filter((t) => !['meta', 'attachments', 'budget_periods'].includes(t.name));
+  const rows = await Promise.all(tables.map(async (t) => [t.name, await t.toArray()]));
+  const digest = await Dexie.waitFor(crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(rows))));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 /** 載入預覽模擬需要的資料（候選帳目＝近一年未刪除的） */
 export async function loadAgentData(): Promise<AgentData> {
   const today = todayKey();
   const st = useSettings.getState();
+  const settings = settingsRevision();
   const [categories, accounts, budgets, recurring, goals, rules, debtRows, people, stockRows, prices, tradeRows, txs,
-    projectRows, tagRows, wishRows, durableRows, transferRows, watchRows] = await Promise.all([
+    projectRows, tagRows, wishRows, durableRows, transferRows, watchRows, exchangeRates, revision] = await db.transaction('r', [...txTables(), db.price_cache], () => Promise.all([
     db.categories.toArray(), db.accounts.toArray(), db.budgets.toArray(), db.recurring_rules.toArray(), db.goals.toArray(), db.rules.toArray(),
     db.debts.toArray(), db.people.toArray(), db.stocks.toArray(), db.price_cache.toArray(), db.stock_trades.toArray(),
     db.transactions.where('date').aboveOrEqual(addDays(today, -365)).toArray().then((rows) => rows.filter((t) => !t.deletedAt)), // 先整批讀再過濾：Dexie 的 .filter() 會逐筆走游標，上萬筆時慢很多
     db.projects.toArray(), db.tags.toArray(), db.wishes.toArray(), db.durables.toArray(),
     db.transfers.where('date').aboveOrEqual(addDays(today, -365)).toArray().then((rows) => rows.filter((t) => !t.deletedAt)),
-    db.watchlist.toArray(),
-  ]);
+    db.watchlist.toArray(), db.exchange_rates.toArray(), stateRevision(),
+  ]));
   const inbox = await loadInboxReadOnly().catch(() => []);
   const personName = new Map(people.map((p) => [p.id, p.name]));
   const priceOf = new Map(prices.map((p) => [p.stockId, p.priceDec]));
@@ -90,7 +109,7 @@ export async function loadAgentData(): Promise<AgentData> {
     projects: projectRows.filter((x) => !x.deletedAt), tags: tagRows.map((t) => ({ id: t.id, name: t.name })),
     wishes: wishRows.filter((x) => !x.deletedAt), durables: durableRows.filter((x) => !x.deletedAt), transfers: transferRows,
     watchlist: watchRows.map((w) => ({ stockId: w.stockId, alerts: w.alerts.map((a) => ({ priceDec: a.priceDec, op: a.op, enabled: a.enabled })) })),
-    inbox, travelProjectId: st.travelModeProjectId,
+    inbox, travelProjectId: st.travelModeProjectId, trades: tradeRows, exchangeRates, snapshot: { dbName: db.name, revision, settings },
   };
 }
 
@@ -110,7 +129,38 @@ export async function listAgentOps(): Promise<AgentOpLog[]> {
 
 /** 把這次改動過的每一筆讀回 updatedAt 存進還原紀錄（還原前用來確認沒被改過） */
 async function stampChanges(changes: Change[]): Promise<void> {
-  for (const c of changes) c.stamp = ((await db.table(c.table).get(c.id)) as { updatedAt: number } | undefined)?.updatedAt ?? 0;
+  for (const c of changes) {
+    const row = await db.table(c.table).get(c.id);
+    c.stamp = row?.updatedAt ?? 0;
+    c.after = JSON.stringify(row ?? null);
+    c.guards = [];
+    const capture = async (table: Table, id?: string) => {
+      if (!id || c.guards!.some((g) => g.table === table && g.id === id)) return;
+      const linked = await db.table(table).get(id);
+      c.guards!.push({ table, id, after: JSON.stringify(linked ?? null) });
+      if (table === 'transactions' && linked) {
+        for (const debtId of linked.split?.debtIds ?? []) await capture('debts', debtId);
+        for (const durable of await db.durables.filter((d) => d.txId === id || d.saleTxId === id).toArray()) await capture('durables', durable.id);
+      }
+    };
+    if (c.table === 'transactions') await capture('transactions', c.id);
+    if (row && ['stock_trades', 'dividends', 'transfers'].includes(c.table)) {
+      await capture('transactions', row.transactionId);
+      await capture('transactions', row.feeTransactionId);
+      await capture('stock_trades', row.stockTradeId);
+    }
+    if (c.table === 'debts') {
+      await capture('transactions', row?.loanTxId);
+      await capture('transactions', row?.transactionId);
+      await capture('transactions', row?.settleTransferId);
+    }
+    if (c.table === 'durables') {
+      await capture('transactions', row?.txId);
+      await capture('transactions', row?.saleTxId);
+    }
+    if (c.undo === 'rec_confirm') await capture('transactions', `rec-${c.id}-${c.arg}`);
+    if (c.table === 'installments') for (const item of row?.schedule ?? []) await capture('transactions', item.transactionId);
+  }
 }
 
 /** 標籤用名字找、沒有就建一個（執行時才寫入；還原不刪標籤，避免誤刪使用者後來也在用的） */
@@ -135,10 +185,11 @@ async function ensureTags(names: string[]): Promise<string[]> {
 function remapOp(op: Op, rid: (id: string) => string): Op {
   const opt = (id?: string) => (id ? rid(id) : id);
   switch (op.kind) {
-    case 'recat': return { ...op, categoryId: rid(op.categoryId) };
+    case 'recat': return { ...op, ids: op.ids.map(rid), categoryId: rid(op.categoryId) };
+    case 'tx_delete': return { ...op, ids: op.ids.map(rid) };
     case 'budget': return { ...op, input: { ...op.input, categoryId: rid(op.input.categoryId), projectId: rid(op.input.projectId) } };
     case 'recurring': return { ...op, input: { ...op.input, template: { ...op.input.template, accountId: opt(op.input.template.accountId), categoryId: opt(op.input.template.categoryId), projectId: opt(op.input.template.projectId) } } };
-    case 'tx_edit': return { ...op, set: { ...op.set, accountId: opt(op.set.accountId), categoryId: opt(op.set.categoryId), projectId: opt(op.set.projectId) } };
+    case 'tx_edit': return { ...op, id: rid(op.id), set: { ...op.set, accountId: opt(op.set.accountId), categoryId: opt(op.set.categoryId), projectId: opt(op.set.projectId) } };
     case 'goal': return { ...op, input: { ...op.input, linkedAccountIds: op.input.linkedAccountIds.map(rid) } };
     case 'goal_edit': return { ...op, set: { ...op.set, linkedAccountIds: op.set.linkedAccountIds?.map(rid) } };
     case 'tx': return { ...op, input: { ...op.input, accountId: rid(op.input.accountId), categoryId: rid(op.input.categoryId), projectId: opt(op.input.projectId) } };
@@ -153,7 +204,7 @@ function remapOp(op: Op, rid: (id: string) => string): Op {
     case 'durable_use': return { ...op, durableId: rid(op.durableId) };
     case 'durable_sell': return { ...op, durableId: rid(op.durableId), ...(op.income ? { income: { accountId: rid(op.income.accountId), categoryId: rid(op.income.categoryId) } } : {}) };
     case 'travel': return { ...op, projectId: op.projectId === null ? null : rid(op.projectId) };
-    case 'inbox': return { ...op, entries: op.entries.map((e) => ({ ...e, drafts: e.drafts.map((dr) => ({ ...dr, accountId: rid(dr.accountId), categoryId: opt(dr.categoryId), projectId: opt(dr.projectId), toAccountId: opt(dr.toAccountId) })) })) };
+    case 'inbox': return { ...op, travelProjectId: opt(op.travelProjectId), entries: op.entries.map((e) => ({ ...e, drafts: e.drafts.map((dr) => ({ ...dr, accountId: rid(dr.accountId), categoryId: opt(dr.categoryId), projectId: opt(dr.projectId), toAccountId: opt(dr.toAccountId) })) })) };
     default: return op;
   }
 }
@@ -163,24 +214,63 @@ function remapOp(op: Op, rid: (id: string) => string): Op {
  * 收件匣操作需要向伺服器認領，放不進 Dexie 交易，在本機寫入完成後才處理。
  * 回傳紀錄（含還原所需的資訊）。
  */
-const appliedPlans = new Map<string, AgentOpLog>();
+const applyingPlans = new Map<string, Promise<AgentOpLog>>();
+
+async function saveLog(log: AgentOpLog): Promise<void> {
+  await db.meta.put({ key: OPS_KEY, value: [...(await readLog()).filter((l) => l.id !== log.id), log] });
+  await db.meta.put({ key: `agent.applied:${log.id}`, value: log });
+}
+
+async function finishRemote(log: AgentOpLog): Promise<AgentOpLog> {
+  if (!log.pendingInboxIds?.length) return log;
+  try {
+    await ackInbox(log.pendingInboxIds);
+    log.pendingInboxIds = [];
+    log.warnings = [];
+  } catch {
+    log.warnings = [`本機操作已儲存；${log.pendingInboxIds.length} 筆通知尚未清除，可在收件匣重試，不會重複入帳`];
+  }
+  try {
+    await db.transaction('rw', db.meta, () => saveLog(log));
+  } catch {
+    log.warnings = [...(log.warnings ?? []), '通知處理結果尚未寫回紀錄；本機帳目與還原紀錄已保留'];
+  }
+  invalidateInboxReadOnly();
+  return log;
+}
 
 export async function applyPlan(steps: ResolvedStep[], summary: string, idempotencyKey?: string): Promise<AgentOpLog> {
-  if (idempotencyKey && appliedPlans.has(idempotencyKey)) {
-    return appliedPlans.get(idempotencyKey)!;
-  }
+  const key = `${db.name}:${idempotencyKey ?? uid()}`;
+  const current = applyingPlans.get(key);
+  if (current) return current;
+  const pending = executePlan(steps, summary, idempotencyKey);
+  applyingPlans.set(key, pending);
+  try { return await pending; } finally { applyingPlans.delete(key); }
+}
+
+async function executePlan(steps: ResolvedStep[], summary: string, idempotencyKey?: string): Promise<AgentOpLog> {
   const ops = steps.flatMap((s) => opsOf(s).map((op) => ({ op, title: s.preview.title })));
   if (!ops.length) throw new Error('沒有可以執行的步驟');
   const titles = [...new Set(ops.map((o) => o.title))];
-  const log: AgentOpLog = { id: idempotencyKey || uid(), at: Date.now(), summary: summary || titles[0], titles, changes: [] };
+  let log: AgentOpLog = { id: idempotencyKey || uid(), at: Date.now(), summary: summary || titles[0], titles, changes: [], pendingInboxIds: [] };
   // 新建的分類／帳戶／專案先執行取得真實 id，再把後面步驟裡的草稿 id 換掉
   const creates = ops.filter((o) => o.op.kind === 'category' || o.op.kind === 'account' || o.op.kind === 'project');
-  const inboxOps = ops.filter((o) => o.op.kind === 'inbox');
-  const dbOps = [...creates, ...ops.filter((o) => o.op.kind !== 'category' && o.op.kind !== 'account' && o.op.kind !== 'project' && o.op.kind !== 'inbox')];
+  const dbOps = [...creates, ...ops.filter((o) => o.op.kind !== 'category' && o.op.kind !== 'account' && o.op.kind !== 'project')];
   const remap = new Map<string, string>();
   const rid = (id: string) => remap.get(id) ?? id;
   let travelApplied: string | null | undefined;
-  await db.transaction('rw', TX_TABLES, async () => {
+  if (!await db.meta.get(`agent.applied:${log.id}`)) {
+    for (const { op } of dbOps) if (op.kind === 'inbox' && op.action === 'book') {
+      for (const entry of op.entries) await reserveInboxSource(`inbox-${entry.item.id}`, inboxDraftShape(entry.drafts));
+    }
+  }
+  await db.transaction('rw', txTables(), async () => {
+    const receipt = (await db.meta.get(`agent.applied:${log.id}`))?.value as AgentOpLog | undefined;
+    if (receipt) { log = receipt; return; }
+    const snapshot = steps[0]?.snapshot;
+    if (!snapshot || snapshot.dbName !== db.name || snapshot.settings !== settingsRevision() || snapshot.revision !== await stateRevision()) {
+      throw new Error('帳本或設定已在預覽後變更，請重新預覽並確認');
+    }
     for (const { op } of dbOps) {
       if (op.kind === 'category') {
         const row = await addCategory({ ...op.input, parentId: rid(op.input.parentId), icon: '🏷️', color: '#8E8E93' });
@@ -269,6 +359,7 @@ export async function applyPlan(steps: ResolvedStep[], summary: string, idempote
         const tagIds = tagNames?.length ? await ensureTags(tagNames) : undefined;
         // 旅遊模式：AI 記的帳預設歸入目前的旅遊專案（有明寫專案就照明的）
         const t = await addTransaction({ ...rest, ts: Date.now(), tagIds, projectId: rest.projectId ?? (travelApplied !== undefined ? travelApplied : useSettings.getState().travelModeProjectId) ?? undefined, ...(split ? { split: { myShareMinor: split.myShareMinor, debtIds: [] } } : {}) });
+        if (o.draftId) remap.set(o.draftId, t.id);
         log.changes.push({ table: 'transactions', id: t.id, stamp: 0, undo: 'tx' });
         if (split && t.amountMinor > split.myShareMinor) {
           // 分帳：全額先離開帳戶，對方欠我的差額記成一筆欠款（和記帳面板同一套流程）
@@ -413,36 +504,31 @@ export async function applyPlan(steps: ResolvedStep[], summary: string, idempote
           const row = await db.watchlist.where('stockId').equals(o.stockId).first();
           if (row) log.changes.push({ table: 'watchlist', id: row.id, stamp: 0 });
         }
+      } else if (o.kind === 'inbox') {
+        for (const entry of o.entries) {
+          if (o.action === 'book') {
+            if (matchesBlacklist(entry.item, useSettings.getState().inbox.blacklist ?? []) || entry.review || !entry.drafts.length || entry.dup?.level === 'strong') throw new Error('通知需要重新確認，請重新預覽');
+            const result = await bookDrafts(entry.drafts, { sourceId: `inbox-${entry.item.id}`, travelProjectId: o.travelProjectId ?? '', updateLastAccount: false });
+            for (const id of result.txIds) log.changes.push({ table: 'transactions', id, stamp: 0, undo: 'tx' });
+            for (const id of result.transferIds) log.changes.push({ table: 'transfers', id, stamp: 0, undo: 'transfer' });
+          }
+          log.pendingInboxIds!.push(entry.item.id);
+        }
       } else if (o.kind === 'recurring') {
         const id = await saveRecurring(o.input);
         log.changes.push({ table: 'recurring_rules', id, stamp: 0 });
       }
     }
     await stampChanges(log.changes);
+    log.pendingInboxIds = [...new Set(log.pendingInboxIds)];
+    await saveLog(log);
   });
-  // 收件匣：本機入帳成功後才向伺服器認領（交易外）；記下的帳目仍可透過紀錄還原
-  for (const { op } of inboxOps) {
-    const o = remapOp(op, rid) as Extract<Op, { kind: 'inbox' }>;
-    if (o.action === 'skip') {
-      await ackInbox(o.entries.map((e) => e.item.id)).catch(() => []);
-      continue;
-    }
-    const res = await bookInboxEntries(o.entries, { skipDuplicates: true });
-    for (const id of res.txIds) log.changes.push({ table: 'transactions', id, stamp: 0, undo: 'tx' });
-    for (const id of res.transferIds) log.changes.push({ table: 'transfers', id, stamp: 0, undo: 'transfer' });
-  }
-  if (inboxOps.length) {
-    await stampChanges(log.changes);
-    invalidateInboxReadOnly();
-  }
-  await db.meta.put({ key: OPS_KEY, value: [...(await readLog()), log] });
   if (travelApplied !== undefined) {
     useSettings.setState({ travelModeProjectId: travelApplied });
     applyTheme(useSettings.getState());
   }
   if (log.changes.some((c) => c.table === 'rules')) invalidateAutocat();
-  appliedPlans.set(log.id, log);
-  return log;
+  return finishRemote(log);
 }
 
 /** 把已存在的帳目轉回輸入格式（改單筆、還原用）；updateTransaction 只覆蓋有給值的欄位，其餘關聯（週期、分期…）保留 */
@@ -466,14 +552,30 @@ export interface UndoResult { restored: number; skipped: number }
 export async function undoOp(id: string): Promise<UndoResult> {
   const res: UndoResult = { restored: 0, skipped: 0 };
   let travelRestored: string | null | undefined;
-  await db.transaction('rw', TX_TABLES, async () => {
+  await db.transaction('rw', txTables(), async () => {
     const all = await readLog();
     const log = all.find((l) => l.id === id);
     if (!log) throw new Error('找不到這筆操作紀錄（可能已超過 7 天）');
     if (log.undoneAt) throw new Error('這筆操作已經還原過了');
-    // 同一份計畫裡同一筆可能被改了好幾次（或先建後動）：還原時先處理後面的改動，
-    // 會把 updatedAt 寫新，讓前面那筆的「有沒有被改過」檢查誤判。記下這次還原動過的列，略過檢查。
     const touched = new Set<string>();
+    const eligible = new Set<Change>();
+    for (const c of log.changes) {
+      const row = await db.table(c.table).get(c.id);
+      const unchanged = c.after !== undefined ? JSON.stringify(row ?? null) === c.after : c.undo !== 'setting' && (row?.updatedAt ?? 0) === c.stamp;
+      const linkedUnchanged = await Promise.all((c.guards ?? []).map(async (g) => JSON.stringify((await db.table(g.table).get(g.id)) ?? null) === g.after));
+      if (unchanged && linkedUnchanged.every(Boolean)) eligible.add(c);
+    }
+    let removed: boolean;
+    do {
+      removed = false;
+      for (const c of log.changes) {
+        const linked = log.changes.filter((other) => other !== c && ((other.table === c.table && other.id === c.id)
+          || c.guards?.some((g) => g.table === other.table && g.id === other.id)));
+        if (!eligible.has(c) || linked.some((other) => !eligible.has(other))) {
+          for (const member of [c, ...linked]) if (eligible.delete(member)) removed = true;
+        }
+      }
+    } while (removed);
     const markTx = async (txId?: string) => {
       if (!txId) return;
       const t = await db.transactions.get(txId);
@@ -491,7 +593,7 @@ export async function undoOp(id: string): Promise<UndoResult> {
     };
     for (const c of [...log.changes].reverse()) {
       const key = `${c.table}:${c.id}`;
-      // 設定列沒有 updatedAt、硬刪除的列讀不回來：這兩種跳過「有沒有被改過」檢查直接寫回
+      if (!eligible.has(c)) { res.skipped++; continue; }
       if (c.undo === 'setting') {
         await db.settings.put({ key: c.id, value: c.before?.value ?? null });
         if (c.id === 'travelModeProjectId') travelRestored = (c.before?.value ?? null) as string | null;
@@ -512,7 +614,6 @@ export async function undoOp(id: string): Promise<UndoResult> {
         if (inPass) res.restored++; else res.skipped++;
         continue;
       }
-      if (!inPass && cur.updatedAt !== c.stamp) { res.skipped++; continue; }
       if (c.undo === 'tx') { await markTx(c.id); await deleteTransactions([c.id]); }
       else if (c.undo === 'transfer') { await markTransfer(c.id); await deleteTransfers([c.id]); }
       else if (c.undo === 'transfer_del') { await markTransfer(c.id); await restoreTransfers([c.id]); }
@@ -541,6 +642,7 @@ export async function undoOp(id: string): Promise<UndoResult> {
       } else if (c.undo === 'txdel') { await markTx(c.id); await restoreTransactions([c.id]); }
       else if (c.before === undefined) {
         if (c.table === 'budgets') await deleteBudget(c.id);
+        else if (c.table === 'accounts') await deleteOrArchiveAccount(c.id);
         else await db.table(c.table).delete(c.id);
       } else if (c.table === 'transactions') {
         await db.transactions.update(c.id, { ...c.before, updatedAt: Date.now() });
@@ -552,6 +654,7 @@ export async function undoOp(id: string): Promise<UndoResult> {
     }
     log.undoneAt = Date.now();
     await db.meta.put({ key: OPS_KEY, value: all });
+    await db.meta.put({ key: `agent.applied:${log.id}`, value: log });
   });
   if (travelRestored !== undefined) {
     useSettings.setState({ travelModeProjectId: travelRestored });

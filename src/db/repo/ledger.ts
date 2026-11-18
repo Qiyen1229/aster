@@ -5,7 +5,7 @@
 import Dexie from 'dexie';
 import { db, uid } from '../schema';
 import type { Transaction, Transfer, TxType } from '../types';
-import { convertMinor } from '@/domain/money';
+import { allocate, convertMinor } from '@/domain/money';
 import { transferEffects, txEffect } from '@/domain/ledger';
 import { getRate } from '@/services/fx';
 import { getSetting } from './settings';
@@ -54,7 +54,8 @@ function bump(accountId: string, delta: number): Promise<unknown> {
 }
 
 /** 依帳戶幣別、主幣別換算金額 */
-async function resolveAmounts(input: TxInput): Promise<Pick<Transaction, 'accountAmountMinor' | 'baseAmountMinor' | 'fxRateDec'>> {
+export async function resolveAmounts(input: TxInput): Promise<Pick<Transaction, 'accountAmountMinor' | 'baseAmountMinor' | 'fxRateDec'>> {
+  if (!Number.isSafeInteger(input.amountMinor) || (input.type !== 'adjust' && input.amountMinor < 0)) throw new Error('金額必須是非負的整數最小單位');
   const acc = await db.accounts.get(input.accountId);
   if (!acc) throw new Error('帳戶不存在');
   const base = await getSetting('baseCurrency');
@@ -112,9 +113,9 @@ function toRow(id: string, input: TxInput, amounts: Awaited<ReturnType<typeof re
   };
 }
 
-export async function addTransaction(input: TxInput): Promise<Transaction> {
+export async function addTransaction(input: TxInput, prepared?: Awaited<ReturnType<typeof resolveAmounts>>): Promise<Transaction> {
   const targetId = input.id || uid();
-  const amounts = await resolveAmounts(input);
+  const amounts = prepared ?? await resolveAmounts(input);
   const row = toRow(targetId, input, amounts, Date.now());
   await db.transaction('rw', db.transactions, db.accounts, db.attachments, async () => {
     // 冪等性檢查：若指定 ID 且該帳目已存在（例如週期排程已在其他裝置入帳並同步過來），不重複寫入與扣款
@@ -132,13 +133,20 @@ export async function addTransaction(input: TxInput): Promise<Transaction> {
 export async function updateTransaction(id: string, input: TxInput): Promise<Transaction> {
   const amounts = await resolveAmounts(input);
   let saved!: Transaction;
-  await db.transaction('rw', db.transactions, db.accounts, db.attachments, async () => {
+  await db.transaction('rw', db.transactions, db.accounts, db.attachments, db.debts, async () => {
     const old = await db.transactions.get(id);
     if (!old) throw new Error('帳目不存在');
     // 只覆蓋有給值的欄位，保留週期／分期／股票等來源關聯；專案可被清除
     const row = Object.fromEntries(Object.entries(toRow(id, input, amounts, old.createdAt)).filter(([, v]) => v !== undefined));
     saved = { ...old, ...row, projectId: input.projectId || undefined, fxRateDec: amounts.fxRateDec } as Transaction;
-    // 已軟刪除的帳目在修改時不可再次計入帳戶餘額，避免餘額被重複虛增
+    if (old.split && (old.amountMinor !== saved.amountMinor || old.currency !== saved.currency || old.type !== saved.type)) {
+      if (saved.type !== 'expense') throw new Error('分帳帳目只能是支出');
+      const debts = await db.debts.bulkGet(old.split.debtIds);
+      if (debts.some((d) => !d || d.deletedAt || d.settled)) throw new Error('請先恢復或取消結清相關欠款，再修改分帳金額');
+      const shares = allocate(saved.amountMinor, [old.split.myShareMinor, ...debts.map((d) => d!.amountMinor)]);
+      saved.split = { ...old.split, myShareMinor: shares[0] };
+      for (let i = 0; i < debts.length; i++) await db.debts.update(debts[i]!.id, { amountMinor: shares[i + 1], currency: saved.currency, updatedAt: Date.now() });
+    }
     if (!old.deletedAt) {
       await bump(old.accountId, -txEffect(old));
       await bump(saved.accountId, txEffect(saved));
@@ -181,7 +189,7 @@ async function durablesOnTxRestore(txId: string): Promise<void> {
 }
 
 export async function deleteTransactions(ids: string[]): Promise<void> {
-  await db.transaction('rw', db.transactions, db.transfers, db.accounts, db.durables, async () => {
+  await db.transaction('rw', db.transactions, db.transfers, db.accounts, db.durables, db.debts, async () => {
     const now = Date.now();
     for (const id of ids) {
       const tx = await db.transactions.get(id);
@@ -190,7 +198,12 @@ export async function deleteTransactions(ids: string[]): Promise<void> {
         await deleteTransfersInner([tx.transferId], now);
         continue;
       }
-      await db.transactions.update(id, { deletedAt: now });
+      if (tx.split) {
+        const debts = (await db.debts.bulkGet(tx.split.debtIds)).filter((d) => d && !d.deletedAt);
+        if (debts.some((d) => d!.settled)) throw new Error('請先取消結清相關欠款，再刪除分帳帳目');
+        for (const d of debts) await db.debts.update(d!.id, { deletedAt: now, updatedAt: now });
+      }
+      await db.transactions.update(id, { deletedAt: now, updatedAt: now });
       await bump(tx.accountId, -txEffect(tx));
       await durablesOnTxDelete(id, now);
     }
@@ -203,7 +216,7 @@ export async function listDeletedTransactions(limit = 50): Promise<Transaction[]
 }
 
 export async function restoreTransactions(ids: string[]): Promise<void> {
-  await db.transaction('rw', db.transactions, db.transfers, db.accounts, db.durables, async () => {
+  await db.transaction('rw', db.transactions, db.transfers, db.accounts, db.durables, db.debts, async () => {
     for (const id of ids) {
       const tx = await db.transactions.get(id);
       if (!tx || !tx.deletedAt) continue;
@@ -211,7 +224,12 @@ export async function restoreTransactions(ids: string[]): Promise<void> {
         await restoreTransfersInner([tx.transferId]);
         continue;
       }
-      await db.transactions.update(id, { deletedAt: null });
+      if (tx.split) {
+        for (const d of await db.debts.bulkGet(tx.split.debtIds)) {
+          if (d?.deletedAt === tx.deletedAt) await db.debts.update(d.id, { deletedAt: null, updatedAt: Date.now() });
+        }
+      }
+      await db.transactions.update(id, { deletedAt: null, updatedAt: Date.now() });
       await bump(tx.accountId, txEffect(tx));
       await durablesOnTxRestore(id);
     }
@@ -239,6 +257,7 @@ export async function batchUpdate(ids: string[], patch: Partial<Pick<Transaction
 // ───────────── 轉帳 ─────────────
 
 export interface TransferInput {
+  id?: string;
   fromAccountId: string;
   toAccountId: string;
   fromAmountMinor: number;
@@ -307,7 +326,8 @@ export async function addTransfer(input: TransferInput): Promise<Transfer> {
   const fee = await feeAmountsFor(input);
   let tr!: Transfer;
   await db.transaction('rw', db.transfers, db.transactions, db.accounts, async () => {
-    tr = await writeTransfer(uid(), input, Date.now(), fee);
+    const existing = input.id ? await db.transfers.get(input.id) : undefined;
+    tr = existing ?? await writeTransfer(input.id ?? uid(), input, Date.now(), fee);
   });
   return tr;
 }

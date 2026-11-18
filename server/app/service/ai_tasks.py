@@ -159,8 +159,8 @@ AGENT_PLAN = f"""你是記帳 App 的操作助手。使用者用一句話描述�
    args：{{"action":"book|skip","keyword":"關鍵字或null"}}
 21. add_category：建立新的分類（記帳時發現沒有合適分類就用這個，再接 add_transaction）。kind 是 expense 或 income；parent 填「可選分類」裡的主分類名稱代表子分類（沒說就 null）。
    args：{{"name":"分類名稱","kind":"expense|income","parent":"主分類名稱或null"}}
-22. add_dividend：記錄股利／配息（symbol 要在可選標的代號清單內）。kind：cash 現金股利、stock 股票股利（配股）；per_share 每股金額（cash）或每股配股數（stock）；持股數 App 會自動帶入；pay_date 發放日（沒說就今天）；account 是現金入帳帳戶（沒說用預設證券交割戶）。
-   args：{{"symbol":"代號","per_share":每股股利或配股數,"kind":"cash|stock","pay_date":"YYYY-MM-DD或null","ex_date":"YYYY-MM-DD或null","account":"帳戶名稱或null"}}
+22. add_dividend：記錄股利／配息（symbol 要在可選標的代號清單內）。kind：cash 現金股利、stock 股票股利（配股）；per_share 每股金額（cash）或每股配股數（stock）；持股數 App 會依除息日前的歷史交易計算；ex_date 除息日、pay_date 發放日（沒說就今天）；account 是現金入帳帳戶（沒說用預設證券交割戶）；fee 是匯費，沒有指定就 0，不要擅自加收 10 元。
+   args：{{"symbol":"代號","per_share":每股股利或配股數,"kind":"cash|stock","pay_date":"YYYY-MM-DD或null","ex_date":"YYYY-MM-DD或null","account":"帳戶名稱或null","fee":匯費或null}}
 23. add_wish：把想買的非必需品加入願望清單（先冷靜幾天再決定）。cool_days 冷靜天數（沒說就 30）。
    args：{{"name":"名稱","price":價格,"cool_days":冷靜天數或null,"category":"分類名稱或null","note":"備註或null","url":"連結或null"}}
 24. decide_wish：決定願望清單裡某項（名稱要在「可選願望」內）：bought 買了、abandoned 不買了、extend 再冷靜 7 天。
@@ -175,7 +175,7 @@ AGENT_PLAN = f"""你是記帳 App 的操作助手。使用者用一句話描述�
    args：{{"person":"對方名字","action":"delete|unsettle","amount":金額或null,"direction":"they_owe_me|i_owe_them|null"}}
 29. edit_goal：修改存錢目標（goal 要在可選目標或這份計畫剛建立的目標內）。set：target_amount 改目標金額、deadline 改截止日、account 連結帳戶、status 改 active 進行中／archived 封存。
    args：{{"goal":"目標名稱","set":{{"target_amount":金額或null,"deadline":"YYYY-MM-DD或null","account":"帳戶名稱或null","status":"active|archived|null"}}}}
-30. add_account：新增帳戶（name＋type；currency 沒說就用主幣別；initial_balance 期初餘額，沒說就 0）。type：bank 銀行、cash 現金、credit 信用卡、epay 電子支付。信用卡的結帳日／額度等細節請使用者之後到帳戶頁補。
+30. add_account：新增帳戶（name＋type；currency 沒說就用主幣別；initial_balance 期初金額，沒說就 0；信用卡正負輸入都代表欠款，App 以負餘額儲存；其他帳戶保留正負號）。type：bank 銀行、cash 現金、credit 信用卡、epay 電子支付。信用卡的結帳日／額度等細節請使用者之後到帳戶頁補。
    args：{{"name":"帳戶名稱","type":"bank|cash|credit|epay","currency":"幣別代號或null","initial_balance":期初餘額或null}}
 規則：
 - 所有分類、帳戶名稱必須完全等於「可選分類」「可選帳戶」清單裡的名稱，找不到就填 null（to_category、add_recurring 的 category 找不到就不要輸出那一步）。
@@ -328,12 +328,12 @@ def v_agent_plan(data: object, categories: list[str], accounts: list[str], today
             return None
         return v if today.replace(year=today.year - 6) <= x <= today.replace(year=today.year + 3) else None
 
-    def money(v: object, *, allow_zero: bool = False) -> float | None:
+    def money(v: object, *, allow_zero: bool = False, signed: bool = False) -> float | None:
         try:
             n = _num(v)
         except (TypeError, ValueError):
             return None
-        if n < 0 or n >= 1e10 or (n == 0 and not allow_zero):
+        if not (-1e10 < n < 1e10) or (n < 0 and not signed) or (n == 0 and not allow_zero):
             return None
         return n
 
@@ -523,7 +523,7 @@ def v_agent_plan(data: object, categories: list[str], accounts: list[str], today
             sym, per = pick(a.get("symbol"), stocks), money(a.get("per_share"))
             kind = a.get("kind") if a.get("kind") in ("cash", "stock") else "cash"
             if sym and per is not None:
-                args = {"symbol": sym, "per_share": per, "kind": kind, "pay_date": day(a.get("pay_date")), "ex_date": day(a.get("ex_date")), "account": accpick(a.get("account"))}
+                args = {"symbol": sym, "per_share": per, "kind": kind, "pay_date": day(a.get("pay_date")), "ex_date": day(a.get("ex_date")), "account": accpick(a.get("account")), "fee": money(a.get("fee"), allow_zero=True)}
         elif tool == "add_wish":
             name, price = _text(a.get("name"), 30), money(a.get("price"))
             url = _text(a.get("url"), 200)
@@ -574,7 +574,7 @@ def v_agent_plan(data: object, categories: list[str], accounts: list[str], today
         elif tool == "add_account":
             name, typ = _text(a.get("name"), 30), a.get("type")
             if name and typ in ("bank", "cash", "credit", "epay") and name not in accounts and name not in new_accs:
-                args = {"name": name, "type": typ, "currency": cur3(a.get("currency")), "initial_balance": money(a.get("initial_balance"), allow_zero=True) or 0}
+                args = {"name": name, "type": typ, "currency": cur3(a.get("currency")), "initial_balance": money(a.get("initial_balance"), allow_zero=True, signed=True) or 0}
                 new_accs.add(name)
         if args is not None:
             steps.append({"tool": tool, "args": args})

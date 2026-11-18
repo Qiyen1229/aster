@@ -75,6 +75,17 @@ def test_add_account_and_travel_back_to_normal() -> None:
     assert ok[3]["args"]["url"] is None  # 非 http(s) 網址不傳
 
 
+def test_signed_initial_balance_and_explicit_dividend_fee() -> None:
+    steps = plan([
+        {"tool": "add_account", "args": {"name": "新卡", "type": "credit", "initial_balance": -100}},
+        {"tool": "add_dividend", "args": {"symbol": "0050", "per_share": 2, "fee": 0}},
+        {"tool": "add_dividend", "args": {"symbol": "0050", "per_share": 2, "fee": 10}},
+    ])
+    assert steps[0]["args"]["initial_balance"] == -100
+    assert steps[1]["args"]["fee"] == 0
+    assert steps[2]["args"]["fee"] == 10
+
+
 def test_draft_names_chain_within_one_plan() -> None:
     # 同一份計畫裡剛建的分類／帳戶／專案／目標，後面的步驟可以直接用名稱
     ok = plan([

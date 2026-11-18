@@ -64,12 +64,12 @@ async function ledgerFor(t: TradeInput & { id: string }, stock: Stock) {
   return { transactionId: main.id, feeTransactionId: feeId };
 }
 
-const TRADE_TABLES = [db.stock_trades, db.transactions, db.transfers, db.accounts, db.attachments, db.durables];
+const tradeTables = () => [db.stock_trades, db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.debts, db.categories, db.exchange_rates];
 
 export async function addTrade(input: TradeInput): Promise<StockTrade> {
   const stock = await db.stocks.get(input.stockId);
   if (!stock) throw new Error('標的不存在');
-  return db.transaction('rw', TRADE_TABLES, async () => {
+  return db.transaction('rw', tradeTables(), async () => {
     const id = uid();
     const links = await ledgerFor({ ...input, id }, stock);
     const row: StockTrade = { ...input, id, ...links, createdAt: now(), updatedAt: now() };
@@ -83,7 +83,7 @@ export async function updateTrade(id: string, input: TradeInput): Promise<void> 
   if (!old) throw new Error('交易不存在');
   const stock = await db.stocks.get(input.stockId);
   if (!stock) throw new Error('標的不存在');
-  await db.transaction('rw', TRADE_TABLES, async () => {
+  await db.transaction('rw', tradeTables(), async () => {
     await deleteTransactions([old.transactionId, old.feeTransactionId].filter(Boolean) as string[]);
     const links = await ledgerFor({ ...input, id }, stock);
     await db.stock_trades.put({ ...old, ...input, transactionId: links.transactionId, feeTransactionId: links.feeTransactionId, updatedAt: now() });
@@ -93,7 +93,7 @@ export async function updateTrade(id: string, input: TradeInput): Promise<void> 
 export async function deleteTrade(id: string): Promise<void> {
   const t = await db.stock_trades.get(id);
   if (!t) return;
-  await db.transaction('rw', TRADE_TABLES, async () => {
+  await db.transaction('rw', tradeTables(), async () => {
     await deleteTransactions([t.transactionId, t.feeTransactionId].filter(Boolean) as string[]);
     await db.stock_trades.update(id, { deletedAt: now() });
   });
@@ -102,7 +102,7 @@ export async function deleteTrade(id: string): Promise<void> {
 export async function restoreTrade(id: string): Promise<void> {
   const t = await db.stock_trades.get(id);
   if (!t) return;
-  await db.transaction('rw', TRADE_TABLES, async () => {
+  await db.transaction('rw', tradeTables(), async () => {
     await restoreTransactions([t.transactionId, t.feeTransactionId].filter(Boolean) as string[]);
     await db.stock_trades.update(id, { deletedAt: null });
   });
@@ -112,13 +112,13 @@ export async function restoreTrade(id: string): Promise<void> {
 
 export type DividendInput = Omit<Dividend, 'id' | 'createdAt' | 'updatedAt' | 'transactionId' | 'stockTradeId'> & { syncToLedger: boolean };
 
-const DIVIDEND_TABLES = [db.dividends, db.stock_trades, db.transactions, db.transfers, db.accounts, db.attachments, db.durables];
+const dividendTables = () => [db.dividends, db.stock_trades, db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.debts, db.categories, db.exchange_rates];
 
 export async function saveDividend(input: DividendInput, id?: string): Promise<string> {
   const { syncToLedger, ...data } = input;
   const stock = await db.stocks.get(data.stockId);
   if (!stock) throw new Error('標的不存在');
-  return db.transaction('rw', DIVIDEND_TABLES, async () => {
+  return db.transaction('rw', dividendTables(), async () => {
     const did = id ?? uid();
     if (id) await removeDividendLinks(id);
     let transactionId: string | undefined;
@@ -154,7 +154,7 @@ async function removeDividendLinks(id: string) {
 }
 
 export async function deleteDividend(id: string) {
-  await db.transaction('rw', DIVIDEND_TABLES, async () => {
+  await db.transaction('rw', dividendTables(), async () => {
     await removeDividendLinks(id);
     await db.dividends.delete(id);
   });

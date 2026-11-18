@@ -21,7 +21,7 @@
 import { create } from 'zustand';
 import { db, uid } from '@/db/schema';
 import {
-  DEVICE_ONLY_SETTINGS, markRemote, outboxId, setClockOffset, setLocalChangeListener, syncClock, SYNCED_TABLES, type OutboxEntry, type SyncedTable,
+  DEVICE_ONLY_SETTINGS, markRemote, outboxId, setClockOffset, setLocalChangeListener, SYNCED_TABLES, type OutboxEntry, type SyncedTable,
 } from '@/db/sync-tracking';
 import { recomputeBalances } from '@/db/repo/accounts';
 import { loadSettings } from '@/db/repo/settings';
@@ -44,7 +44,7 @@ export interface SyncChange {
 interface PushResponse { accepted: number; rejected: SyncChange[]; cursor: number }
 interface PullResponse { changes: SyncChange[]; cursor: number; has_more: boolean; reset?: boolean }
 interface StatusResponse {
-  enabled: boolean; protocol_version: number; records: number; cursor: number; server_time?: number; purged_seq?: number; e2ee?: E2EEConfig | null;
+  enabled: boolean; protocol_version: number; records: number; cursor: number; server_time?: number; purged_seq?: number; e2ee?: E2EEConfig | null; key_version?: number;
 }
 
 /** locked：帳號已啟用端對端加密，但這台裝置還沒輸入加密密碼 */
@@ -177,14 +177,40 @@ export async function applyRemoteChanges(changes: SyncChange[]): Promise<Set<str
   return touched;
 }
 
-async function pushPending(device: string, key: CryptoKey | null): Promise<void> {
+const byteLength = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+
+async function pushPending(device: string, key: CryptoKey | null, version: number): Promise<string | undefined> {
+  const blocked = new Set<string>();
+  useSync.setState({ oversizedItems: [] });
+  const retain = (e: OutboxEntry) => {
+    blocked.add(e.id);
+    useSync.getState().addOversizedItem(`${e.table}/${String(e.key)}`);
+  };
+  const send = async (changes: SyncChange[], sent: OutboxEntry[]): Promise<void> => {
+    let res: PushResponse;
+    try {
+      res = await api<PushResponse>('/sync/push', { method: 'POST', body: { device_id: device, key_version: version, changes } });
+    } catch (err) {
+      if (!(err instanceof ApiError) || err.status !== 413) throw err;
+      if (err.code === 'quota_exceeded' || /容量|筆數/.test(err.message)) throw err;
+      if (sent.length === 1) { retain(sent[0]); return; }
+      const mid = Math.floor(sent.length / 2);
+      await send(changes.slice(0, mid), sent.slice(0, mid));
+      await send(changes.slice(mid), sent.slice(mid));
+      return;
+    }
+    if (res.rejected.length) await applyRemoteChanges(res.rejected);
+    await db.transaction('rw', db.sync_outbox, async () => {
+      const cur = await db.sync_outbox.bulkGet(sent.map((e) => e.id));
+      await db.sync_outbox.bulkDelete(sent.filter((e, i) => cur[i]?.at === e.at).map((e) => e.id));
+    });
+  };
   for (let round = 0; round < 1000; round++) {
-    const entries = await db.sync_outbox.orderBy('at').limit(PUSH_BATCH).toArray();
-    if (!entries.length) return;
+    const entries = await db.sync_outbox.orderBy('at').filter((e) => !blocked.has(e.id)).limit(PUSH_BATCH).toArray();
+    if (!entries.length) break;
     const changes: SyncChange[] = [];
     const sent: OutboxEntry[] = [];
-    let bytes = 0;
-    // 依資料表批次讀取當下內容（避免逐筆查詢）
+    let bytes = byteLength({ device_id: device, key_version: version, changes: [] });
     const rows = new Map<string, Record<string, unknown> | undefined>();
     const byTable = new Map<string, OutboxEntry[]>();
     for (const e of entries) byTable.set(e.table, [...(byTable.get(e.table) ?? []), e]);
@@ -192,56 +218,25 @@ async function pushPending(device: string, key: CryptoKey | null): Promise<void>
       const got = await db.table(name).bulkGet(list.map((e) => e.key as string));
       list.forEach((e, i) => rows.set(e.id, got[i] as Record<string, unknown> | undefined));
     }
-    const oversizedEntries: string[] = [];
-    const oversizedDetails: string[] = [];
     for (const e of entries) {
       const row = rows.get(e.id);
-      const payload = row ? (key ? (await encryptJson(key, row)) as unknown as Record<string, unknown> : row) : null;
+      const payload = row ? (key ? (await encryptJson(key, row, version)) as unknown as Record<string, unknown> : row) : null;
+      if (byteLength(payload) > MAX_SINGLE_PAYLOAD) { retain(e); continue; }
       const change: SyncChange = { table: e.table, key: JSON.stringify(e.key), updated_at: e.at, deleted: !row, payload };
-      const size = JSON.stringify(change).length;
-      if (size > MAX_SINGLE_PAYLOAD) {
-        const item = `${e.table}/${String(e.key)}`;
-        console.error(`[sync] 單筆資料過大 (${size} bytes > 250KB)，剔除佇列避免同步卡死：${item}`);
-        oversizedEntries.push(e.id);
-        oversizedDetails.push(item);
-        continue;
-      }
+      const size = byteLength(change) + 1;
       if (sent.length && bytes + size > PUSH_BYTES) break;
       bytes += size;
       changes.push(change);
       sent.push(e);
     }
-    if (oversizedEntries.length) {
-      await db.sync_outbox.bulkDelete(oversizedEntries);
-      for (const item of oversizedDetails) useSync.getState().addOversizedItem(item);
-      useUI.getState().showSnack({
-        text: `有 ${oversizedEntries.length} 筆資料過大無法同步（${oversizedDetails[0]}${oversizedDetails.length > 1 ? ' 等' : ''}）`,
-      });
-    }
-    if (!changes.length) continue;
-
-    let res: PushResponse;
-    try {
-      res = await api<PushResponse>('/sync/push', { method: 'POST', body: { device_id: device, changes } });
-    } catch (err: unknown) {
-      const errWithStatus = err as { status?: number };
-      if (errWithStatus?.status === 413 && sent.length === 1) {
-        const item = `${sent[0].table}/${String(sent[0].key)}`;
-        console.error(`[sync] 伺服器回傳 413（單筆過大），剔除佇列避免死鎖：${item}`);
-        await db.sync_outbox.delete(sent[0].id);
-        useSync.getState().addOversizedItem(item);
-        useUI.getState().showSnack({ text: `資料過大無法同步（${item}）` });
-        continue;
-      }
-      throw err;
-    }
-    // 移除已上傳的；上傳期間又被修改的（at 不同）保留到下一輪
-    await db.transaction('rw', db.sync_outbox, async () => {
-      const cur = await db.sync_outbox.bulkGet(sent.map((e) => e.id));
-      await db.sync_outbox.bulkDelete(sent.filter((e, i) => cur[i] && cur[i]!.at === e.at).map((e) => e.id));
-    });
-    if (res.rejected.length) await applyRemoteChanges(res.rejected);
+    if (changes.length) await send(changes, sent);
   }
+  if (blocked.size) {
+    const message = `${blocked.size} 筆資料過大無法同步，已保留待重試；其他資料照常同步`;
+    useUI.getState().showSnack({ text: message });
+    return message;
+  }
+  return undefined;
 }
 
 /** 下載變更；回傳 false 代表伺服器要求完整重新同步（游標早於已清除的墓碑） */
@@ -303,7 +298,7 @@ async function fullResync(): Promise<void> {
 async function runSync(): Promise<void> {
   const device = await deviceId();
   const t0 = Date.now();
-  const status = await api<StatusResponse>('/sync/status');
+  let status = await api<StatusResponse>('/sync/status');
   if (typeof status.server_time === 'number') {
     const offset = status.server_time - (t0 + Date.now()) / 2;
     const applied = Math.abs(offset) < CLOCK_TOLERANCE ? 0 : Math.round(offset);
@@ -311,6 +306,8 @@ async function runSync(): Promise<void> {
     void setMeta(META_CLOCK, applied);
   }
   if (!status.enabled) { useSync.setState({ phase: 'off' }); return; }
+  const migration = await getMeta<EncryptionMigration>(META_MIGRATION);
+  if (migration) status = await resumeEncryption(migration, status);
   useSync.setState({ e2ee: status.e2ee ?? null });
   const key = await reconcile(status.e2ee);
   // 伺服器資料被清空或換了一台伺服器（游標倒退）→ 重新完整上傳、從頭下載
@@ -326,42 +323,107 @@ async function runSync(): Promise<void> {
     // 沒有任何新變更：省下 push／pull 請求
     return;
   }
-  await pushPending(device, key);
+  const problem = await pushPending(device, key, status.key_version ?? status.e2ee?.version ?? 0);
   if (!(await pullChanges(device))) await fullResync();
+  if (problem) throw new ApiError(413, problem);
 }
 
-/** 把所有資料以「現在」重新排入上傳（啟用／停用加密後，讓伺服器上的版本全部換成新格式） */
-async function reuploadAll(): Promise<void> {
-  const at = syncClock();
-  for (const name of SYNCED_TABLES) {
-    const keys = await db.table(name).toCollection().primaryKeys();
-    const entries: OutboxEntry[] = keys
-      .filter((k) => !(name === 'settings' && DEVICE_ONLY_SETTINGS.has(String(k))))
-      .map((k) => ({ id: outboxId(name, k), table: name, key: k, at }));
-    for (let i = 0; i < entries.length; i += 2000) await db.sync_outbox.bulkPut(entries.slice(i, i + 2000));
+const META_MIGRATION = 'e2ee.migration';
+interface EncryptionMigration {
+  id: string;
+  version: number;
+  cursor: number;
+  key: CryptoKey | null;
+  config: Omit<E2EEConfig, 'version'>;
+}
+
+async function resumeEncryption(m: EncryptionMigration, status: StatusResponse): Promise<StatusResponse> {
+  const database = db;
+  const checkDatabase = () => {
+    if (db !== database) throw new Error('帳號已切換，請在原帳號繼續加密遷移');
+  };
+  const complete = async (result: StatusResponse) => {
+    checkDatabase();
+    await activate(m.key, m.version + 1);
+    await database.meta.delete(META_MIGRATION);
+    return result;
+  };
+  const version = status.key_version ?? status.e2ee?.version ?? 0;
+  if (version === m.version + 1 && (m.config.enabled ? status.e2ee?.check === m.config.check : !status.e2ee)) {
+    return complete(status);
+  }
+  if (version !== m.version || status.cursor !== m.cursor) {
+    await database.meta.delete(META_MIGRATION);
+    throw new Error('同步資料或加密設定已變更，未套用這次切換，請重新同步後再試');
+  }
+  const oldKey = await reconcile(status.e2ee);
+  try {
+    checkDatabase();
+    await api('/sync/keys/migration', { method: 'POST', body: { ...m.config, migration_id: m.id, expected_version: m.version, cursor: m.cursor } });
+    let cursor = 0;
+    let hasMore: boolean;
+    do {
+      checkDatabase();
+      const page = await api<PullResponse>('/sync/pull', { query: { since: cursor, limit: 500 } });
+      let batch: SyncChange[] = [];
+      let bytes = byteLength({ migration_id: m.id, changes: [] });
+      const send = async () => {
+        if (!batch.length) return;
+        checkDatabase();
+        await api('/sync/keys/migration', { method: 'PUT', body: { migration_id: m.id, changes: batch } });
+        batch = [];
+        bytes = byteLength({ migration_id: m.id, changes: [] });
+      };
+      for (const c of page.changes) {
+        if (c.deleted || !c.payload) continue;
+        if (isEncrypted(c.payload) && !oldKey) throw new E2EELockedError();
+        const plain = isEncrypted(c.payload) ? await decryptJson<Record<string, unknown>>(oldKey!, c.payload) : c.payload;
+        const payload = m.key ? await encryptJson(m.key, plain, m.version + 1) as unknown as Record<string, unknown> : plain;
+        const change = { ...c, payload };
+        const size = byteLength(change) + 1;
+        if (batch.length && bytes + size > PUSH_BYTES) await send();
+        batch.push(change);
+        bytes += size;
+      }
+      await send();
+      cursor = page.cursor;
+      hasMore = page.has_more;
+    } while (hasMore);
+    checkDatabase();
+    return await complete(await api<StatusResponse>('/sync/keys/migration/commit', { method: 'POST', body: { migration_id: m.id } }));
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) await database.meta.delete(META_MIGRATION);
+    throw e;
   }
 }
 
-/**
- * 啟用、更換或停用端對端加密（passphrase = null 為停用）。
- * 先同步一次拿到最新資料，再以新格式重新上傳全部資料。
- */
+let changingEncryption = false;
+
 export async function setEncryption(passphrase: string | null): Promise<void> {
-  await syncNow();
-  if (useSync.getState().phase === 'locked') throw new E2EELockedError();
-  if (useSync.getState().phase !== 'idle') throw new Error(useSync.getState().error || '目前無法連線到伺服器');
-  if (passphrase) {
-    const c = await createConfig(passphrase);
-    const res = await api<E2EEConfig>('/sync/keys', { method: 'PUT', body: { enabled: true, salt: c.salt, iterations: c.iterations, check: c.check } });
-    await activate(c.key, res.version);
-    useSync.setState({ e2ee: res });
-  } else {
-    await api('/sync/keys', { method: 'PUT', body: { enabled: false } });
-    await activate(null, 0);
-    useSync.setState({ e2ee: null });
+  if (changingEncryption) throw new Error('加密切換正在進行，請稍候');
+  changingEncryption = true;
+  const database = db;
+  try {
+    await syncNow();
+    if (useSync.getState().phase === 'locked') throw new E2EELockedError();
+    if (useSync.getState().phase !== 'idle' || await db.sync_outbox.count()) throw new Error(useSync.getState().error || '仍有資料尚未同步');
+    const status = await api<StatusResponse>('/sync/status');
+    if (status.protocol_version < 4) throw new Error('請先更新伺服器，再切換端對端加密');
+    const c = passphrase ? await createConfig(passphrase) : null;
+    if (db !== database) throw new Error('帳號已切換，未變更加密設定');
+    const migration: EncryptionMigration = {
+      id: `rekey-${uid()}`, version: status.key_version ?? status.e2ee?.version ?? 0, cursor: status.cursor,
+      key: c?.key ?? null,
+      config: c ? { enabled: true, salt: c.salt, iterations: c.iterations, check: c.check } : { enabled: false, salt: '', iterations: 0, check: '' },
+    };
+    await setMeta(META_MIGRATION, migration);
+    await syncNow();
+    if (useSync.getState().phase !== 'idle' || await database.meta.get(META_MIGRATION)) {
+      throw new Error(useSync.getState().error || '加密切換尚未完成；原金鑰已保留，重新同步會繼續處理');
+    }
+  } finally {
+    changingEncryption = false;
   }
-  await reuploadAll();
-  await syncNow();
 }
 
 /** 這台裝置輸入加密密碼；回傳是否正確 */

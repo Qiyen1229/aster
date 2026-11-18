@@ -4,7 +4,7 @@
  * 流程：iPhone 捷徑（Apple Pay 交易、銀行簡訊、Siri 一句話）→ POST /api/hook/inbox（捷徑專用權杖）
  * → 伺服器暫存 → App 開啟時取回、解析成帳目草稿 → 使用者確認（或開啟「自動入帳」）→ 記帳並從伺服器刪除。
  *
- * - 確認時先向伺服器「認領」（ack），只有真的刪到的項目才記帳：兩台裝置同時處理也不會重複
+ * - 入帳成功後才清除通知；固定來源 ID 與本機收據讓失敗重試不重複扣款
  * - 帳戶：學到的卡片對應 → 文字裡的帳戶名稱 → 規則／商家記憶 → 收件匣預設帳戶 → 上次使用的帳戶
  * - 暫存在伺服器上的內容沒有端對端加密（捷徑沒有你的加密密碼）；處理後立即刪除，30 天未處理自動清除
  */
@@ -42,7 +42,7 @@ export interface InboxDup {
   inboxId?: number;
   /** 顯示用：「今天 全聯 $120」「Apple Pay 那筆」 */
   label: string;
-  /** 不同來源、15 分鐘內、同一天：幾乎確定是同一筆付款，自動入帳時直接合併 */
+  /** 僅供顯示的重複提示，不據此自動合併或刪除 */
   certain?: boolean;
 }
 
@@ -73,9 +73,11 @@ export function isLineChat(card: string): boolean {
 
 /** LINE 訊息是否為重點官方帳號的交易通知（發送者名稱＋交易字眼＋官方口吻，三者缺一不可） */
 export function isTrustedLineNotice(text: string): boolean {
-  const t = text.normalize('NFKC');
-  const lower = t.toLowerCase();
-  return LINE_OFFICIAL_SENDERS.some((n) => lower.includes(n.normalize('NFKC').toLowerCase())) && TXN_WORDS.test(t) && OFFICIAL_STYLE.test(t);
+  const lines = text.normalize('NFKC').split('\n').map((s) => s.trim()).filter(Boolean);
+  if (lines.length < 2) return false;
+  const sender = lines[0].toLowerCase();
+  const body = lines.slice(1).join('\n');
+  return LINE_OFFICIAL_SENDERS.some((n) => sender === n.normalize('NFKC').toLowerCase()) && TXN_WORDS.test(body) && OFFICIAL_STYLE.test(body);
 }
 
 export type NoticeVerdict = { trust: 'ok' } | { trust: 'review'; reason: string } | { trust: 'drop' };
@@ -89,9 +91,14 @@ function matchesList(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }
   });
 }
 
-/** 白名單比對：發送者／卡片／App 名稱或通知內容、商家任一命中即放行（不分大小寫、全半形正規化） */
 export function matchesWhitelist(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }, whitelist: string[]): boolean {
-  return matchesList(it, whitelist);
+  const names = (it.card ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
+  if (isLineChat(it.card ?? '')) {
+    const lines = it.text.split('\n').map((s) => s.trim()).filter(Boolean);
+    names.length = 0;
+    if (lines.length > 1) names.push(lines[0]);
+  }
+  return names.some((name) => whitelist.some((w) => w.trim().length > 0 && name.normalize('NFKC').toLowerCase() === w.trim().normalize('NFKC').toLowerCase()));
 }
 
 /** 黑名單比對：發送者／商家／通知內容任一命中即自動略過並清除 */
@@ -107,7 +114,7 @@ export function judgeNotice(it: Pick<InboxRaw, 'source' | 'card' | 'text' | 'mer
   if (matchesBlacklist(it, blacklist)) return { trust: 'drop' };
   if (matchesWhitelist(it, whitelist)) return { trust: 'ok' };
   if (it.source !== 'notify' || !isLineChat(it.card ?? '')) return { trust: 'ok' };
-  if (isTrustedLineNotice(`${it.merchant ?? ''}\n${it.text ?? ''}`)) return { trust: 'ok' };
+  if (isTrustedLineNotice(it.text ?? '')) return { trust: 'ok' };
   return hasDrafts ? { trust: 'review', reason: '這是 LINE 聊天訊息（不是官方帳號的消費通知），確認真的是消費再記' } : { trust: 'drop' };
 }
 
@@ -213,6 +220,7 @@ export async function fetchInbox(): Promise<InboxRaw[]> {
 export async function ackInbox(ids: number[]): Promise<number[]> {
   if (!ids.length) return [];
   const r = await api<{ ids: number[] }>('/inbox/items/ack', { method: 'POST', body: { ids } });
+  invalidateInboxReadOnly();
   const s = useInboxCount.getState();
   s.set(Math.max(0, s.n - r.ids.length));
   return r.ids;
@@ -267,10 +275,12 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     const hit = findAmounts(it.amount)[0] ?? findAmounts(`${it.amount}元`)[0];
     if (!hit) return [];
     const text = [it.merchant, it.text].filter(Boolean).join(' ');
-    const refund = /退款|退貨|refund/i.test(`${it.text} ${it.amount}`) || /^\s*[-−]/.test(it.amount);
+    const parsed = parseEntries(`${text} ${it.amount}`, { ...ctx, today: date });
+    const inferred = parsed.find((d) => d.amount === Math.abs(hit.value)) ?? parsed[0];
+    const refund = /退款|退貨|refund/i.test(`${it.text} ${it.amount}`.replace(/(?:退款|退貨)(?:須知|說明|規定|辦法|政策)/g, '')) || hit.value < 0;
     drafts = [{
-      kind: refund ? 'income' : 'expense', amount: Math.abs(hit.value), currency: hit.currency, date, dateGiven: true,
-      accountId: undefined, note: it.merchant || it.text, raw: text,
+      ...inferred, kind: refund ? 'income' : inferred?.kind ?? 'expense', amount: Math.abs(hit.value), currency: hit.currency ?? inferred?.currency, date, dateGiven: true,
+      note: it.merchant || inferred?.note || it.text, raw: text,
     }];
   } else {
     drafts = parseEntries(it.text, { ...ctx, today: date });
@@ -326,12 +336,12 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     const ruleAcc = d.kind !== 'transfer' && matchText
       ? await suggestAccount(matchText, dKind, d.amount, memoryText).catch(() => undefined)
       : undefined;
-    const explicitRuleAcc = ruleAcc?.source === 'rule' ? ruleAcc.accountId : undefined;
+    const explicitRuleAcc = ruleAcc?.source === 'rule' && ctx.accounts.some((a) => a.id === ruleAcc.accountId) ? ruleAcc.accountId : undefined;
     const preferredAcc = explicitRuleAcc ?? targetAcc;
     const r = await resolveDraft({ ...d, categoryId: cleanCategoryId, accountId: preferredAcc }, base, matchText, memoryText);
     out.push(
       explicitRuleAcc
-        ? { ...r, accountId: explicitRuleAcc, accountSource: 'rule' }
+        ? { ...r, accountId: explicitRuleAcc, accountSource: 'rule', ruleIds: [...new Set([...(r.ruleIds ?? []), ...(ruleAcc?.ruleId ? [ruleAcc.ruleId] : [])])] }
         : targetAcc
           ? { ...r, accountId: targetAcc, accountSource: 'text' }
           : r,
@@ -340,17 +350,13 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
   return out;
 }
 
-const createdMs = (it: InboxRaw) => {
-  const t = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(it.created_at) ? it.created_at : `${it.created_at}Z`).getTime();
-  return Number.isNaN(t) ? 0 : t;
-};
-
 /**
  * 標出可能重複的項目：先和收件匣裡較早的一則比（Apple Pay 與銀行簡訊常常通知同一筆付款），
  * 再和帳本裡前後一天的帳目比（電子發票載具、手動記帳）。只標記，不刪除。
  * 一則只標一個最像的；只處理「一則一筆」的項目（Siri 多筆的不比對）。
  */
 export async function markDuplicates(entries: InboxEntry[], today = todayKey()): Promise<void> {
+  for (const e of entries) delete e.dup;
   const single = entries.filter((e) => e.drafts.length === 1 && e.drafts[0].kind !== 'transfer');
   if (!single.length) return;
   const accounts = new Map((await db.accounts.toArray()).map((a) => [a.id, a]));
@@ -380,11 +386,9 @@ export async function markDuplicates(entries: InboxEntry[], today = todayKey()):
     const inboxHit = findDuplicate(p, earlier);
     if (inboxHit) {
       const other = ordered.find((o) => String(o.item.id) === inboxHit.id)!;
-      const sameDay = other.drafts[0].date === e.drafts[0].date;
-      const close = Math.abs(createdMs(e.item) - createdMs(other.item)) <= 15 * 60_000;
       e.dup = {
-        level: inboxHit.level === 'strong' || (sameDay && close) ? 'strong' : 'weak', from: 'inbox', inboxId: other.item.id,
-        label: `${SOURCE_LABEL[other.item.source]?.label ?? '另一則'} 那筆`, certain: other.item.source !== e.item.source && sameDay && close,
+        level: inboxHit.level, from: 'inbox', inboxId: other.item.id,
+        label: `${SOURCE_LABEL[other.item.source]?.label ?? '另一則'} 那筆`,
       };
       continue;
     }
@@ -399,16 +403,18 @@ export async function markDuplicates(entries: InboxEntry[], today = todayKey()):
 export async function loadInbox(): Promise<InboxEntry[]> {
   const [items, ctx, fallback] = await Promise.all([fetchInbox(), parseContext(), fallbackAccount()]);
   const out: InboxEntry[] = [];
-  const dropIds: number[] = [];
+  const dropped: InboxEntry[] = [];
   const { whitelist = [], blacklist = [] } = useSettings.getState().inbox;
   for (const item of items) {
     const drafts = await draftsFromItem(item, ctx, fallback).catch(() => []);
     const v = judgeNotice(item, drafts.length > 0, whitelist, blacklist);
-    if (v.trust === 'drop') { dropIds.push(item.id); continue; }
+    if (v.trust === 'drop') { dropped.push({ item, drafts: [], review: '已忽略，但通知尚未清除，請重新整理或略過' }); continue; }
     out.push({ item, drafts, ...(v.trust === 'review' ? { review: v.reason } : {}) });
   }
-  // 非官方的 LINE 聊天雜訊：直接從收件匣清掉，不留紀錄
-  if (dropIds.length) await ackInbox(dropIds).catch(() => []);
+  if (dropped.length) {
+    try { await ackInbox(dropped.map((e) => e.item.id)); }
+    catch { out.push(...dropped); }
+  }
   await markDuplicates(out, ctx.today).catch(() => undefined);
   return out;
 }
@@ -418,20 +424,22 @@ export async function loadInbox(): Promise<InboxEntry[]> {
  * 不認領刪除任何項目（包括 LINE 雜訊），因為預覽不該改動伺服器狀態；真的執行時才走 bookInboxEntries／ackInbox。
  * 短時間內重複呼叫（同一份計畫反覆預覽）用快取，避免一直打伺服器。
  */
-let roCache: { at: number; entries: InboxEntry[] } | null = null;
+let roCache: { at: number; dbName: string; policy: string; entries: InboxEntry[] } | null = null;
 export async function loadInboxReadOnly(): Promise<InboxEntry[]> {
   if (!AUTH_ENABLED) return [];
-  if (roCache && Date.now() - roCache.at < 30_000) return roCache.entries;
+  const policy = JSON.stringify(useSettings.getState().inbox);
+  if (roCache && roCache.dbName === db.name && roCache.policy === policy && Date.now() - roCache.at < 30_000) return structuredClone(roCache.entries);
   const [items, ctx, fallback] = await Promise.all([fetchInbox(), parseContext(), fallbackAccount()]);
   const out: InboxEntry[] = [];
   for (const item of items) {
     const drafts = await draftsFromItem(item, ctx, fallback).catch(() => []);
-    const v = judgeNotice(item, drafts.length > 0, useSettings.getState().inbox.whitelist ?? []);
+    const cfg = useSettings.getState().inbox;
+    const v = judgeNotice(item, drafts.length > 0, cfg.whitelist ?? [], cfg.blacklist ?? []);
     if (v.trust === 'drop') continue;
     out.push({ item, drafts, ...(v.trust === 'review' ? { review: v.reason } : {}) });
   }
   await markDuplicates(out, ctx.today).catch(() => undefined);
-  roCache = { at: Date.now(), entries: out };
+  roCache = { at: Date.now(), dbName: db.name, policy, entries: structuredClone(out) };
   return out;
 }
 /** 執行過收件匣操作後清掉唯讀快取，下次預覽重新抓 */
@@ -439,14 +447,14 @@ export function invalidateInboxReadOnly(): void { roCache = null; }
 
 /** 「合併」：這則其實是已經記過的那筆，只補上缺少的商家，然後從收件匣移除（不新增帳目） */
 export async function mergeDuplicate(e: InboxEntry): Promise<boolean> {
-  const removed = await ackInbox([e.item.id]);
-  if (!removed.length) return false;
-  if (e.dup?.from === 'ledger' && e.dup.txId) {
-    const t = await db.transactions.get(e.dup.txId);
-    const merchant = e.item.merchant || e.drafts[0]?.note;
-    if (t && !t.deletedAt && !t.merchant && merchant) await db.transactions.update(t.id, { merchant: merchant.slice(0, 60), updatedAt: Date.now() });
-    learnCard(e.item.card, t?.accountId);
-  }
+  const id = e.dup?.from === 'ledger' ? e.dup.txId : e.dup?.inboxId ? `inbox-${e.dup.inboxId}-0` : undefined;
+  const t = id ? await db.transactions.get(id) : undefined;
+  if (!t || t.deletedAt) throw new Error('請先將被比對的那筆通知入帳，再確認合併');
+  const merchant = e.item.merchant || e.drafts[0]?.note;
+  if (!t.merchant && merchant) await db.transactions.update(t.id, { merchant: merchant.slice(0, 60), updatedAt: Date.now() });
+  await ackInbox([e.item.id]);
+  learnCard(e.item.card, t.accountId);
+  invalidateInboxReadOnly();
   return true;
 }
 
@@ -462,43 +470,42 @@ export function learnCard(card: string | undefined, accountId: string | undefine
 }
 
 /** 一次記下多則；先寫入本機資料庫，入帳成功後才向伺服器認領刪除（避免入帳中途失敗導致伺服器資料永久遺失）。skipDuplicates：很可能重複的留在收件匣等你確認 */
-export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplicates?: boolean } = {}) {
-  const ok = entries.filter((e) => e.drafts.length && !(opts.skipDuplicates && e.dup?.level === 'strong'));
-  if (!ok.length) return { count: 0, skipped: 0, txIds: [], transferIds: [] };
-
-  const txIds: string[] = [];
-  const transferIds: string[] = [];
-  const bookedItemIds: number[] = [];
-
-  for (const e of ok) {
+export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplicates?: boolean; travelProjectId?: string } = {}) {
+  const txIds: string[] = [], transferIds: string[] = [];
+  const bookedItemIds: number[] = [], clearedItemIds: number[] = [], failedItemIds: number[] = [];
+  let alreadyBooked = 0;
+  for (const e of entries) {
+    if (bookedItemIds.includes(e.item.id)) continue;
     try {
-      const res = await bookDrafts(e.drafts);
+      const sourceId = `inbox-${e.item.id}`;
+      const receipt = await db.meta.get(`booked:${sourceId}`);
+      const existing = receipt || await db.transactions.get(`${sourceId}-0`) || await db.transfers.get(`${sourceId}-0`);
+      const cfg = useSettings.getState().inbox;
+      if (!existing && (matchesBlacklist(e.item, cfg.blacklist ?? []) || !e.drafts.length || (opts.skipDuplicates && (e.dup?.level === 'strong' || e.review)))) continue;
+      const res = existing ? { txIds: [], transferIds: [] } : await bookDrafts(e.drafts, { sourceId, travelProjectId: opts.travelProjectId });
       txIds.push(...res.txIds);
       transferIds.push(...res.transferIds);
+      if (!res.txIds.length && !res.transferIds.length) alreadyBooked++;
       bookedItemIds.push(e.item.id);
       const first = e.drafts[0];
-      if (first && first.accountSource !== 'default' && !(e.item.source === 'notify' && isLineChat(e.item.card))) {
-        learnCard(e.item.card, first.accountId);
-      }
+      if (first && first.accountSource !== 'default' && !(e.item.source === 'notify' && isLineChat(e.item.card))) learnCard(e.item.card, first.accountId);
     } catch (err) {
+      failedItemIds.push(e.item.id);
       console.warn(`[inbox] 入帳失敗，保留於收件匣：item ${e.item.id}`, err);
     }
   }
-
-  // 只有成功寫入本機資料庫的項目才發送 ack 從伺服器移除
-  if (bookedItemIds.length > 0) {
+  if (bookedItemIds.length) {
     try {
       await ackInbox(bookedItemIds);
+      clearedItemIds.push(...bookedItemIds);
     } catch (err) {
-      console.warn('[inbox] ackInbox 失敗，伺服器可能保留待下次同步', err);
+      console.warn('[inbox] 帳目已儲存，收件匣清除待重試', err);
     }
   }
-
+  invalidateInboxReadOnly();
   return {
-    count: txIds.length + transferIds.length,
-    skipped: ok.length - bookedItemIds.length,
-    txIds,
-    transferIds,
+    count: txIds.length + transferIds.length, skipped: failedItemIds.length, failedItemIds, alreadyBooked,
+    ackPending: bookedItemIds.length - clearedItemIds.length, clearedItemIds, txIds, transferIds,
   };
 }
 
@@ -509,18 +516,22 @@ export async function finishInboxItem(id: string, opts: { card?: string; account
 }
 
 /** 規則試跑預覽：輸入測試通知文字，回傳會被黑名單擋掉、或自動記成的名稱／分類／帳戶 */
-export async function previewAutoBook(text: string, card = '', merchant = ''): Promise<{
+export async function previewAutoBook(text: string, card = '', merchant = '', opts: { source?: InboxRaw['source']; amount?: string } = {}): Promise<{
   verdict: NoticeVerdict;
   whitelisted: boolean;
   drafts: ResolvedDraft[];
+  dup?: InboxDup;
 }> {
   const [ctx, fallback] = await Promise.all([parseContext(), fallbackAccount()]);
-  const fake: InboxRaw = { id: 0, source: 'notify', text, amount: '', merchant, card, occurred: '', created_at: new Date().toISOString() };
+  const fake: InboxRaw = { id: 0, source: opts.source ?? 'notify', text, amount: opts.amount ?? '', merchant, card, occurred: '', created_at: new Date().toISOString() };
   const cfg = useSettings.getState().inbox;
   const wl = cfg.whitelist ?? [];
   const bl = cfg.blacklist ?? [];
-  const drafts = await draftsFromItem(fake, ctx, fallback).catch(() => []);
+  const drafts = await draftsFromItem(fake, ctx, fallback);
+  const entry: InboxEntry = { item: fake, drafts };
+  await markDuplicates([entry]);
   return {
+    dup: entry.dup,
     verdict: judgeNotice(fake, drafts.length > 0, wl, bl),
     whitelisted: matchesWhitelist(fake, wl),
     drafts,
@@ -570,20 +581,13 @@ export async function processInboxOnStartup(): Promise<{ booked: number; pending
   const wl = st.whitelist ?? [];
   const auto = (e: InboxEntry) => st.autoBook || matchesWhitelist(e.item, wl);
   if (!entries.some(auto)) return { booked: 0, pending: entries.length, merged: 0 };
-  // 不同來源、同一時間、同金額（Apple Pay 與簡訊通知同一筆付款）：幾乎確定重複，直接合併
-  let merged = 0;
-  const rest: InboxEntry[] = [];
-  for (const e of entries) {
-    if (e.dup?.certain && (await mergeDuplicate(e).catch(() => false))) merged++;
-    else rest.push(e);
-  }
-  const autoReady = rest.filter((e) => auto(e) && !e.review);
+  const autoReady = entries.filter((e) => auto(e) && !e.review);
   await enrichAmbiguousInboxWithAi(autoReady);
-  // 來源不夠可信的（LINE 聊天裡剛好有金額）絕不自動入帳，留給使用者確認
+  await markDuplicates(entries);
   const r = await bookInboxEntries(autoReady, { skipDuplicates: true });
-  const pending = rest.filter((e) => !e.drafts.length || e.dup?.level === 'strong' || e.review || !auto(e)).length;
+  const pending = entries.filter((e) => !r.clearedItemIds.includes(e.item.id)).length;
   useInboxCount.getState().set(pending);
-  return { booked: r.count, pending, merged };
+  return { booked: r.count, pending, merged: 0 };
 }
 
 /** 下拉刷新／回到前景：和開啟 App 一樣處理收件匣（自動入帳、合併重複），有入帳就提示 */

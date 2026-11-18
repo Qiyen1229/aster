@@ -12,7 +12,11 @@
  * （後面的步驟看得到前面步驟的結果），並以 show_view 步驟指定要在對話裡嵌入哪張檢視卡（財務自由、稅務、現金流、花費）。
  * 這幾個會動到帳戶的工具目前只支援主幣別帳戶（外幣需要匯率，請用記帳面板）。
  */
-import type { Account, Budget, Category, CategoryRule, Dividend, Durable, Goal, Installment, Project, RecurringRule, Transaction, Transfer, Wish } from '@/db/types';
+import type { Account, Budget, Category, CategoryRule, Dividend, Durable, ExchangeRate, Goal, Installment, Project, RecurringRule, StockTrade, Transaction, Transfer, Wish } from '@/db/types';
+import { computePosition } from '@/domain/invest/position';
+import { currencyInfo, convertMinor } from '@/domain/money';
+import { resolveRate } from '@/services/fx';
+import { travelDraftDefaults } from '@/services/quickentry';
 import type { InboxEntry } from '@/services/inbox';
 import { statAmount } from '@/domain/ledger';
 import { formatMoney } from '@/domain/money';
@@ -48,7 +52,7 @@ export type Op =
   | { kind: 'tx_delete'; ids: string[] }
   | { kind: 'goal'; input: Omit<Goal, 'id' | 'createdAt' | 'updatedAt'> }
   | { kind: 'rule'; input: Omit<CategoryRule, 'id' | 'createdAt' | 'updatedAt' | 'hits'> }
-  | { kind: 'tx'; input: { type: 'expense' | 'income'; accountId: string; categoryId: string; amountMinor: number; currency: string; date: string; note: string; projectId?: string; tagNames?: string[]; merchant?: string; excludeFromBudget?: boolean; excludeFromStats?: boolean; split?: { myShareMinor: number; personName: string } } }
+  | { kind: 'tx'; draftId?: string; input: { type: 'expense' | 'income'; accountId: string; categoryId: string; amountMinor: number; currency: string; date: string; note: string; projectId?: string; tagNames?: string[]; merchant?: string; excludeFromBudget?: boolean; excludeFromStats?: boolean; split?: { myShareMinor: number; personName: string } } }
   | { kind: 'transfer'; input: { fromAccountId: string; toAccountId: string; amountMinor: number; date: string; note: string } }
   | { kind: 'debt'; input: { direction: 'i_owe_them' | 'they_owe_me'; personName: string; amountMinor: number; currency: string; date: string; note: string; accountId?: string } }
   | { kind: 'settle'; debtId: string; accountId?: string }
@@ -60,7 +64,7 @@ export type Op =
   | { kind: 'travel'; projectId: string | null }
   | { kind: 'installment'; input: Omit<Installment, 'id' | 'createdAt' | 'updatedAt' | 'schedule' | 'status'> }
   | { kind: 'recurring_manage'; ruleId: string; action: 'confirm' | 'skip' | 'pause' | 'resume' | 'delete' | 'edit'; date?: string; amountMinor?: number; day?: number; mode?: 'auto' | 'confirm' }
-  | { kind: 'inbox'; action: 'book' | 'skip'; entries: InboxEntry[] }
+  | { kind: 'inbox'; action: 'book' | 'skip'; entries: InboxEntry[]; travelProjectId?: string }
   | { kind: 'dividend'; input: Omit<Dividend, 'id' | 'createdAt' | 'updatedAt' | 'transactionId' | 'stockTradeId'> & { syncToLedger: boolean } }
   | { kind: 'wish'; draftId: string; input: { name: string; priceMinor: number; currency: string; coolDays: number; categoryId?: string; note?: string; url?: string } }
   | { kind: 'wish_decide'; wishId: string; decision: 'bought' | 'abandoned' | 'extend' }
@@ -104,7 +108,7 @@ export interface StepPreview {
 }
 
 /** op＝這一步要做的一件事；ops＝一步要做好幾件事（例如結清同一個人的多筆欠款） */
-export interface ResolvedStep { preview: StepPreview; op: Op | null; ops?: Op[] }
+export interface ResolvedStep { preview: StepPreview; op: Op | null; ops?: Op[]; snapshot?: { dbName: string; revision: string; settings: string } }
 export const opsOf = (s: ResolvedStep): Op[] => (s.preview.blocked ? [] : s.ops ?? (s.op ? [s.op] : []));
 
 export interface AgentData {
@@ -125,6 +129,9 @@ export interface AgentData {
   stocks?: { id: string; symbol: string; name: string; market: string; currency: string; assetType: 'stock' | 'etf' | 'bond_etf'; lotSize: number; priceDec?: string; taxRateDec?: string }[];
   /** 目前各標的的持股股數（標的 id → 股數字串）；賣出用它檢查夠不夠賣 */
   holdings?: Record<string, string>;
+  trades?: StockTrade[];
+  exchangeRates?: ExchangeRate[];
+  snapshot?: ResolvedStep['snapshot'];
   feeConfig?: TwFeeConfig;
   defaultBrokerageId?: string;
   /** v4.1.39 全能助手：專案、願望、耐久財、轉帳、觀察清單、收件匣（預覽用，執行時以資料庫為準） */
@@ -448,7 +455,7 @@ function balanceLine(acc: Account, before: number, after: number, warnings: stri
   return `「${acc.name}」${debt ? '欠款' : '餘額'}：${fmt(debt ? -before : before, acc.currency)} → ${fmt(debt ? -after : after, acc.currency)}`;
 }
 
-function addTransactionTool(a: Record<string, unknown>, d: AgentData, W: Work): ResolvedStep {
+function addTransactionTool(a: Record<string, unknown>, d: AgentData, W: Work, work: Transaction[]): ResolvedStep {
   const title = '記一筆帳';
   const type = a.type === 'income' ? 'income' : 'expense';
   const acc = (str(a.account) ? findAccount(d.accounts, str(a.account)) : undefined) ?? d.accounts.find((x) => x.id === d.defaultAccountId && usableAcc(x));
@@ -484,8 +491,16 @@ function addTransactionTool(a: Record<string, unknown>, d: AgentData, W: Work): 
   if (a.exclude_stats === true) lines.push('不計入收支統計');
   if (!str(a.category)) warnings.push(`你沒有指定分類，先放在「${cat.name}」`);
   if (sp && !split) warnings.push('分帳資訊不完整（我的份額要介於 0 和總金額之間、要有對象名字），這筆不分帳');
+  const draftId = `draft-tx-${W.draftSeq++}`;
+  const createdAt = Math.max(Date.now(), ...work.map((t) => t.createdAt)) + 1;
+  work.push({ id: draftId, type, accountId: acc.id, categoryId: cat.id, amountMinor, currency: acc.currency, date, note,
+    accountAmountMinor: amountMinor, baseAmountMinor: amountMinor, ts: new Date(`${date}T12:00:00`).getTime(),
+    createdAt, updatedAt: createdAt, tagIds: [], attachmentIds: [], projectId: project?.id,
+    merchant: str(a.merchant) || undefined, excludeFromBudget: a.exclude_budget === true, excludeFromStats: a.exclude_stats === true,
+    ...(split ? { split: { myShareMinor: split.myShareMinor, debtIds: [] } } : {}),
+  });
   return {
-    op: { kind: 'tx', input: { type, accountId: acc.id, categoryId: cat.id, amountMinor, currency: acc.currency, date, note, projectId: project?.id, tagNames: tagNames.length ? tagNames : undefined, merchant: str(a.merchant).slice(0, 30) || undefined, excludeFromBudget: a.exclude_budget === true || undefined, excludeFromStats: a.exclude_stats === true || undefined, split } },
+    op: { kind: 'tx', draftId, input: { type, accountId: acc.id, categoryId: cat.id, amountMinor, currency: acc.currency, date, note, projectId: project?.id, tagNames: tagNames.length ? tagNames : undefined, merchant: str(a.merchant).slice(0, 30) || undefined, excludeFromBudget: a.exclude_budget === true || undefined, excludeFromStats: a.exclude_stats === true || undefined, split } },
     preview: { tool: 'add_transaction', title: `${type === 'income' ? '收入' : '支出'} ${fmt(amountMinor, acc.currency)}（${note}）→「${acc.name}」`, lines, warnings, txCreated: 1, accountsTouched: 1, accountIds: [acc.id], debtsCreated: split ? 1 : 0 },
   };
 }
@@ -607,20 +622,22 @@ function goalDepositTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
   const name = str(a.goal);
   const amount = num(a.amount);
   if (!name || !(amount > 0)) return blockedStep('goal_deposit', title, '目標名稱或金額不正確');
-  const cur = d.baseCurrency;
-  const amountMinor = minorOf(amount, cur);
   const draft = W.draftGoals.get(name);
+  const goal = (d.goals ?? []).find((g) => g.status === 'active' && g.name === name);
+  const cur = draft?.input.currency ?? goal?.currency ?? d.baseCurrency;
+  const amountMinor = minorOf(amount, cur);
   if (draft) {
     // 這份計畫裡才剛建立的目標：把金額併進那一步，一起建立
     draft.input.manualSavedMinor += amountMinor;
     return { op: null, preview: { tool: 'goal_deposit', title: `存入「${name}」${fmt(amountMinor, cur)}`, lines: [`併入上一步建立的目標，一建立就有 ${fmt(draft.input.manualSavedMinor, cur)}`, '只記錄進度，不動帳戶餘額'], warnings: [], readonly: true } };
   }
-  const goal = (d.goals ?? []).find((g) => g.status === 'active' && g.name === name);
   if (!goal) return blockedStep('goal_deposit', title, `找不到進行中的目標「${name}」`);
-  const saved = goal.manualSavedMinor + amountMinor;
+  const previous = goal.manualSavedMinor;
+  const saved = previous + amountMinor;
+  goal.manualSavedMinor = saved;
   return {
     op: { kind: 'goal_deposit', goalId: goal.id, amountMinor },
-    preview: { tool: 'goal_deposit', title: `存入「${goal.name}」${fmt(amountMinor, goal.currency)}`, lines: [`手動存入：${fmt(goal.manualSavedMinor, goal.currency)} → ${fmt(saved, goal.currency)}（目標 ${fmt(goal.targetMinor, goal.currency)}，${Math.round((saved / Math.max(1, goal.targetMinor)) * 100)}%）`, '只記錄進度，不動帳戶餘額；要連動帳戶請到「規劃 → 目標」連結帳戶'], warnings: [] },
+    preview: { tool: 'goal_deposit', title: `存入「${goal.name}」${fmt(amountMinor, goal.currency)}`, lines: [`手動存入：${fmt(previous, goal.currency)} → ${fmt(saved, goal.currency)}（目標 ${fmt(goal.targetMinor, goal.currency)}，${Math.round((saved / Math.max(1, goal.targetMinor)) * 100)}%）`, '只記錄進度，不動帳戶餘額；要連動帳戶請到「規劃 → 目標」連結帳戶'], warnings: [] },
   };
 }
 
@@ -658,6 +675,10 @@ function tradeStockTool(side: 'buy' | 'sell', a: Record<string, unknown>, d: Age
   const before = W.balances.get(acc.id) ?? acc.balanceMinor, after = buy ? before - net : before + net;
   W.balances.set(acc.id, after);
   W.shares.set(stock.id, buy ? held.plus(sharesD) : held.minus(sharesD));
+  d.trades?.push({ id: `draft-trade-${W.draftSeq++}`, stockId: stock.id, accountId: broker?.id ?? acc.id, type: side,
+    date, ts: new Date(`${date}T12:00:00`).getTime(), sharesDec: sharesD.toString(), priceDec: price.toString(),
+    feeMinor: fee, taxMinor: tax, fxRateDec: '1', isDCA: false, syncToLedger: true, note: '', createdAt: 0, updatedAt: 0,
+  });
   const warnings: string[] = [];
   if (priceGiven > 0 && stock.priceDec && Math.abs(priceGiven - Number(stock.priceDec)) / Number(stock.priceDec) > 0.05) warnings.push(`你說的成交價 ${priceGiven} 和最近報價 ${stock.priceDec} 差超過 5%，請確認`);
   if (!(priceGiven > 0)) warnings.push(`沒有指定成交價，先以最近報價 ${stock.priceDec} 試算（實際成交價以券商為準，執行前可改說「價格 xxx」）`);
@@ -705,7 +726,7 @@ function matchTxs(m: Record<string, unknown>, d: AgentData, work: Transaction[])
 
 const sampleOf = (t: Transaction, catMap: Map<string, Category>) => ({ date: t.date, note: t.note || t.merchant || '（無備註）', amountMinor: statAmount(t), from: catMap.get(t.categoryId)?.name ?? '其他' });
 
-function editTxTool(a: Record<string, unknown>, d: AgentData, work: Transaction[]): ResolvedStep {
+function editTxTool(a: Record<string, unknown>, d: AgentData, work: Transaction[], W: Work): ResolvedStep {
   const blocked = (why: string): ResolvedStep => ({ op: null, preview: { tool: 'edit_transaction', title: '修改帳目', lines: [], warnings: [], blocked: why } });
   const m = (a.match && typeof a.match === 'object' ? a.match : {}) as Record<string, unknown>;
   const s = (a.set && typeof a.set === 'object' ? a.set : {}) as Record<string, unknown>;
@@ -772,6 +793,12 @@ function editTxTool(a: Record<string, unknown>, d: AgentData, work: Transaction[
   const ids = new Set(hits.map((x) => x.id));
   for (const w of work) {
     if (!ids.has(w.id)) continue;
+    if (set.amountMinor !== undefined || set.accountId !== undefined) {
+      const sign = w.type === 'income' ? 1 : -1;
+      const nextAccount = set.accountId ?? w.accountId;
+      W.balances.set(w.accountId, (W.balances.get(w.accountId) ?? 0) - sign * w.accountAmountMinor);
+      W.balances.set(nextAccount, (W.balances.get(nextAccount) ?? 0) + sign * (set.amountMinor ?? w.accountAmountMinor));
+    }
     if (set.amountMinor !== undefined) { w.amountMinor = set.amountMinor; w.accountAmountMinor = set.amountMinor; w.baseAmountMinor = w.currency === cur ? set.amountMinor : w.baseAmountMinor; }
     if (set.categoryId) w.categoryId = set.categoryId;
     if (set.accountId) w.accountId = set.accountId;
@@ -789,7 +816,7 @@ function editTxTool(a: Record<string, unknown>, d: AgentData, work: Transaction[
   };
 }
 
-function deleteTxTool(a: Record<string, unknown>, d: AgentData, work: Transaction[]): ResolvedStep {
+function deleteTxTool(a: Record<string, unknown>, d: AgentData, work: Transaction[], W: Work): ResolvedStep {
   const blocked = (why: string): ResolvedStep => ({ op: null, preview: { tool: 'delete_transaction', title: '刪除帳目', lines: [], warnings: [], blocked: why } });
   const m = (a.match && typeof a.match === 'object' ? a.match : {}) as Record<string, unknown>;
   const { hits, label, err } = matchTxs(m, d, work);
@@ -804,7 +831,10 @@ function deleteTxTool(a: Record<string, unknown>, d: AgentData, work: Transactio
     ...(hits.length > 8 ? [`…還有 ${hits.length - 8} 筆`] : []),
     '帳戶餘額：會把這些帳目的影響退回去', '這是軟刪除：執行後可以按「還原」全部救回來'];
   const ids = new Set(hits.map((x) => x.id));
-  for (const w of work) if (ids.has(w.id)) w.deletedAt = Date.now();
+  for (const w of work) if (ids.has(w.id)) {
+    W.balances.set(w.accountId, (W.balances.get(w.accountId) ?? 0) + (w.type === 'income' ? -1 : 1) * w.accountAmountMinor);
+    w.deletedAt = Date.now();
+  }
   return {
     op: { kind: 'tx_delete', ids: hits.map((x) => x.id) },
     preview: { tool: 'delete_transaction', title: hits.length === 1 ? `刪除帳目：${hits[0].note || hits[0].merchant || catMap.get(hits[0].categoryId)?.name || ''} ${fmt(hits[0].amountMinor, hits[0].currency)}` : `刪除 ${hits.length} 筆帳目`,
@@ -860,8 +890,9 @@ function addAccountTool(a: Record<string, unknown>, d: AgentData, W: Work): Reso
   if (!name || !type) return blockedStep(tool, '新增帳戶', '請說明帳戶名稱與類型（銀行／現金／信用卡／電子支付）');
   if (findAccount(d.accounts, name)) return blockedStep(tool, '新增帳戶', `已經有帳戶「${name}」了`);
   const currency = cur3(a.currency) ?? d.baseCurrency;
-  const initial = Math.max(0, num(a.initial_balance) || 0);
-  const initialMinor = minorOf(initial, currency);
+  const initial = a.initial_balance == null ? 0 : num(a.initial_balance);
+  if (!Number.isFinite(initial)) return blockedStep(tool, '新增帳戶', '期初金額不正確');
+  const initialMinor = minorOf(type === 'credit' ? -Math.abs(initial) : initial, currency);
   const id = `draft-acc-${W.draftSeq++}`;
   d.accounts.push({ id, name, icon: type === 'credit' ? '💳' : type === 'cash' ? '💵' : '🏦', color: '#0A84FF', type, currency, initialBalanceMinor: initialMinor, balanceMinor: initialMinor, includeInNetWorth: true, isLiability: type === 'credit', sort: 999, archived: 0, createdAt: 0, updatedAt: 0 });
   W.balances.set(id, initialMinor);
@@ -870,7 +901,7 @@ function addAccountTool(a: Record<string, unknown>, d: AgentData, W: Work): Reso
   if (currency !== d.baseCurrency) warnings.push(`這是外幣帳戶（${currency}），之後記外幣帳需要匯率`);
   return {
     op: { kind: 'account', draftId: id, input: { name, type, currency, initialBalanceMinor: initialMinor } },
-    preview: { tool, title: `新增${ACC_TYPE_LABEL[type]}帳戶「${name}」`, lines: [`幣別 ${currency}，期初餘額 ${fmt(initialMinor, currency)}`, '後面的步驟可以直接用這個帳戶記帳／轉帳'], warnings },
+    preview: { tool, title: `新增${ACC_TYPE_LABEL[type]}帳戶「${name}」`, lines: [`幣別 ${currency}，期初${type === 'credit' ? '欠款' : '餘額'} ${fmt(type === 'credit' ? -initialMinor : initialMinor, currency)}`,  '後面的步驟可以直接用這個帳戶記帳／轉帳'], warnings },
   };
 }
 
@@ -1022,12 +1053,26 @@ function manageInboxTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
     });
     if (hits.length > 8) lines.push(`…還有 ${hits.length - 8} 筆`);
     lines.push('帳戶餘額：不受影響');
+    d.inbox = all.filter((e) => !hits.includes(e));
     return {
       op: { kind: 'inbox', action: 'skip', entries: hits },
       preview: { tool, title: `略過收件匣 ${hits.length} 筆`, lines, warnings: ['略過會直接從伺服器刪除這些項目，無法還原'] },
     };
   }
-  const bookable = hits.filter((e) => e.drafts.length && e.dup?.level !== 'strong');
+  const bookable = hits.filter((e) => e.drafts.length && e.dup?.level !== 'strong' && !e.review);
+  const travel = d.projects?.find((p) => p.id === d.travelProjectId);
+  const rates = new Map((d.exchangeRates ?? []).map((r) => [`${r.base}>${r.quote}`, r]));
+  for (const e of bookable) for (const dr of e.drafts) {
+    const acc = d.accounts.find((x) => x.id === dr.accountId && usableAcc(x));
+    if (!acc) return blockedStep(tool, title, '有帳戶不存在或已封存，請到收件匣重新選擇');
+    if (dr.kind === 'transfer') {
+      const to = d.accounts.find((x) => x.id === dr.toAccountId && usableAcc(x));
+      if (!to || to.id === acc.id || to.currency !== acc.currency) return blockedStep(tool, title, '跨幣別或無效的轉帳，請到收件匣手動處理');
+    } else {
+      const { currency } = travelDraftDefaults(dr, travel, acc.currency, d.baseCurrency);
+      if (!resolveRate(rates, currency, acc.currency)) return blockedStep(tool, title, `缺少 ${currency}→${acc.currency} 匯率，請先更新匯率再預覽`);
+    }
+  }
   const dupN = hits.filter((e) => e.dup?.level === 'strong').length;
   const noDraft = hits.filter((e) => !e.drafts.length).length;
   if (!bookable.length) return blockedStep(tool, title, '這些項目都看不懂金額或疑似重複，請到收件匣手動處理');
@@ -1040,7 +1085,9 @@ function manageInboxTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
     for (const dr of e.drafts) {
       const acc = d.accounts.find((x) => x.id === dr.accountId);
       if (!acc) continue;
-      const amt = minorOf(dr.amount, acc.currency);
+      const currency = dr.kind === 'transfer' ? acc.currency : travelDraftDefaults(dr, travel, acc.currency, d.baseCurrency).currency;
+      const original = minorOf(dr.amount, currency);
+      const amt = convertMinor(original, currency, acc.currency, resolveRate(rates, currency, acc.currency)!);
       const before = W.balances.get(acc.id) ?? acc.balanceMinor;
       if (dr.kind === 'transfer') {
         const to = d.accounts.find((x) => x.id === dr.toAccountId);
@@ -1053,7 +1100,7 @@ function manageInboxTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
       } else {
         const after = before + (dr.kind === 'income' ? amt : -amt);
         W.balances.set(acc.id, after);
-        lines.push(`${dr.date}　${dr.note}　${dr.kind === 'income' ? '＋' : '－'}${fmt(amt, acc.currency)}　→「${acc.name}」`);
+        lines.push(`${dr.date}　${dr.note}　${dr.kind === 'income' ? '＋' : '－'}${fmt(original, currency)}${currency !== acc.currency ? `（約 ${fmt(amt, acc.currency)}）` : ''}　→「${acc.name}」`);
         touched.add(acc.id);
       }
     }
@@ -1062,8 +1109,9 @@ function manageInboxTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
     const acc = d.accounts.find((x) => x.id === id);
     if (acc) lines.push(balanceLine(acc, acc.balanceMinor, W.balances.get(id) ?? acc.balanceMinor, warnings));
   }
+  d.inbox = all.filter((e) => !bookable.includes(e));
   return {
-    op: { kind: 'inbox', action: 'book', entries: bookable },
+    op: { kind: 'inbox', action: 'book', entries: bookable, travelProjectId: d.travelProjectId ?? '' },
     preview: { tool, title: `把收件匣 ${bookable.length} 筆記帳`, lines, warnings, txCreated: bookable.reduce((s, e) => s + e.drafts.length, 0), accountsTouched: touched.size, accountIds: [...touched] },
   };
 }
@@ -1113,11 +1161,14 @@ function addDividendTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
   if (stock.currency !== d.baseCurrency) return blockedStep(tool, title, '外幣標的的股利請到投資頁記錄（需要匯率）');
   const per = num(a.per_share);
   if (!(per > 0)) return blockedStep(tool, title, '請說明每股股利（或每股配股數）');
-  const held = new Decimal(W.shares.get(stock.id) ?? d.holdings?.[stock.id] ?? 0);
-  if (held.lte(0)) return blockedStep(tool, title, `目前沒有「${stock.symbol}」的持股，請先記錄買進`);
   const kind = a.kind === 'stock' ? 'stock' : 'cash';
   const payDate = dateOrNull(a.pay_date) ?? d.today;
   const exDate = dateOrNull(a.ex_date) ?? payDate;
+  if (payDate < exDate) return blockedStep(tool, title, '發放日不能早於除息日');
+  const held = d.trades
+    ? computePosition(d.trades.filter((t) => t.stockId === stock.id && t.date < exDate), 'avg', currencyInfo(stock.currency).exp).shares
+    : new Decimal(W.shares.get(stock.id) ?? d.holdings?.[stock.id] ?? 0);
+  if (held.lte(0)) return blockedStep(tool, title, `除息日前沒有「${stock.symbol}」的持股，請確認除息日與歷史交易`);
   const status = payDate > d.today ? 'announced' : 'paid';
   const broker = d.accounts.find((x) => x.id === d.defaultBrokerageId && usableAcc(x)) ?? d.accounts.find((x) => usableAcc(x) && x.type === 'brokerage');
   const settle = broker?.brokerage?.settlementAccountId ? d.accounts.find((x) => x.id === broker.brokerage!.settlementAccountId && usableAcc(x)) : undefined;
@@ -1129,7 +1180,9 @@ function addDividendTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
   const withholding = cur === 'USD' ? Math.floor(gross * 0.3) : 0;
   // 與 repo/invest 的 nhiSupplement 相同：台股單次 ≥ 2 萬扣 2.11% 二代健保
   const nhi = cur === 'TWD' && gross >= 2_000_000 ? toMinor(new Decimal(gross).div(100).mul('0.0211').floor(), 'TWD') : 0;
-  const fee = cur === 'TWD' ? minorOf(10, cur) : 0;
+  const requestedFee = a.fee == null ? 0 : num(a.fee);
+  if (!Number.isFinite(requestedFee) || requestedFee < 0) return blockedStep(tool, title, '匯費必須是非負金額');
+  const fee = kind === 'cash' ? minorOf(requestedFee, cur) : 0;
   const net = Math.max(0, gross - withholding - nhi - fee);
   const warnings: string[] = [];
   const lines: string[] = [];
@@ -1145,7 +1198,10 @@ function addDividendTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
   } else {
     const extra = perD.mul(held).floor();
     lines.push(`每股配 ${per} 股 × ${held.toString()} 股 = 配 ${extra.toString()} 股（不足 1 股不記）`);
-    if (status === 'paid') W.shares.set(stock.id, (W.shares.get(stock.id) ?? held).plus(extra));
+    if (status === 'paid') {
+      W.shares.set(stock.id, (W.shares.get(stock.id) ?? held).plus(extra));
+      (d.trades ??= []).push({ id: `draft-dividend-${W.draftSeq++}`, stockId: stock.id, accountId: acc.id, type: 'stock_dividend', date: payDate, ts: new Date(`${payDate}T09:00:00`).getTime(), sharesDec: extra.toString(), priceDec: '0', feeMinor: 0, taxMinor: 0, fxRateDec: '1', isDCA: false, syncToLedger: false, note: '', createdAt: 0, updatedAt: 0 });
+    }
     lines.push('帳戶餘額：不受影響（配股只增加持股）');
   }
   lines.push(`除息日 ${exDate}、發放日 ${payDate}${status === 'announced' ? '（還沒發放，先記為已宣告，不入帳）' : ''}`);
@@ -1420,6 +1476,8 @@ export function resolvePlan(steps: RawStep[], data: AgentData): ResolvedStep[] {
     ...data,
     categories: [...data.categories],
     accounts: [...data.accounts],
+    goals: data.goals?.map((g) => ({ ...g })),
+    trades: data.trades ? [...data.trades] : undefined,
     recurring: data.recurring.map((r) => ({ ...r, pendingDates: [...r.pendingDates], template: { ...r.template } })),
     debts: (data.debts ?? []).map((x) => ({ ...x })),
     projects: [...(data.projects ?? [])],
@@ -1442,7 +1500,7 @@ export function resolvePlan(steps: RawStep[], data: AgentData): ResolvedStep[] {
       out.push(r);
     }
     else if (s.tool === 'add_rule') out.push(addRule(a, d, work));
-    else if (s.tool === 'add_transaction') out.push(addTransactionTool(a, d, W));
+    else if (s.tool === 'add_transaction') out.push(addTransactionTool(a, d, W, work));
     else if (s.tool === 'transfer') out.push(transferTool(a, d, W));
     else if (s.tool === 'add_debt') out.push(addDebtTool(a, d, W));
     else if (s.tool === 'settle_debt') out.push(settleDebtTool(a, d, W));
@@ -1450,8 +1508,8 @@ export function resolvePlan(steps: RawStep[], data: AgentData): ResolvedStep[] {
     else if (s.tool === 'buy_stock') out.push(tradeStockTool('buy', a, d, W));
     else if (s.tool === 'sell_stock') out.push(tradeStockTool('sell', a, d, W));
     else if (s.tool === 'show_view') out.push(showViewTool(a));
-    else if (s.tool === 'edit_transaction') out.push(editTxTool(a, d, work));
-    else if (s.tool === 'delete_transaction') out.push(deleteTxTool(a, d, work));
+    else if (s.tool === 'edit_transaction') out.push(editTxTool(a, d, work, W));
+    else if (s.tool === 'delete_transaction') out.push(deleteTxTool(a, d, work, W));
     else if (s.tool === 'add_category') out.push(addCategoryTool(a, d, W));
     else if (s.tool === 'add_account') out.push(addAccountTool(a, d, W));
     else if (s.tool === 'add_project') out.push(addProjectTool(a, d, W));
@@ -1469,6 +1527,7 @@ export function resolvePlan(steps: RawStep[], data: AgentData): ResolvedStep[] {
     else if (s.tool === 'edit_goal') out.push(editGoalTool(a, d, W));
     else out.push({ op: null, preview: { tool: 'reclassify', title: '不支援的操作', lines: [], warnings: [], blocked: `不支援的操作「${String(s.tool).slice(0, 20)}」` } });
   }
+  if (data.snapshot) for (const step of out) step.snapshot = data.snapshot;
   return out;
 }
 

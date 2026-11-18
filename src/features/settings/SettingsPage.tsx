@@ -92,7 +92,7 @@ function EncryptionSheet({ open, onClose }: { open: boolean; onClose: () => void
 function SyncRow() {
   const { phase, lastSyncAt, pending, error, oversizedItems } = useSync();
   const when = lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' }) : '';
-  const oversizedText = oversizedItems?.length ? ` · ${oversizedItems.length} 筆過大已略過` : '';
+  const oversizedText = oversizedItems?.length ? ` · ${oversizedItems.length} 筆過大待重試` : '';
   const sub = phase === 'error' ? error : `${SYNC_TEXT[phase]}${phase === 'idle' && when ? `（${when}）` : ''}${pending > 0 && phase !== 'syncing' ? ` · ${pending} 筆待上傳` : ''}${oversizedText}`;
   return (
     <button className="row" onClick={() => void syncNow()} disabled={phase === 'syncing'}>

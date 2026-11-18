@@ -16,11 +16,13 @@ describe('LINE 誤記防護', () => {
   it('朋友聊天提到金額不算官方通知', () => {
     expect(isTrustedLineNotice('晚餐 500 你先幫我付')).toBe(false);
     expect(isTrustedLineNotice('我剛用玉山刷了 1200')).toBe(false);
+    expect(isTrustedLineNotice('小明\n【LINE Pay】您已消費 100 元')).toBe(false);
+    expect(isTrustedLineNotice('【LINE Pay】您已消費 100 元')).toBe(false);
   });
 
   it('官方帳號的交易通知才放行', () => {
-    expect(isTrustedLineNotice('【LINE Pay】您已於 全家 消費 NT$85，付款成功')).toBe(true);
-    expect(isTrustedLineNotice('【國泰世華】您的信用卡於 7-ELEVEN 刷卡消費 120 元')).toBe(true);
+    expect(isTrustedLineNotice('LINE Pay\n您已於 全家 消費 NT$85，付款成功')).toBe(true);
+    expect(isTrustedLineNotice('國泰世華\n您的信用卡於 7-ELEVEN 刷卡消費 120 元')).toBe(true);
     expect(isTrustedLineNotice('【國泰世華】本月帳單已產生')).toBe(false);
   });
 
@@ -30,7 +32,7 @@ describe('LINE 誤記防護', () => {
   });
 
   it('官方 LINE 通知與非 LINE 來源照舊', () => {
-    expect(judgeNotice(n('LINE', '【LINE Pay】您已於 全家 消費 NT$85，付款成功'), true).trust).toBe('ok');
+    expect(judgeNotice(n('LINE', 'LINE Pay\n您已於 全家 消費 NT$85，付款成功'), true).trust).toBe('ok');
     expect(judgeNotice(n('LINE Pay', '付款 85 元'), true).trust).toBe('ok');
     expect(judgeNotice(n('國泰世華', '刷卡 120 元'), true).trust).toBe('ok');
     expect(judgeNotice(n('', '午餐 120', 'siri'), true).trust).toBe('ok');

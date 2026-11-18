@@ -12,7 +12,7 @@ import { shortDate } from '@/domain/nlp';
 import { todayKey } from '@/domain/period';
 import { deleteTransactions, deleteTransfers } from '@/db/repo/ledger';
 import {
-  ackInbox, bookInboxEntries, mergeDuplicate, loadInbox, SOURCE_LABEL, useInboxCount,
+  ackInbox, bookInboxEntries, mergeDuplicate, loadInbox, markDuplicates, SOURCE_LABEL, useInboxCount,
   type InboxEntry,
 } from '@/services/inbox';
 import { aiEnabledLocally, aiParseText } from '@/services/ai';
@@ -67,7 +67,7 @@ export default function InboxPage() {
     setBusy(true);
     try {
       const r = await bookInboxEntries(list);
-      snackUndo(`已記下 ${r.count} 筆${r.skipped ? `（${r.skipped} 筆已在其他裝置處理）` : ''}`, async () => {
+      snackUndo(`已記下 ${r.count} 筆${r.alreadyBooked ? `，${r.alreadyBooked} 則先前已入帳` : ''}${r.skipped ? `，${r.skipped} 則入帳失敗，保留待確認` : ''}${r.ackPending ? `，${r.ackPending} 則已儲存但尚待清除通知` : ''}`, async () => {
         if (r.txIds.length) await deleteTransactions(r.txIds);
         if (r.transferIds.length) await deleteTransfers(r.transferIds);
       });
@@ -98,9 +98,11 @@ export default function InboxPage() {
     if (!prev.some((x) => x.toLowerCase() === word.toLowerCase())) {
       st.set('inbox', { ...st.inbox, blacklist: [...prev, word] });
     }
-    await ackInbox([e.item.id]).catch(() => undefined);
-    snack(`已封鎖「${word}」`);
-    await reload();
+    try {
+      await ackInbox([e.item.id]);
+      snack(`已封鎖「${word}」並清除通知`);
+      await reload();
+    } catch (err) { snack(`已封鎖「${word}」，但通知尚未清除：${(err as Error).message}`); }
   };
 
   /** 規則看不懂的簡訊／通知：請 AI 解析成草稿（扣 1 點額度）。解析結果只改在畫面上，確認記帳才會寫入帳本 */
@@ -112,13 +114,17 @@ export default function InboxPage() {
       if (!drafts.length) { snack('Cilo 也看不出金額，請手動記'); return; }
       const fb = await fallbackAccount();
       const list = await Promise.all(drafts.map((d) => resolveDraft(d, fb)));
-      setEntries((l) => l?.map((x) => (x.item.id === e.item.id ? { ...x, drafts: list } : x)) ?? null);
+      const next = (entries ?? []).map((x) => ({ ...x, ...(x.item.id === e.item.id ? { drafts: list } : {}) }));
+      await markDuplicates(next);
+      setEntries(next);
       snack('AI 已解析，確認後按「記帳」');
     } catch (err) { snack((err as Error).message); } finally { setAiBusyId(null); }
   };
   const skip = async (e: InboxEntry) => {
-    await ackInbox([e.item.id]).catch((err) => snack((err as Error).message));
-    setEntries((l) => l?.filter((x) => x.item.id !== e.item.id) ?? null);
+    try {
+      await ackInbox([e.item.id]);
+      setEntries((l) => l?.filter((x) => x.item.id !== e.item.id) ?? null);
+    } catch (err) { snack(`略過失敗，通知仍保留：${(err as Error).message}`); }
   };
 
   const edit = (e: InboxEntry) => {
@@ -127,7 +133,7 @@ export default function InboxPage() {
     if (e.drafts.length > 1) useUI.getState().openAdd({ ...base, quickText: e.item.text });
     else if (d) {
       useUI.getState().openAdd({
-        ...base, mode: d.kind, amount: String(d.amount), date: d.date, accountId: d.accountId, toAccountId: d.toAccountId,
+        ...base, mode: d.kind, amount: String(d.amount), currency: d.currency, date: d.date, time: d.time, accountId: d.accountId, toAccountId: d.toAccountId,
         categoryId: d.categoryId, note: d.note, tagIds: d.tagIds.length ? d.tagIds : undefined, merchant: e.item.merchant || undefined,
       });
     } else useUI.getState().openAdd({ ...base, note: (e.item.merchant || e.item.text).slice(0, 200) });
@@ -206,7 +212,7 @@ export default function InboxPage() {
                     <span className="cat-icon sm" aria-hidden="true"><CatIcon icon={src.icon} size={16} /></span>
                     <span className="row-main">
                       <span className="row-title">{e.item.merchant || e.item.text.slice(0, 40) || '（沒有內容）'}</span>
-                      <span className="row-sub" style={{ whiteSpace: 'normal' }}>{src.label} · 看不懂金額，請手動記</span>
+                      <span className="row-sub" style={{ whiteSpace: 'normal' }}>{src.label} · {e.review || '看不懂金額，請手動記'}</span>
                     </span>
                     <span className="inbox-actions">
                       {aiEnabledLocally() && (e.item.text || e.item.merchant) && <button className="pill accent-pill" disabled={aiBusyId === e.item.id} onClick={() => void aiParse(e)}>{aiBusyId === e.item.id ? '解析中…' : <><AiMark /> Cilo 解析</>}</button>}

@@ -40,7 +40,7 @@ import { countRuleHit, recentNoteSuggestions, suggestCategory, type CategorySugg
 import { findPinned, listPinned, pinTransaction, touchPinned, unpin } from '@/db/repo/pinned';
 import { haptic } from '@/services/haptics';
 import type { NoteSuggestion } from '@/domain/notesuggest';
-import type { ResolvedDraft } from '@/services/quickentry';
+import { commitManualEntry, type ResolvedDraft } from '@/services/quickentry';
 import { QuickEntry } from './QuickEntry';
 
 /** 頂部只有 4 格：借貸裡再分借出（應收）／借入（應付）；餘額調整不是日常記帳，從帳戶頁的「調整餘額」進來才會多出一格 */
@@ -87,12 +87,12 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   const [mainOpen, setMainOpen] = useState<string>('');
   const [accountId, setAccountId] = useState(prefill?.accountId ?? '');
   const [toAccountId, setToAccountId] = useState(prefill?.toAccountId ?? '');
-  const [currency, setCurrency] = useState('');
+  const [currency, setCurrency] = useState(prefill?.currency ?? '');
   const [fxRate, setFxRate] = useState('');
   const [toAmount, setToAmount] = useState<string | null>(null);
   const [fee, setFee] = useState('');
   const [date, setDate] = useState(prefill?.date ?? (selectedDate || todayKey()));
-  const [time, setTime] = useState(nowTime());
+  const [time, setTime] = useState(prefill?.time ?? nowTime());
   const [note, setNote] = useState(prefill?.note ?? '');
   const [tagIds, setTagIds] = useState<string[]>(prefill?.tagIds ?? []);
   const [projectId, setProjectId] = useState(prefill?.projectId ?? (!editing && settings.travelModeProjectId ? settings.travelModeProjectId : ''));
@@ -333,10 +333,12 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   requestCloseRef.current = requestClose;
   const handleDelete = async () => {
     if (!(await confirmDeleteById(editTxId ? 'tx' : 'transfer', (editTxId ?? editTransferId)!))) return;
-    if (editTxId) void deleteTransactions([editTxId]).then(() => snackUndo('已刪除', () => restoreTransactions([editTxId])));
-    if (editTransferId) void deleteTransfers([editTransferId]).then(() => snackUndo('已刪除轉帳', () => restoreTransfers([editTransferId])));
-    saved.current = true;
-    onClose();
+    try {
+      if (editTxId) { await deleteTransactions([editTxId]); snackUndo('已刪除', () => restoreTransactions([editTxId])); }
+      if (editTransferId) { await deleteTransfers([editTransferId]); snackUndo('已刪除轉帳', () => restoreTransfers([editTransferId])); }
+      saved.current = true;
+      onClose();
+    } catch (e) { useUI.getState().showSnack({ text: (e as Error).message }); }
   };
 
   /** 餘額調整的基準餘額：編輯同一帳戶時扣回原本的差額 */
@@ -362,22 +364,32 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
     const ts = new Date(`${date}T${time || '12:00'}:00`).getTime();
     setBusy(true);
     try {
+      let notify = () => {};
+      const sourceId = !editing && prefill?.inboxId ? `inbox-${prefill.inboxId}` : undefined;
+      const manualSplit = mode === 'expense' && !editing && split.people.length ? computeSplit(toMinor(v, txCurrency), split, txCurrency) : null;
+      if (manualSplit?.error) throw new Error(manualSplit.error);
+      const shape = loan ? (loanViaAccount ? ['transactions', 'debts'] : ['debts']) : mode === 'transfer' ? ['transfers']
+        : manualSplit && split.payer !== undefined ? ['debts']
+          : ['transactions', ...(manualSplit?.shares.some((s) => s.minor > 0) ? [`split:${manualSplit.shares.filter((s) => s.minor > 0).length}`] : []), ...(mode === 'expense' && durableYears > 0 ? ['durable'] : [])];
+      const created = await commitManualEntry(sourceId, async () => {
       if (loan) {
         const amt = toMinor(v, txCurrency);
         const res = await addLoan({
+          id: sourceId ? `${sourceId}-0` : undefined,
           direction: mode === 'receivable' ? 'they_owe_me' : 'i_owe_them', personName: personName.trim(),
           amountMinor: amt, currency: txCurrency, date, ts, note, accountId: loanViaAccount ? account!.id : undefined,
         });
         const who = personName.trim();
-        snackUndo(mode === 'receivable' ? `已記下 ${who} 欠你 ${formatMoney(amt, txCurrency)}` : `已記下你欠 ${who} ${formatMoney(amt, txCurrency)}`,
+        notify = () => snackUndo(mode === 'receivable' ? `已記下 ${who} 欠你 ${formatMoney(amt, txCurrency)}` : `已記下你欠 ${who} ${formatMoney(amt, txCurrency)}`,
           () => removeLoan(res.debtId));
       } else if (mode === 'transfer') {
-        if (!toAccount) { useUI.getState().showSnack({ text: '請選擇轉入帳戶' }); return; }
-        if (toAccount.id === account!.id) { useUI.getState().showSnack({ text: '轉出與轉入帳戶不能相同' }); return; }
+        if (!toAccount) throw new Error('請選擇轉入帳戶');
+        if (toAccount.id === account!.id) throw new Error('轉出與轉入帳戶不能相同');
         const fromMinorAmt = toMinor(v, account!.currency);
         const toStr = needRate ? ((toAmount !== null ? toAmount : computedToAmount)) : v.toString();
-        if (needRate && !toStr) { useUI.getState().showSnack({ text: '請輸入匯率或轉入金額' }); return; }
+        if (needRate && !toStr) throw new Error('請輸入匯率或轉入金額');
         const input = {
+          id: prefill?.inboxId ? `inbox-${prefill.inboxId}-0` : undefined,
           fromAccountId: account!.id, toAccountId: toAccount.id, fromAmountMinor: fromMinorAmt,
           toAmountMinor: toMinor(toStr, toAccount.currency), fxRateDec: needRate ? fxRate : undefined,
           feeMinor: fee ? toMinor(evaluate(fee) ?? 0, account!.currency) : 0,
@@ -386,7 +398,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         if (editTransferId) await updateTransfer(editTransferId, input);
         else {
           const tr = await addTransfer(input);
-          snackUndo('已新增轉帳', () => deleteTransfers([tr.id]));
+          notify = () => snackUndo('已新增轉帳', () => deleteTransfers([tr.id]));
         }
       } else {
         const acc = account!;
@@ -397,9 +409,10 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
           catId = 'sys-adjust';
           // 輸入的永遠是「調整後餘額」；差額 = 目標 − 基準（編輯時基準需扣回這筆原本的差額）
           amt = toMinor(v, acc.currency) - adjustBaseline(acc);
-          if (amt === 0) { useUI.getState().showSnack({ text: editTxId ? '差額為 0，若不需要這筆調整請直接刪除' : '餘額沒有變化' }); return; }
-        } else if (!catId) { useUI.getState().showSnack({ text: '請選擇分類' }); return; }
+          if (amt === 0) throw new Error(editTxId ? '差額為 0，若不需要這筆調整請直接刪除' : '餘額沒有變化');
+        } else if (!catId) throw new Error('請選擇分類');
         const input = {
+          id: prefill?.inboxId ? `inbox-${prefill.inboxId}-0` : undefined,
           type, accountId: acc.id, categoryId: catId, amountMinor: amt,
           currency: mode === 'adjust' ? acc.currency : txCurrency,
           fxRateDec: needRate && mode !== 'adjust' ? fxRate || undefined : undefined,
@@ -407,9 +420,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
           ...(mode === 'expense' ? { excludeFromBudget: skipBudget } : {}),
           ...(editTxId ? {} : { merchant: prefill?.merchant, invoiceNo: prefill?.invoiceNo }),
         };
-        if (autoCat?.ruleId && autoCat.categoryId === catId) void countRuleHit(autoCat.ruleId).catch(() => undefined);
         const sp = mode === 'expense' && !editTxId && split.people.length ? computeSplit(amt, split, txCurrency) : null;
-        if (sp?.error) { useUI.getState().showSnack({ text: sp.error }); return; }
+        if (sp?.error) throw new Error(sp.error);
         if (editTxId) {
           const saved = await updateTransaction(editTxId, input);
           if (mode === 'expense') {
@@ -420,44 +432,48 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         }
         else if (sp && split.payer !== undefined) {
           // 別人先付：不動我的帳戶，只記一筆「我欠先付的人」我的份額；還款時才記為支出（分類沿用這筆的分類）
-          if (sp.myShare <= 0) { useUI.getState().showSnack({ text: '你的份額是 0，不用記這筆' }); return; }
+          if (sp.myShare <= 0) throw new Error('你的份額是 0，不用記這筆');
           const payer = await findOrCreatePerson(split.payer);
           const debtIds = await addDebts([{
-            personId: payer.id, direction: 'i_owe_them', amountMinor: sp.myShare, currency: txCurrency, categoryId: catId,
-            groupId: crypto.randomUUID(), date, note: note || catMap.get(catId)?.name || '分帳',
+            id: input.id, personId: payer.id, direction: 'i_owe_them', amountMinor: sp.myShare, currency: txCurrency, categoryId: catId,
+            groupId: input.id ?? crypto.randomUUID(), date, note: note || catMap.get(catId)?.name || '分帳',
           }]);
-          setSplit({ mode: split.mode, people: [] });
-          snackUndo(`已記下欠 ${payer.name} ${formatMoney(sp.myShare, txCurrency)}（還款時記為支出）`, async () => { await db.debts.bulkDelete(debtIds); });
+          notify = () => snackUndo(`已記下欠 ${payer.name} ${formatMoney(sp.myShare, txCurrency)}（還款時記為支出）`, async () => { await db.debts.bulkDelete(debtIds); });
         } else {
           const tx = await addTransaction(sp ? { ...input, split: { myShareMinor: sp.myShare, debtIds: [] } } : input);
           if (sp) {
             // 其他人各產生一筆「對方欠我」
             const rows = [];
-            for (const sh of sp.shares.filter((x) => x.minor > 0)) {
+            for (const [i, sh] of sp.shares.filter((x) => x.minor > 0).entries()) {
               const person = await findOrCreatePerson(sh.name);
-              rows.push({ personId: person.id, direction: 'they_owe_me' as const, amountMinor: sh.minor, currency: txCurrency, transactionId: tx.id, groupId: tx.id, date, note: note || catMap.get(catId)?.name || '分帳' });
+              rows.push({ id: `${tx.id}-debt-${i}`, personId: person.id, direction: 'they_owe_me' as const, amountMinor: sh.minor, currency: txCurrency, transactionId: tx.id, groupId: tx.id, date, note: note || catMap.get(catId)?.name || '分帳' });
             }
             const debtIds = await addDebts(rows);
             await db.transactions.update(tx.id, { split: { myShareMinor: sp.myShare, debtIds } });
-            setSplit({ mode: split.mode, people: [] });
           }
           // 標記為耐用品：用這筆支出的購入日與金額（分帳只算我的份額）建立一筆耐用品，開始算每日持有成本
           let durableId = '';
           if (mode === 'expense' && durableYears > 0) {
             const cat = catMap.get(catId);
             const d = await addDurable({
-              name: note.trim() || cat?.name || '耐用品', icon: cat?.icon || '📦', purchaseDate: date, currency: settings.baseCurrency, lifeYears: durableYears, txId: tx.id,
+              id: `durable-${tx.id}`, name: note.trim() || cat?.name || '耐用品', icon: cat?.icon || '📦', purchaseDate: date, currency: settings.baseCurrency, lifeYears: durableYears, txId: tx.id,
               costMinor: sp ? Math.round((tx.baseAmountMinor * sp.myShare) / Math.max(1, tx.amountMinor)) : tx.baseAmountMinor,
             });
             durableId = d.id;
           }
-          snackUndo(mode === 'adjust' ? '已調整餘額' : `已記下 ${formatMoney(tx.amountMinor, tx.currency)}${sp ? `（我的份額 ${formatMoney(sp.myShare, tx.currency)}）` : ''}${durableId ? '，已加入耐用品追蹤' : ''}`,
+          notify = () => snackUndo(mode === 'adjust' ? '已調整餘額' : `已記下 ${formatMoney(tx.amountMinor, tx.currency)}${sp ? `（我的份額 ${formatMoney(sp.myShare, tx.currency)}）` : ''}${durableId ? '，已加入耐用品追蹤' : ''}`,
             async () => { await deleteTransactions([tx.id]); if (sp) await db.debts.where('transactionId').equals(tx.id).delete(); if (durableId) await db.durables.delete(durableId); });
         }
+        if (!editing && autoCat?.ruleId && autoCat.categoryId === catId) await countRuleHit(autoCat.ruleId);
       }
+      }, shape);
+      if (created) {
+        notify();
+        if (!editing) setSplit({ mode: split.mode, people: [] });
+      } else useUI.getState().showSnack({ text: '這則通知已入帳，本次未重複新增' });
       if (account) settings.set('lastAccountId', account.id);
       if (prefill?.inboxId && !editing) {
-        void import('@/services/inbox').then((m) => m.finishInboxItem(prefill.inboxId!, { card: prefill.inboxCard, accountId: account?.id })).catch(() => undefined);
+        void import('@/services/inbox').then((m) => m.finishInboxItem(prefill.inboxId!, { card: prefill.inboxCard, accountId: account?.id })).catch(() => useUI.getState().showSnack({ text: '帳目已儲存，通知尚未清除；重新整理後可重試，不會重複入帳' }));
       }
       if (!editing && settings.continuousAdd && !prefill?.inboxId) {
         // 再記一筆：保留分類／帳戶／日期，清空金額與備註
@@ -705,10 +721,10 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
           <div className="add-layout">
             <div className="add-scroll">
               {!editing && prefill?.quickText && (
-                <QuickEntry initialText={prefill?.quickText} accMap={accMap} catMap={catMap} onApply={applyDraft}
+                <QuickEntry initialText={prefill?.quickText} sourceId={prefill?.inboxId ? `inbox-${prefill.inboxId}` : undefined} accMap={accMap} catMap={catMap} onApply={applyDraft}
                   onBooked={() => {
                     saved.current = true;
-                    if (prefill?.inboxId) void import('@/services/inbox').then((m) => m.finishInboxItem(prefill.inboxId!, {})).catch(() => undefined);
+                    if (prefill?.inboxId) void import('@/services/inbox').then((m) => m.finishInboxItem(prefill.inboxId!, {})).catch(() => useUI.getState().showSnack({ text: '帳目已儲存，通知尚未清除；重新整理後可重試，不會重複入帳' }));
                     onClose();
                   }} />
               )}

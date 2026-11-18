@@ -2,12 +2,13 @@
 
 - 權杖格式 clr_ 加 32 個隨機字元，資料庫只存 SHA-256；建立時回傳一次，之後只顯示末四碼
 - 權杖只能「送進收件匣」，不能讀取任何帳目
-- 確認（ack）時才刪除，並回傳實際刪除的 id：兩台裝置同時確認同一筆，只有一台會記帳
+- 確認（ack）時才刪除，並回傳實際刪除的 id；帳目寫入與防重複由客戶端處理
 - 30 天沒處理的項目自動清除；每人最多 500 筆待處理、10 組權杖
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import secrets
 from datetime import timedelta
@@ -17,8 +18,9 @@ from sqlalchemy.orm import Session
 
 from app.core.request_info import ClientInfo
 from app.core.security import utcnow
-from app.model import InboxItem, InboxToken, User
-from app.schema.inbox import HookItem
+from app.model import InboxBooking, InboxItem, InboxToken, User
+from app.repository.sync_repository import SyncRepository
+from app.schema.inbox import BookingRequest, HookItem
 from app.service.audit_service import AuditService
 from app.service.errors import ServiceError
 
@@ -28,13 +30,12 @@ MAX_PENDING = 500
 RETENTION = timedelta(days=30)
 
 _HARD_NOISE_RE = re.compile(
-    r"驗證碼|動態密碼|安全碼|驗證密碼|\bOTP\b|登入成功|成功登入|登入通知|裝置登入|密碼變更|修改密碼"
-    r"|立即登錄|登錄活動|參加抽獎|申請信貸|信貸專案|貸款試算"
-    r"|手續費優惠|手續費折抵|免收手續費|帳單已產|電子帳單|繳款提醒|繳費提醒|對帳單",
+    r"驗證碼|動態密碼|安全碼|驗證密碼|\bOTP\b|登入成功|成功登入|登入通知|裝置登入|密碼變更|修改密碼",
     re.IGNORECASE,
 )
 _PROMO_NOISE_RE = re.compile(
-    r"雙11|雙十一|雙12|雙十二|購物節|滿額抽|抽好禮|回饋送|限時特惠|好康優惠|專屬優惠|刷卡金回饋|行銷活動|紅利點數|折抵活動",
+    r"雙11|雙十一|雙12|雙十二|購物節|滿額抽|抽好禮|回饋送|限時特惠|好康優惠|專屬優惠|刷卡金回饋|行銷活動|紅利點數|折抵活動"
+    r"|立即登錄|登錄活動|參加抽獎|申請信貸|信貸專案|貸款試算|手續費優惠|手續費折抵|免收手續費|帳單已產|電子帳單|繳款提醒|繳費提醒|對帳單",
     re.IGNORECASE,
 )
 _TX_SIGNAL_RE = re.compile(
@@ -42,6 +43,11 @@ _TX_SIGNAL_RE = re.compile(
     re.IGNORECASE,
 )
 _DIGIT_RE = re.compile(r"\d")
+_ACTUAL_TX_RE = re.compile(
+    r"(?:消費|刷卡|付款|扣款|扣帳|簽帳|交易|轉帳|轉出|轉入|入帳|存入|匯款|提款|支付|儲值|退款)"
+    r"(?:成功|完成)?(?:金額)?\s*[:：]?\s*(?:(?:NT\$|NTD|TWD|USD|JPY|EUR|HKD)\s*[\d,]+|[\d,]+(?:\.\d+)?\s*元)",
+    re.IGNORECASE,
+)
 
 
 def is_noise_notification(body: HookItem) -> bool:
@@ -53,10 +59,10 @@ def is_noise_notification(body: HookItem) -> bool:
         return True
     if _HARD_NOISE_RE.search(combined):
         return True
+    if _PROMO_NOISE_RE.search(combined) and not _ACTUAL_TX_RE.search(combined):
+        return True
     if _TX_SIGNAL_RE.search(combined) and _DIGIT_RE.search(combined):
         return False
-    if _PROMO_NOISE_RE.search(combined):
-        return True
     return True
 
 
@@ -115,6 +121,22 @@ class InboxService:
     def items(self, user: User) -> list[InboxItem]:
         self.db.execute(delete(InboxItem).where(InboxItem.user_id == user.id, InboxItem.created_at < utcnow() - RETENTION))
         return list(self.db.scalars(select(InboxItem).where(InboxItem.user_id == user.id).order_by(InboxItem.id.desc()).limit(MAX_PENDING)).all())
+
+    def reserve_booking(self, user: User, body: BookingRequest) -> None:
+        SyncRepository(self.db).reserve_seq(user.id, 0)
+        shape = json.dumps(body.shape, separators=(",", ":"))
+        existing = self.db.get(InboxBooking, body.id)
+        if existing:
+            if existing.user_id != user.id:
+                raise ServiceError(404, "找不到這則通知")
+            if existing.shape != shape:
+                raise ServiceError(409, "這則通知已登記不同的記帳方式，請先同步確認，或用原方式重試")
+            return
+        item = self.db.get(InboxItem, body.id)
+        if not item or item.user_id != user.id:
+            raise ServiceError(409, "通知已清除，請先同步帳本確認，不要再次新增")
+        self.db.add(InboxBooking(item_id=body.id, user_id=user.id, shape=shape))
+        self.db.flush()
 
     def ack(self, user: User, ids: list[int]) -> list[int]:
         # DELETE … RETURNING：同時確認時只有真正刪到的那一方會拿到 id

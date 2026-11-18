@@ -30,9 +30,9 @@ interface Props {
 export async function deleteItem(item: LedgerItem) {
   if (!(await confirmDelete(await withTransferBase(item.kind === 'tx' ? { tx: item.tx } : { tr: item.tr })))) return;
   if (item.kind === 'tx') {
-    void deleteTransactions([item.id]).then(() => snackUndo('已刪除 1 筆', () => restoreTransactions([item.id])));
+    void deleteTransactions([item.id]).then(() => snackUndo('已刪除 1 筆', () => restoreTransactions([item.id]))).catch((e: Error) => useUI.getState().showSnack({ text: e.message }));
   } else {
-    void deleteTransfers([item.id]).then(() => snackUndo('已刪除轉帳', () => restoreTransfers([item.id])));
+    void deleteTransfers([item.id]).then(() => snackUndo('已刪除轉帳', () => restoreTransfers([item.id]))).catch((e: Error) => useUI.getState().showSnack({ text: e.message }));
   }
 }
 

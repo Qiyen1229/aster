@@ -19,19 +19,20 @@ describe('收件匣標出重複', () => {
     await db.accounts.add({ id: 'a1', name: '玉山', type: 'bank', currency: 'TWD' } as never);
   });
 
-  it('Apple Pay 與簡訊在 15 分鐘內通知同一筆 → 後者確定重複', async () => {
+  it('Apple Pay 與簡訊接近時間的相同消費只提示，不自動確定重複', async () => {
     const a = entry(raw(1, 'applepay', '2026-10-27 04:00:00', { merchant: '全聯' }));
     const b = entry(raw(2, 'sms', '2026-10-27 04:02:00', { merchant: '全聯福利中心' }));
     await markDuplicates([a, b], '2026-10-27');
     expect(a.dup).toBeUndefined();
-    expect(b.dup).toMatchObject({ from: 'inbox', inboxId: 1, level: 'strong', certain: true });
+    expect(b.dup).toMatchObject({ from: 'inbox', inboxId: 1, level: 'strong' });
+    expect(b.dup?.certain).toBeUndefined();
   });
 
   it('同來源、隔很久的相同金額 → 不是確定重複', async () => {
     const a = entry(raw(1, 'applepay', '2026-10-27 01:00:00'));
     const b = entry(raw(2, 'applepay', '2026-10-27 09:00:00'));
     await markDuplicates([a, b], '2026-10-27');
-    expect(b.dup?.certain).toBe(false);
+    expect(b.dup?.certain).toBeUndefined();
   });
 
   it('帳本已有同金額同店名 → 很可能重複，不是確定', async () => {

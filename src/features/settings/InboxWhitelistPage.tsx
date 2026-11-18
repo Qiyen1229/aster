@@ -11,11 +11,12 @@ import { useNavigate } from 'react-router-dom';
 import { useAccounts, useCategories } from '@/app/hooks';
 import { db } from '@/db/schema';
 import { deleteRule } from '@/services/autocat';
-import { previewAutoBook } from '@/services/inbox';
+import { previewAutoBook, SOURCE_LABEL, type InboxRaw } from '@/services/inbox';
 import { useSettings } from '@/stores/settings';
-import { askInput, useUI } from '@/stores/ui';
+import { ask, askInput, useUI } from '@/stores/ui';
+import { formatMoney, toMinor } from '@/domain/money';
 import { EmptyState, Segmented } from '@/ui/controls';
-import { AccountField, SwitchField } from '@/ui/form';
+import { AccountField, SelectField, SwitchField, TextField } from '@/ui/form';
 import { Icon, iconEmoji } from '@/ui/Icon';
 import { blankRule, RULE_MATCH_LABEL, RuleEditorSheet, ruleTargetSummary, type RuleDraft } from './RuleEditorSheet';
 
@@ -36,6 +37,10 @@ export default function InboxWhitelistPage() {
   const [name, setName] = useState('');
   const [blockWord, setBlockWord] = useState('');
   const [testText, setTestText] = useState('');
+  const [testCard, setTestCard] = useState('');
+  const [testMerchant, setTestMerchant] = useState('');
+  const [testAmount, setTestAmount] = useState('');
+  const [testSource, setTestSource] = useState<InboxRaw['source']>('notify');
   const [testResult, setTestResult] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
 
@@ -51,20 +56,18 @@ export default function InboxWhitelistPage() {
   const runPreview = async () => {
     const q = testText.trim();
     if (!q) return;
-    const r = await previewAutoBook(q);
-    if (r.verdict.trust === 'drop') {
-      setTestResult('🚫 會被黑名單或聊天過濾直接忽略（不進收件匣）');
-      return;
-    }
-    if (!r.drafts.length) {
-      setTestResult('📥 看不懂金額，會留在收件匣等你手動記帳');
-      return;
-    }
-    const d = r.drafts[0];
-    const catName = d.categoryId ? (catMap.get(d.categoryId)?.name ?? '未分類') : '轉帳';
-    const accName = accMap.get(d.accountId)?.name ?? '預設帳戶';
-    const modeLabel = (cfg.autoBook || r.whitelisted) && r.verdict.trust === 'ok' ? '⚡ 直接自動入帳' : '📥 留在收件匣待確認';
-    setTestResult(`${modeLabel} →「${d.note}」· $${d.amount} · ${catName} · ${accName}`);
+    try {
+      const r = await previewAutoBook(q, testCard, testMerchant, { source: testSource, amount: testAmount });
+      if (r.verdict.trust === 'drop') { setTestResult('會被黑名單或聊天過濾忽略'); return; }
+      if (!r.drafts.length) { setTestResult('本機解析看不懂金額，需手動確認或另用 AI 解析'); return; }
+      const modeLabel = r.dup?.level === 'strong' ? '疑似與帳本重複，需確認' : (cfg.autoBook || r.whitelisted) && r.verdict.trust === 'ok' ? '符合本機自動入帳條件' : '留在收件匣待確認';
+      const details = r.drafts.map((d) => {
+        const currency = d.currency ?? accMap.get(d.accountId)?.currency ?? 'TWD';
+        const catName = d.categoryId ? (catMap.get(d.categoryId)?.name ?? '未分類') : '轉帳';
+        return `「${d.note || catName}」· ${formatMoney(toMinor(d.amount, currency), currency)} · ${catName} · ${accMap.get(d.accountId)?.name ?? '未選帳戶'}`;
+      });
+      setTestResult(`${modeLabel} → ${details.join('；')}`);
+    } catch (e) { setTestResult(`試跑失敗：${(e as Error).message}`); }
   };
 
   const add = () => {
@@ -142,7 +145,7 @@ export default function InboxWhitelistPage() {
       {tab === 'white' && (
         <section aria-label="白名單管理">
           <div className="card" style={{ marginBottom: 10, padding: '10px 14px', fontSize: '0.84rem', color: 'var(--text-2)', borderLeft: '3px solid var(--success)' }}>
-            ✅ <b>直接放行入帳</b>：以下發送者、LINE 官方帳號或關鍵字命中時，通知會直接記帳，不需手動確認。
+            <b>信任指定來源</b>：比對發送者或卡片名稱，不比對通知內文；金額明確且未被標示為疑似重複時才自動記帳。
           </div>
           <div className="list" style={{ marginBottom: 10 }}>
             <div className="field">
@@ -171,7 +174,7 @@ export default function InboxWhitelistPage() {
                 <div key={`${n}-${idx}`} className="row">
                   <span className="row-main">
                     <span className="row-title">✅ {n}</span>
-                    <span className="row-sub">名稱或內容符合時直接記帳</span>
+                    <span className="row-sub">發送者或卡片名稱完全相符時套用</span>
                   </span>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button className="pill" onClick={() => void edit(n, idx)}>編輯</button>
@@ -246,7 +249,7 @@ export default function InboxWhitelistPage() {
                   </span>
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button type="button" className="pill" onClick={() => setRuleDraft({ ...r })}>編輯</button>
-                    <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => void deleteRule(r.id).then(() => snack('已刪除規則'))}>移除</button>
+                    <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={async () => { if (await ask(`刪除「${r.keyword}」這條規則？`)) { await deleteRule(r.id); snack('已刪除規則'); } }}>移除</button>
                   </div>
                 </div>
               ))}
@@ -258,6 +261,13 @@ export default function InboxWhitelistPage() {
       {tab === 'tools' && (
         <section aria-label="試跑與卡片對應">
           <div className="section-title" style={{ marginTop: 4 }}>規則試跑測試</div>
+          <div className="list">
+            <SelectField label="通知來源" value={testSource} onChange={setTestSource} options={Object.entries(SOURCE_LABEL).map(([value, s]) => ({ value: value as InboxRaw['source'], label: s.label }))} />
+            <TextField label="卡片／App" value={testCard} onChange={setTestCard} placeholder="例如 LINE；發送者標題放在通知第一行" />
+            <TextField label="商家" value={testMerchant} onChange={setTestMerchant} placeholder="選填" />
+            <TextField label="獨立金額欄" value={testAmount} onChange={setTestAmount} placeholder="選填，例如 USD 100" />
+          </div>
+          <p className="muted" style={{ fontSize: '0.8rem' }}>僅試跑本機解析、來源規則與帳本重複提醒，不送出帳目、不呼叫 AI；不含伺服器過濾、其他待確認通知或匯率入帳驗證。</p>
           <div className="card" style={{ marginBottom: 14 }}>
             <div style={{ display: 'flex', gap: 8 }}>
               <input
@@ -321,9 +331,9 @@ export default function InboxWhitelistPage() {
               <p style={{ margin: 0 }}>白名單裡的發送者，通知會<b>直接記帳、不用手動確認</b>——即使沒有開啟「看得懂的直接記帳」。</p>
               <div className="card" style={{ margin: 0, background: 'var(--surface-2)' }}>
                 <p style={{ margin: 0, fontSize: '0.88rem', lineHeight: 1.55 }}>
-                  <b>比對方式（名稱或內容皆可）：</b><br />
-                  只要「發送者／LINE 官方帳號／卡片名稱」或「通知內容／商家」其中一項包含該名稱就算命中（不分大小寫與全半形）。<br />
-                  例如 LINE 官方帳號名稱為「中國信託」，加入「中國信託」後，名字符合的通知就會直接入帳。
+                  <b>比對方式（來源名稱完全相符）：</b><br />
+                  比對捷徑提供的發送者、卡片或 App 名稱，不分大小寫與全半形；內文或商家提到銀行名稱不會命中。<br />
+                  LINE 使用通知第一行的發送者標題，缺少標題時保留待確認。這是來源欄位比對，不是銀行身分驗證。
                 </p>
               </div>
               <p className="muted" style={{ margin: 0, fontSize: '0.82rem' }}>請只加入你信任的發送者；看不懂金額或疑似重複的項目仍會留在收件匣等你確認。</p>

@@ -15,20 +15,49 @@ function fakeServer() {
   type Rec = { table: string; key: string; updated_at: number; deleted: boolean; payload: unknown; seq: number; device: string };
   const recs = new Map<string, Rec>();
   let seq = 0;
-  const state = { purged: 0, clockAhead: 0, e2ee: null as null | Record<string, unknown> };
+  const state = { purged: 0, clockAhead: 0, keyVersion: 0, e2ee: null as null | Record<string, unknown> };
+  let migration: { migration_id: string; expected_version: number; cursor: number; enabled: boolean; salt: string; iterations: number; check: string } | null = null;
+  const staged = new Map<string, Rec>();
   const handle = async (url: string, init?: RequestInit) => {
     const u = new URL(url, 'http://x');
     const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
-    if (u.pathname === '/api/sync/status') return json({ enabled: true, protocol_version: 3, records: recs.size, cursor: seq, server_time: Date.now() + state.clockAhead, e2ee: state.e2ee });
+    if (u.pathname === '/api/sync/status') return json({ enabled: true, protocol_version: 4, records: recs.size, cursor: seq, server_time: Date.now() + state.clockAhead, e2ee: state.e2ee, key_version: state.keyVersion });
+    const conflict = () => new Response(JSON.stringify({ detail: '同步資料已變更' }), { status: 409 });
+    if (u.pathname === '/api/sync/keys/migration') {
+      const b = JSON.parse(String(init!.body));
+      if (init?.method === 'POST') {
+        if (b.expected_version !== state.keyVersion || b.cursor !== seq) return conflict();
+        if (migration?.migration_id !== b.migration_id) staged.clear();
+        migration = b;
+      } else {
+        if (!migration || migration.migration_id !== b.migration_id || migration.cursor !== seq || migration.expected_version !== state.keyVersion) return conflict();
+        for (const c of b.changes) staged.set(`${c.table}|${c.key}`, c);
+      }
+      return json({ ok: true });
+    }
+    if (u.pathname === '/api/sync/keys/migration/commit') {
+      const b = JSON.parse(String(init!.body));
+      if (!migration || migration.migration_id !== b.migration_id || migration.cursor !== seq || migration.expected_version !== state.keyVersion) return conflict();
+      const live = [...recs.entries()].filter(([, r]) => !r.deleted);
+      if (live.some(([k]) => !staged.has(k))) return conflict();
+      for (const [k, r] of live) recs.set(k, { ...r, payload: staged.get(k)!.payload, seq: ++seq, device: '' });
+      state.keyVersion++;
+      state.e2ee = migration.enabled ? { enabled: true, salt: migration.salt, check: migration.check, iterations: migration.iterations, version: state.keyVersion } : null;
+      migration = null;
+      staged.clear();
+      return json({ enabled: true, protocol_version: 4, records: recs.size, cursor: seq, e2ee: state.e2ee, key_version: state.keyVersion });
+    }
     if (u.pathname === '/api/sync/keys') {
       if (init?.method === 'PUT') {
         const b = JSON.parse(String(init.body));
-        state.e2ee = b.enabled ? { ...b, version: ((state.e2ee?.version as number) ?? 0) + 1 } : null;
+        state.keyVersion++;
+        state.e2ee = b.enabled ? { ...b, version: state.keyVersion } : null;
       }
       return json(state.e2ee);
     }
     if (u.pathname === '/api/sync/push') {
       const body = JSON.parse(String(init!.body));
+      if ((body.key_version ?? 0) !== state.keyVersion) return conflict();
       const rejected: unknown[] = [];
       let accepted = 0;
       for (const c of body.changes) {
@@ -43,8 +72,9 @@ function fakeServer() {
     if (u.pathname === '/api/sync/pull') {
       const since = Number(u.searchParams.get('since')), dev = u.searchParams.get('device_id');
       if (since > 0 && since < state.purged) return json({ changes: [], cursor: since, has_more: false, reset: true });
-      const rows = [...recs.values()].filter((r) => r.seq > since).sort((a, b) => a.seq - b.seq);
-      return json({ changes: rows.filter((r) => r.device !== dev), cursor: rows.length ? rows.at(-1)!.seq : since, has_more: false });
+      const limit = Number(u.searchParams.get('limit') ?? 500);
+      const rows = [...recs.values()].filter((r) => r.seq > since).sort((a, b) => a.seq - b.seq).slice(0, limit);
+      return json({ changes: rows.filter((r) => r.device !== dev), cursor: rows.length ? rows.at(-1)!.seq : Math.max(seq, since), has_more: rows.length === limit });
     }
     return new Response('{}', { status: 404 });
   };
@@ -67,7 +97,8 @@ describe('跨裝置同步', () => {
   beforeEach(async () => {
     server = fakeServer();
     vi.stubGlobal('fetch', (url: string, init?: RequestInit) => server.handle(url, init));
-    vi.stubGlobal('document', { cookie: 'csrf_token=t', visibilityState: 'visible', addEventListener() {}, removeEventListener() {} });
+    vi.stubGlobal('document', { cookie: 'csrf_token=t', visibilityState: 'visible', documentElement: { dataset: {}, style: {} }, querySelectorAll: () => [], addEventListener() {}, removeEventListener() {} });
+    vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
     sync = await import('@/services/sync');
     for (const n of ['phone', 'laptop']) { await openUserDatabase(n); await db.delete(); }
   });
@@ -273,7 +304,7 @@ describe('跨裝置同步', () => {
     await check();
   });
 
-  it('單筆 >250KB 過大資料自佇列剔除，發出提示通知且其餘筆數正常同步', async () => {
+  it('單筆過大資料保留佇列，提示待重試且其他資料正常同步', async () => {
     const { useUI } = await import('@/stores/ui');
     const snackSpy = vi.fn();
     useUI.setState({ showSnack: snackSpy });
@@ -298,8 +329,9 @@ describe('跨裝置同步', () => {
     await sync.syncNow();
 
     // 驗證：
-    // 1. 過大筆從 outbox 剔除
-    expect(await db.sync_outbox.count()).toBe(0);
+    expect(await db.sync_outbox.count()).toBe(1);
+    expect(sync.useSync.getState().phase).toBe('error');
+    expect(sync.useSync.getState().pending).toBe(1);
     // 2. 使用者收到 snack 提示
     expect(snackSpy).toHaveBeenCalled();
     expect(snackSpy.mock.calls[0][0].text).toContain('資料過大無法同步');
@@ -309,6 +341,106 @@ describe('跨裝置同步', () => {
     expect([...server.recs.values()].some((r) => (r.payload as any)?.note === '正常帳目')).toBe(true);
     // 5. 過大帳目未進入伺服器
     expect([...server.recs.values()].some((r) => (r.payload as any)?.note === bigString)).toBe(false);
+  });
+
+  it('容量與筆數額度不足時保留正常項目，額度恢復後可重試', async () => {
+    await useDevice('phone');
+    await bootstrap(); await sync.syncNow();
+    await saveSetting('baseCurrency', 'JPY');
+    const handle = server.handle;
+    server.handle = async (url, init) => new URL(url, 'http://x').pathname === '/api/sync/push'
+      ? new Response(JSON.stringify({ detail: '同步資料總容量已達上限' }), { status: 413, headers: { 'X-Sync-Error': 'quota_exceeded' } })
+      : handle(url, init);
+    await sync.syncNow();
+    expect(await db.sync_outbox.count()).toBe(1);
+    expect(sync.useSync.getState().phase).toBe('error');
+    expect(sync.useSync.getState().oversizedItems).toEqual([]);
+    server.handle = handle;
+    await sync.syncNow();
+    expect(await db.sync_outbox.count()).toBe(0);
+  });
+
+  it('UTF-8 位元組限制與伺服器批次 413 拆分，過大項目修改後重送', async () => {
+    await useDevice('phone');
+    await bootstrap(); await sync.syncNow();
+    for (let i = 0; i < 8; i++) await db.settings.put({ key: `batch-${i}`, value: '漢'.repeat(70_000) });
+    await db.settings.put({ key: 'too-large', value: '漢'.repeat(90_000) });
+    const sizes: number[] = [];
+    const handle = server.handle;
+    server.handle = async (url, init) => {
+      if (new URL(url, 'http://x').pathname === '/api/sync/push') {
+        const size = new TextEncoder().encode(String(init!.body)).length;
+        sizes.push(size);
+        if (size > 450_000) return new Response('', { status: 413 });
+      }
+      return handle(url, init);
+    };
+    await sync.syncNow();
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(1_500_000);
+    expect(sizes.some((n) => n > 450_000)).toBe(true);
+    expect([...server.recs.values()].filter((r) => r.key.startsWith('"batch-'))).toHaveLength(8);
+    expect((await db.sync_outbox.toArray()).map((r) => r.key)).toEqual(['too-large']);
+    await db.settings.put({ key: 'too-large', value: '已縮小' });
+    await sync.syncNow();
+    expect(await db.sync_outbox.count()).toBe(0);
+    expect(sync.useSync.getState().oversizedItems).toEqual([]);
+  });
+
+  it.each(['enable', 'rotate', 'disable'] as const)('加密 %s 中斷不混用格式，重新開啟後可續傳', async (operation) => {
+    await useDevice('phone');
+    await bootstrap();
+    for (let i = 0; i < 510; i++) await db.settings.put({ key: `migration-${i}`, value: `測試-${i}` });
+    await sync.syncNow();
+    if (operation !== 'enable') await sync.setEncryption('old migration password');
+    const before = JSON.stringify([...server.recs.values()]);
+    const previous = structuredClone(server.state.e2ee);
+    const handle = server.handle;
+    let parts = 0;
+    server.handle = async (url, init) => {
+      if (new URL(url, 'http://x').pathname === '/api/sync/keys/migration' && init?.method === 'PUT' && ++parts === 2) {
+        return new Response('{}', { status: 503 });
+      }
+      return handle(url, init);
+    };
+    await expect(sync.setEncryption(operation === 'disable' ? null : 'new migration password')).rejects.toThrow();
+    expect(JSON.stringify([...server.recs.values()])).toBe(before);
+    expect(server.state.e2ee).toEqual(previous);
+    expect(await db.meta.get('e2ee.migration')).toBeTruthy();
+    server.handle = handle;
+    await useDevice('laptop');
+    await sync.syncNow();
+    if (operation !== 'enable') expect(await sync.unlockEncryption('old migration password')).toBe(true);
+    expect((await db.settings.get('migration-509'))?.value).toBe('測試-509');
+    await useDevice('phone');
+    db.close(); await db.open();
+    await sync.syncNow();
+    expect(sync.useSync.getState().phase).toBe('idle');
+    expect(await db.meta.get('e2ee.migration')).toBeUndefined();
+    const rows = [...server.recs.values()].filter((r) => !r.deleted);
+    expect(rows.every((r) => ((r.payload as { $enc?: number }).$enc === 1) === (operation !== 'disable'))).toBe(true);
+    await useDevice('laptop'); await sync.syncNow();
+    if (operation !== 'disable') expect(await sync.unlockEncryption('new migration password')).toBe(true);
+    expect(sync.useSync.getState().phase).toBe('idle');
+    expect((await db.settings.get('migration-509'))?.value).toBe('測試-509');
+  });
+
+  it('切換已提交但回應遺失時，重試採用已保存的新金鑰而不再次切換', async () => {
+    await useDevice('phone'); await bootstrap(); await sync.syncNow();
+    const handle = server.handle;
+    server.handle = async (url, init) => {
+      const response = await handle(url, init);
+      if (new URL(url, 'http://x').pathname === '/api/sync/keys/migration/commit') throw new Error('回應遺失');
+      return response;
+    };
+    await expect(sync.setEncryption('new migration password')).rejects.toThrow();
+    expect(server.state.keyVersion).toBe(1);
+    expect(await db.meta.get('e2ee.migration')).toBeTruthy();
+    server.handle = handle;
+    db.close(); await db.open();
+    await sync.syncNow();
+    expect(sync.useSync.getState().phase).toBe('idle');
+    expect(server.state.keyVersion).toBe(1);
+    expect(await db.meta.get('e2ee.migration')).toBeUndefined();
   });
 
   it('伺服器清空重建（游標倒退）→ 重置本機游標並重新上傳既有資料', async () => {

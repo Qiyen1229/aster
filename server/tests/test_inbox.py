@@ -47,6 +47,38 @@ def test_hook_receive_list_and_ack(api: Api) -> None:
     assert len(api.get("/api/inbox/items").json()) == 1
 
 
+def test_booking_shape_survives_ack_and_ids_are_not_reused(api: Api) -> None:
+    api.register("alice")
+    token = api.post("/api/inbox/tokens", {"name": "iPhone"}).json()["token"]
+    _hook(token, {"text": "早餐 100"})
+    item_id = api.get("/api/inbox/items").json()[0]["id"]
+    body = {"id": item_id, "shape": ["transactions"]}
+    assert api.post("/api/inbox/items/booking", body).status_code == 200
+    assert len(api.get("/api/inbox/items").json()) == 1
+    assert api.post("/api/inbox/items/booking", body).status_code == 200
+    for shape in [["transfers"], ["transactions", "transactions"], ["transactions", "split:2"]]:
+        assert api.post("/api/inbox/items/booking", {**body, "shape": shape}).status_code == 409
+    api.post("/api/inbox/items/ack", {"ids": [item_id]})
+    assert api.post("/api/inbox/items/booking", body).status_code == 200
+    _hook(token, {"text": "午餐 100"})
+    next_id = api.get("/api/inbox/items").json()[0]["id"]
+    assert next_id > item_id
+    api.post("/api/inbox/items/ack", {"ids": [next_id]})
+    assert api.post("/api/inbox/items/booking", {"id": next_id, "shape": ["transactions"]}).status_code == 409
+    assert api.post("/api/inbox/items/booking", {**body, "shape": ["invalid"]}).status_code == 422
+
+
+def test_booking_isolates_users(admin_and_user) -> None:  # noqa: ANN001
+    a, u = admin_and_user
+    token = u.post("/api/inbox/tokens", {"name": "iPhone"}).json()["token"]
+    _hook(token, {"text": "早餐 100"})
+    item_id = u.get("/api/inbox/items").json()[0]["id"]
+    body = {"id": item_id, "shape": ["transactions"]}
+    assert a.post("/api/inbox/items/booking", body).status_code == 409
+    assert u.post("/api/inbox/items/booking", body).status_code == 200
+    assert a.post("/api/inbox/items/booking", body).status_code == 404
+
+
 def test_hook_accepts_legacy_header(api: Api) -> None:
     api.register("alice")
     token = api.post("/api/inbox/tokens", {"name": "iPhone"}).json()["token"]
@@ -90,6 +122,25 @@ def test_hook_notify_noise_filtering(api: Api) -> None:
     assert items[1]["source"] == "notify" and items[1]["card"] == "中國信託"
     assert items[2]["source"] == "notify" and items[2]["card"] == "LINE Pay"
     assert items[3]["source"] == "notify" and items[3]["card"] == "國泰世華"
+
+
+def test_transaction_boilerplate_is_not_marketing_noise() -> None:
+    from app.schema.inbox import HookItem
+    from app.service.inbox_service import is_noise_notification
+
+    for text in [
+        "跨行轉入 NT$30000，本次免收手續費",
+        "您於全聯消費 NT$280，電子帳單已寄送",
+        "付款 120 元完成；立即登錄活動享抽獎",
+    ]:
+        assert not is_noise_notification(HookItem(source="notify", text=text))
+    for text in [
+        "本月跨行轉帳 5 次免收手續費",
+        "電子帳單已產生，繳款提醒：應繳 NT$3000",
+        "雙11購物節，刷卡滿 NT$1000 抽好禮",
+        "網路消費 NT$120 驗證碼 123456",
+    ]:
+        assert is_noise_notification(HookItem(source="notify", text=text))
 
 
 def test_hook_rejects_bad_token_and_isolates_users(admin_and_user) -> None:  # noqa: ANN001

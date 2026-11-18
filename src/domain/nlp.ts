@@ -129,7 +129,8 @@ export function parseEntries(input: string, ctx: ParseContext): DraftEntry[] {
     rest = clock.rest;
     if (dt.date) datesFound.push(dt.date);
     // 3. 帳戶（連同前面的「用／刷／從」一起拿掉）
-    const accs = findAccounts(rest, ctx.accounts);
+    const accountText = rest;
+    const accs = findAccounts(accountText, ctx.accounts);
     for (const h of [...accs].sort((x, y) => y.index - x.index)) {
       if (!h.term) continue;
       const before = rest.slice(0, h.index).replace(VERB_BEFORE_ACCOUNT, '');
@@ -148,7 +149,13 @@ export function parseEntries(input: string, ctx: ParseContext): DraftEntry[] {
     let toAccountId: string | undefined;
     if (TRANSFER_RE.test(seg.text)) {
       const cash = ctx.accounts.find((x) => x.type === 'cash');
-      if (accs.length >= 2) { kind = 'transfer'; accountId = accs[0].id; toAccountId = accs[1].id; }
+      if (accs.length >= 2) {
+        kind = 'transfer';
+        const between = accountText.slice(accs[0].index + (accs[0].term?.length ?? 0), accs[1].index);
+        const receiverFirst = /收到|接收|收取|入帳.*來自|自.*轉入/.test(between);
+        accountId = accs[receiverFirst ? 1 : 0].id;
+        toAccountId = accs[receiverFirst ? 0 : 1].id;
+      }
       else if (CASH_OUT_RE.test(seg.text) && cash && accs[0]?.id !== cash.id) { kind = 'transfer'; toAccountId = cash.id; }
       else if (kind !== 'income' && !/跨行轉入/.test(seg.text) && accs.length === 1 && accs[0].term) {
         // 「轉 3000 到 零用金」只說了轉入的帳戶：記成轉帳，轉出帳戶留空，之後帶入預設／上次使用的帳戶
@@ -159,6 +166,7 @@ export function parseEntries(input: string, ctx: ParseContext): DraftEntry[] {
     if (kind === 'expense' && /(?:存入|轉入|跨行轉入)/.test(seg.text)) {
       kind = 'income';
     }
+    if (a.value < 0 && kind === 'expense') kind = 'income';
     const currency = a.currency ?? detectCurrency(seg.text) ?? globalCurrency;
     for (const [re] of CURRENCY_WORDS) rest = rest.replace(re, ' ');
     const rawNote = cleanNote(rest.replace(TRANSFER_RE, kind === 'transfer' ? ' ' : '$&'));
@@ -167,7 +175,7 @@ export function parseEntries(input: string, ctx: ParseContext): DraftEntry[] {
     // 轉帳的備註只留真正的說明；「轉」「到」「從」這類連接詞不是備註
     const note = kind === 'transfer' ? rawNote.replace(/轉帳|轉出|轉|匯款|匯|到|至|去|從|由|給|的/g, ' ').replace(/\s+/g, ' ').trim() : tidyNote(rawNote, match, kind);
     drafts.push({
-      kind, amount: a.value, currency, date: dt.date ?? ctx.today, dateGiven: !!dt.date, ...(clock.time ? { time: clock.time } : {}),
+      kind, amount: Math.abs(a.value), currency, date: dt.date ?? ctx.today, dateGiven: !!dt.date, ...(clock.time ? { time: clock.time } : {}),
       accountId, toAccountId, categoryId: cat?.id, note, raw: seg.text.trim(),
     });
   }

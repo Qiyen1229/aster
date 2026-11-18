@@ -23,7 +23,7 @@ def test_e2ee_keys_roundtrip(api: Api) -> None:
     assert r.status_code == 200 and r.json()["version"] == 1
     st = api.get("/api/sync/status").json()
     assert st["e2ee"]["salt"] == "c2FsdA" and st["e2ee"]["iterations"] == 310000
-    api.c.put("/api/sync/keys", json={"enabled": False}, headers=api._h())
+    api.c.put("/api/sync/keys", json={"enabled": False, "expected_version": 1}, headers=api._h())
     assert api.get("/api/sync/status").json()["e2ee"] is None
 
 

@@ -49,7 +49,7 @@ export function ruleMatches(rule: RuleLike, text: string, amount?: number): bool
   }
   const t = normText(text), k = normText(rule.keyword);
   if (!k) return false;
-  return rule.match === 'equals' ? t === k : t.includes(k);
+  return rule.match === 'equals' ? text.split('\n').some((field) => normText(field) === k) : t.includes(k);
 }
 
 /** 依優先順序找第一條命中的規則（kind 不符的略過） */

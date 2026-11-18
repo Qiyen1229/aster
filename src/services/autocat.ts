@@ -17,7 +17,7 @@ export interface CategorySuggestion {
   renameNote?: string;
 }
 
-let cache: { at: number; rules: CategoryRule[]; memory: MemoryIndex; accounts: MemoryIndex } | null = null;
+let cache: { dbName: string; at: number; rules: CategoryRule[]; memory: MemoryIndex; accounts: MemoryIndex } | null = null;
 const TTL = 5 * 60 * 1000;
 
 export function invalidateAutocat(): void {
@@ -25,7 +25,8 @@ export function invalidateAutocat(): void {
 }
 
 async function load() {
-  if (cache && Date.now() - cache.at < TTL) return cache;
+  const database = db;
+  if (cache && cache.dbName === database.name && Date.now() - cache.at < TTL) return cache;
   const since = addDays(todayKey(), -365);
   const [rules, txs, cats, accs] = await Promise.all([
     db.rules.toArray(),
@@ -43,7 +44,7 @@ async function load() {
   const accItems = usable.filter((t) => liveAcc.has(t.accountId))
     .flatMap((t) => texts(t).map((text) => ({ text, categoryId: t.accountId, kind: t.type as CategoryKind, ts: t.ts })));
   cache = {
-    at: Date.now(), rules: rules.filter((r) => !r.deletedAt && (!r.categoryId || live.has(r.categoryId))),
+    dbName: database.name, at: Date.now(), rules: rules.filter((r) => !r.deletedAt && (!r.categoryId || live.has(r.categoryId))),
     memory: buildMemory(items), accounts: buildMemory(accItems),
   };
   return cache;
@@ -56,7 +57,8 @@ export async function suggestCategory(text: string, kind: CategoryKind, amount?:
   const memQuery = memoryText?.trim() || text;
   const r = matchRule(rules, text, kind, amount);
   if (r) {
-    const fallbackCat = r.categoryId || recallCategory(memory, memQuery, kind) || '';
+    const category = r.categoryId ? await db.categories.get(r.categoryId) : undefined;
+    const fallbackCat = (category && category.kind === kind && !category.archived && !category.deletedAt ? category.id : '') || recallCategory(memory, memQuery, kind) || '';
     return {
       categoryId: fallbackCat,
       tagIds: r.tagIds ?? [],
@@ -72,22 +74,28 @@ export async function suggestCategory(text: string, kind: CategoryKind, amount?:
 /**
  * 判斷帳戶：規則有指定帳戶 → 過去同一個商家最常用的帳戶 → 沒有則回傳 undefined（由呼叫端套用預設帳戶）
  */
-export async function suggestAccount(text: string, kind: CategoryKind = 'expense', amount?: number, memoryText?: string): Promise<{ accountId: string; source: 'rule' | 'memory' } | undefined> {
+export async function suggestAccount(text: string, kind: CategoryKind = 'expense', amount?: number, memoryText?: string): Promise<{ accountId: string; source: 'rule' | 'memory'; ruleId?: string } | undefined> {
   if (!text.trim()) return undefined;
   const { rules, accounts } = await load();
   const memQuery = memoryText?.trim() || text;
   const r = matchRule(rules.filter((x) => x.accountId), text, kind, amount);
-  if (r?.accountId) return { accountId: r.accountId, source: 'rule' };
+  if (r?.accountId) {
+    const account = await db.accounts.get(r.accountId);
+    if (account && !account.archived && !account.deletedAt && account.type !== 'loan') return { accountId: account.id, source: 'rule', ruleId: r.id };
+  }
   const a = recallCategory(accounts, memQuery, kind);
-  return a ? { accountId: a, source: 'memory' } : undefined;
+  const account = a ? await db.accounts.get(a) : undefined;
+  return account && !account.archived && !account.deletedAt && account.type !== 'loan' ? { accountId: account.id, source: 'memory' } : undefined;
 }
 
 /** 規則被採用時累計命中次數（不影響排序，只給設定頁參考） */
 export async function countRuleHit(ruleId: string): Promise<void> {
-  await db.rules.where('id').equals(ruleId).modify((r) => { r.hits = (r.hits ?? 0) + 1; });
+  await db.rules.where('id').equals(ruleId).modify((r) => { r.hits = (r.hits ?? 0) + 1; r.updatedAt = Date.now(); });
 }
 
 export async function saveRule(input: Omit<CategoryRule, 'id' | 'createdAt' | 'updatedAt' | 'hits'> & { id?: string }): Promise<CategoryRule> {
+  if ([input.minAmount, input.maxAmount].some((n) => n !== undefined && (!Number.isFinite(n) || n < 0))) throw new Error('金額範圍必須是非負數');
+  if (input.minAmount !== undefined && input.maxAmount !== undefined && input.minAmount > input.maxAmount) throw new Error('最低金額不能大於最高金額');
   const now = Date.now();
   const old = input.id ? await db.rules.get(input.id) : undefined;
   const row: CategoryRule = { hits: 0, ...old, ...input, id: input.id ?? uid(), createdAt: old?.createdAt ?? now, updatedAt: now };

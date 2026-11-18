@@ -25,15 +25,15 @@ export function budgetPeriod(b: BudgetLike, date: DateKey, opts: { monthStartDay
 }
 
 /** 從 startDate 所在期間到 date 所在期間（含）的所有期間 */
-export function periodsUntil(b: BudgetLike, date: DateKey, opts: { monthStartDay: number; weekStart: 0 | 1 }, max = 120): Range[] {
+export function periodsUntil(b: BudgetLike, date: DateKey, opts: { monthStartDay: number; weekStart: 0 | 1 }): Range[] {
   const out: Range[] = [];
   let p = budgetPeriod(b, b.startDate <= date ? b.startDate : date, opts);
-  while (out.length < max) {
+  while (true) {
     out.push(p);
     if (p.end >= date) break;
     p = budgetPeriod(b, addDays(p.end, 1), opts);
   }
-  return out.slice(-max);
+  return out;
 }
 
 /** 依序計算各期結轉後的額度。spent[i] 對應 periods[i] */
