@@ -285,7 +285,13 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
       const isIncome = primary.kind === 'income'
         || /退款|退貨|退刷|入帳|進帳|跨行轉入|薪資|薪水|發薪/.test(it.text)
         || (/(?:存入|轉入)/.test(it.text) && !/轉出|扣款|刷卡|消費|付款|提款/.test(it.text));
-      drafts = [{ ...primary, note: merchant || primary.note.slice(0, 40), kind: isIncome ? 'income' : 'expense' }];
+      const fallbackNote = primary.note
+        .replace(/【[^】]{1,24}】/g, ' ')
+        .replace(/(?:消費|刷卡|交易|付款|扣款|支付)通知\s*[:：]?/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 40);
+      drafts = [{ ...primary, note: merchant || fallbackNote, kind: isIncome ? 'income' : 'expense' }];
     }
   }
   const out: ResolvedDraft[] = [];

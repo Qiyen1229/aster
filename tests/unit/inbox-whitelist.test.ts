@@ -277,4 +277,43 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     expect(drafts).toHaveLength(1);
     expect(drafts[0].categoryId).not.toBe('exp-housing-mgmt');
   });
+
+  it('邊界防呆：網路刷卡不誤判網路電信、全家人不誤判超商、其他分類不污染商家記憶', async () => {
+    const { draftsFromItem } = await import('@/services/inbox');
+    const { parseContext } = await import('@/services/quickentry');
+    await db.categories.bulkPut([
+      { id: 'exp-telecom', name: '網路電信', kind: 'expense', parentId: 'exp-housing', icon: '', color: '', sort: 1, archived: 0, createdAt: 1, updatedAt: 1 } as never,
+      { id: 'exp-daily', name: '日用品', kind: 'expense', parentId: 'exp-life', icon: '', color: '', sort: 2, archived: 0, createdAt: 1, updatedAt: 1 } as never,
+      { id: 'exp-lunch', name: '午餐', kind: 'expense', parentId: 'exp-food', icon: '', color: '', sort: 3, archived: 0, createdAt: 1, updatedAt: 1 } as never,
+    ]);
+    await db.transactions.add({
+      id: 'tx-prev-other',
+      type: 'expense',
+      date: '2026-11-10',
+      amountMinor: 14000,
+      currency: 'TWD',
+      accountId: bank,
+      categoryId: 'exp-other_exp',
+      merchant: '巧之味手工水餃',
+      note: '巧之味手工水餃',
+      tagIds: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as never);
+    const ctx = await parseContext();
+
+    // 1. 網路刷卡消費不應匹配網路電信
+    const netDrafts = await draftsFromItem(raw(30, 'LINE', '【台新銀行】消費通知：網路刷卡 500 元，於 神秘小店 付款', '神秘小店'), ctx, bank);
+    expect(netDrafts[0].categoryId).not.toBe('exp-telecom');
+
+    // 2. 全家人吃飯不應匹配全家超商日用品，全家 85 則應匹配日用品
+    const familyDrafts = await draftsFromItem(raw(31, 'LINE', '全家人吃飯 500 元', '全家人吃飯'), ctx, bank);
+    expect(familyDrafts[0].categoryId).not.toBe('exp-daily');
+    const fmDrafts = await draftsFromItem(raw(32, 'LINE', '於 全家 消費 85 元', '全家'), ctx, bank);
+    expect(fmDrafts[0].categoryId).toBe('exp-daily');
+
+    // 3. 過去誤歸「其他」的巧之味手工水餃，不會覆蓋新版水餃→午餐規則
+    const dumplingDrafts = await draftsFromItem(raw(33, 'LINE', '巧之味手工水餃 140 元', '巧之味手工水餃'), ctx, bank);
+    expect(dumplingDrafts[0].categoryId).toBe('exp-lunch');
+  });
 });

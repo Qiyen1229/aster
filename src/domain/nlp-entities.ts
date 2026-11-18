@@ -89,7 +89,7 @@ const SYNONYMS: Synonym[] = [
   { names: ['加油'], kind: 'expense', generic: ['加油', '油錢', '汽油'], specific: ['中油', '台塑石油'] },
   { names: ['停車'], kind: 'expense', generic: ['停車', '停車費'], specific: ['autopass', '車麻吉', 'uTagGo'] },
   { names: ['水電瓦斯'], kind: 'expense', generic: ['水電', '電費', '水費', '瓦斯', '瓦斯費'], specific: ['台電', '台灣電力', '自來水'] },
-  { names: ['網路電信'], kind: 'expense', generic: ['網路費', '電信費', '手機費', '電話費', '網路'], specific: ['中華電信', '台灣大哥大', '遠傳'] },
+  { names: ['網路電信'], kind: 'expense', generic: ['網路費', '電信費', '手機費', '電話費', '寬頻', '固網', '光世代'], specific: ['中華電信', '台灣大哥大', '遠傳'] },
   { names: ['房租'], kind: 'expense', generic: ['房租', '租金'] },
   { names: ['日用品'], kind: 'expense', generic: ['日用品', '衛生紙', '洗衣精'], specific: ['寶雅', '屈臣氏', '康是美', '小北', '無印良品', 'muji', 'ikea', '宜家', '大創', '7-11', '7-eleven', '全家', '萊爾富', 'ok超商', '超商', '便利商店', '蝦皮', 'momo', 'pchome', 'coupang', '酷澎'] },
   { names: ['電影'], kind: 'expense', generic: ['電影', '看電影'], specific: ['威秀', '秀泰', '國賓影城'] },
@@ -129,9 +129,13 @@ export interface CategoryMatch {
  * 取最長的詞；一樣長時優先子分類，再優先先出現的。
  */
 const NOISE_PREFIX = /(?:免|零|無|減免|折抵|帳號|帳戶|紅利|點數|系統|後台|風險)$/;
-const NOISE_SUFFIX = /^(?:優惠|減免|折抵|通知|提醒|系統|功能|設定)/;
-const isBoilerplateMatch = (lower: string, index: number, len: number) =>
-  NOISE_PREFIX.test(lower.slice(Math.max(0, index - 4), index)) || NOISE_SUFFIX.test(lower.slice(index + len, index + len + 4));
+const NOISE_SUFFIX = /^(?:優惠|減免|折抵|通知|提醒|系統|功能|設定|說明|條款|公告|活動|規範|辦法|標準)/;
+const isBoilerplateMatch = (lower: string, index: number, len: number) => {
+  if (NOISE_PREFIX.test(lower.slice(Math.max(0, index - 4), index)) || NOISE_SUFFIX.test(lower.slice(index + len, index + len + 4))) return true;
+  // 「全家」後接「人／吃／聚／出／一起／福」代表家庭而非全家便利商店
+  if (lower.slice(index, index + len) === '全家' && /^(?:人|福|一起|大小|吃|出|去|都|聚)/.test(lower.slice(index + len, index + len + 2))) return true;
+  return false;
+};
 
 export function matchCategory(text: string, cats: NlpCategory[], kind?: 'expense' | 'income'): CategoryMatch | undefined {
   const lower = text.toLowerCase();

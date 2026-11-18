@@ -37,7 +37,7 @@ async function load() {
   const liveAcc = new Set(accs.filter((a) => !a.archived && !a.deletedAt).map((a) => a.id));
   const usable = txs.filter((t) => !t.deletedAt && (t.type === 'expense' || t.type === 'income') && !t.stockTradeId && !t.dividendId);
   const texts = (t: (typeof usable)[number]) => [t.merchant, t.note].filter((x): x is string => !!x?.trim());
-  const items = usable.filter((t) => live.has(t.categoryId))
+  const items = usable.filter((t) => live.has(t.categoryId) && t.categoryId !== 'exp-other_exp' && t.categoryId !== 'inc-other_inc')
     .flatMap((t) => texts(t).map((text) => ({ text, categoryId: t.categoryId, kind: t.type as CategoryKind, ts: t.ts })));
   // 帳戶記憶：同一個商家通常用哪個帳戶付款（沿用分類記憶的索引結構，categoryId 欄位放帳戶 id）
   const accItems = usable.filter((t) => liveAcc.has(t.accountId))
