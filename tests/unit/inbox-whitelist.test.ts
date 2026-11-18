@@ -233,4 +233,48 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     expect(judgeNotice(n('LINE', '晚餐 500 你先幫我付', '小明'), true, ['小明'], ['小明']).trust).toBe('drop');
     expect(judgeNotice(n('中國信託', '停車折抵 100 元'), true, [], ['停車折抵']).trust).toBe('drop');
   });
+
+  it('巧之味手工水餃不會被通知內文「管理費優惠」誤判為管理費，且可正確歸類餐飲', async () => {
+    const { draftsFromItem } = await import('@/services/inbox');
+    const { parseContext } = await import('@/services/quickentry');
+    await db.categories.bulkPut([
+      { id: 'exp-lunch', name: '午餐', kind: 'expense', parentId: 'exp-food', icon: '', color: '', sort: 1, archived: 0, createdAt: 1, updatedAt: 1 } as never,
+      { id: 'exp-housing-mgmt', name: '管理費', kind: 'expense', parentId: 'exp-housing', icon: '', color: '', sort: 2, archived: 0, createdAt: 1, updatedAt: 1 } as never,
+    ]);
+    const ctx = await parseContext();
+    const item = raw(20, 'LINE', 'LINE Pay 付款完成：巧之味手工水餃 NT$140（享免管理費優惠與帳號管理通知）', '巧之味手工水餃');
+    const drafts = await draftsFromItem(item, ctx, bank);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].note).toBe('巧之味手工水餃');
+    expect(drafts[0].categoryId).toBe('exp-lunch');
+    expect(drafts[0].categoryId).not.toBe('exp-housing-mgmt');
+  });
+
+  it('商家記憶隔離：過去銀行通知含管理費，不會讓同銀行的新餐飲消費被記憶成管理費', async () => {
+    const { draftsFromItem } = await import('@/services/inbox');
+    const { parseContext } = await import('@/services/quickentry');
+    await db.categories.bulkPut([
+      { id: 'exp-lunch', name: '午餐', kind: 'expense', parentId: 'exp-food', icon: '', color: '', sort: 1, archived: 0, createdAt: 1, updatedAt: 1 } as never,
+      { id: 'exp-housing-mgmt', name: '管理費', kind: 'expense', parentId: 'exp-housing', icon: '', color: '', sort: 2, archived: 0, createdAt: 1, updatedAt: 1 } as never,
+    ]);
+    await db.transactions.add({
+      id: 'tx-prev-mgmt',
+      type: 'expense',
+      date: '2026-11-10',
+      amountMinor: 250000,
+      currency: 'TWD',
+      accountId: bank,
+      categoryId: 'exp-housing-mgmt',
+      merchant: '社區大樓管理費',
+      note: 'LINE Pay 通知 社區大樓管理費',
+      tagIds: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as never);
+    const ctx = await parseContext();
+    const item = raw(21, 'LINE', 'LINE Pay 消費 160 元，於 阿明無名小店 付款（詳見管理費說明）', '阿明無名小店');
+    const drafts = await draftsFromItem(item, ctx, bank);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].categoryId).not.toBe('exp-housing-mgmt');
+  });
 });

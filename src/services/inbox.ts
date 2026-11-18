@@ -10,7 +10,7 @@
  */
 import { api } from './api';
 import { useInboxCount } from './inboxCount';
-import { extractDate, findAccounts, findAmounts, parseEntries, shortDate, toHalfWidth, type DraftEntry } from '@/domain/nlp';
+import { extractDate, findAccounts, findAmounts, matchCategory, parseEntries, shortDate, toHalfWidth, type DraftEntry } from '@/domain/nlp';
 import { findDuplicate, type DupCandidate } from '@/domain/dedupe';
 import { formatMoney, toMinor } from '@/domain/money';
 import { addDays, toDateKey, todayKey } from '@/domain/period';
@@ -289,6 +289,7 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     }
   }
   const out: ResolvedDraft[] = [];
+  const isNotice = it.source === 'notify' || it.source === 'sms' || it.source === 'email';
   for (const d of drafts) {
     let targetAcc: string | undefined;
     if (it.source === 'notify') {
@@ -302,14 +303,21 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     } else {
       targetAcc = byCard ?? d.accountId;
     }
+    const cleanMerchant = (it.merchant || d.note || '').trim();
     const matchText = [d.note, it.merchant, it.text].filter(Boolean).join('\n');
+    const memoryText = cleanMerchant || d.note;
+    // 通知／簡訊／Email 容易夾帶銀行公告或行銷字眼（如「免管理費」、「帳單管理」），分類只採信乾淨商家／備註，不讓內文雜訊劫持
+    const dKind = d.kind === 'income' ? 'income' : 'expense';
+    const cleanCategoryId = isNotice && d.kind !== 'transfer'
+      ? (cleanMerchant ? matchCategory(cleanMerchant, ctx.categories, dKind)?.category.id : undefined)
+      : d.categoryId;
     // 使用者在自動分類規則明確「指定帳戶」時，優先於通知文字／卡片推測
     const ruleAcc = d.kind !== 'transfer' && matchText
-      ? await suggestAccount(matchText, d.kind === 'income' ? 'income' : 'expense').catch(() => undefined)
+      ? await suggestAccount(matchText, dKind, d.amount, memoryText).catch(() => undefined)
       : undefined;
     const explicitRuleAcc = ruleAcc?.source === 'rule' ? ruleAcc.accountId : undefined;
     const preferredAcc = explicitRuleAcc ?? targetAcc;
-    const r = await resolveDraft({ ...d, accountId: preferredAcc }, base, matchText);
+    const r = await resolveDraft({ ...d, categoryId: cleanCategoryId, accountId: preferredAcc }, base, matchText, memoryText);
     out.push(
       explicitRuleAcc
         ? { ...r, accountId: explicitRuleAcc, accountSource: 'rule' }
@@ -508,6 +516,40 @@ export async function previewAutoBook(text: string, card = '', merchant = ''): P
   };
 }
 
+/**
+ * 特殊情況 AI 救援：當規則、商家記憶與關鍵字都無法判斷（例如沒見過的商店名、或完全看不懂金額）且使用者有開啟 AI 時，
+ * 才交給 AI 協助解析／補分類，單次最多處理 5 筆避免過度消耗額度；失敗靜默退回原本規則結果。
+ */
+async function enrichAmbiguousInboxWithAi(entries: InboxEntry[]): Promise<void> {
+  const ai = await import('./ai').catch(() => null);
+  if (!ai?.aiEnabledLocally()) return;
+  const targets = entries.filter((e) =>
+    !e.drafts.length
+    || e.drafts.some((d) => d.kind !== 'transfer' && d.categorySource === 'default' && (d.categoryId === 'exp-other_exp' || d.categoryId === 'inc-other_inc')),
+  ).slice(0, 5);
+  if (!targets.length) return;
+  const fallback = await fallbackAccount();
+  for (const e of targets) {
+    const raw = (e.item.merchant ? `${e.item.merchant} ${e.item.text}` : e.item.text).trim();
+    if (!raw) continue;
+    try {
+      const { drafts } = await ai.aiParseText(raw);
+      if (!drafts.length) continue;
+      if (!e.drafts.length) {
+        e.drafts = await Promise.all(drafts.map((d) => resolveDraft(d, fallback, raw, e.item.merchant || d.note)));
+      } else {
+        for (let i = 0; i < e.drafts.length; i++) {
+          const cur = e.drafts[i];
+          const aiHit = drafts[i] ?? drafts[0];
+          if (cur.categorySource === 'default' && aiHit?.categoryId && aiHit.categoryId !== 'exp-other_exp' && aiHit.categoryId !== 'inc-other_inc') {
+            e.drafts[i] = { ...cur, categoryId: aiHit.categoryId, categorySource: 'text' };
+          }
+        }
+      }
+    } catch { /* AI 失敗或超額時保留規則結果，不阻斷自動入帳 */ }
+  }
+}
+
 /** 開啟 App 時：開啟「自動入帳」就直接記下看得懂的項目；白名單發送者即使沒開全域自動入帳也直接記；其餘留在收件匣 */
 export async function processInboxOnStartup(): Promise<{ booked: number; pending: number; merged: number } | null> {
   if (!AUTH_ENABLED) return null;
@@ -524,8 +566,10 @@ export async function processInboxOnStartup(): Promise<{ booked: number; pending
     if (e.dup?.certain && (await mergeDuplicate(e).catch(() => false))) merged++;
     else rest.push(e);
   }
+  const autoReady = rest.filter((e) => auto(e) && !e.review);
+  await enrichAmbiguousInboxWithAi(autoReady);
   // 來源不夠可信的（LINE 聊天裡剛好有金額）絕不自動入帳，留給使用者確認
-  const r = await bookInboxEntries(rest.filter((e) => auto(e) && !e.review), { skipDuplicates: true });
+  const r = await bookInboxEntries(autoReady, { skipDuplicates: true });
   const pending = rest.filter((e) => !e.drafts.length || e.dup?.level === 'strong' || e.review || !auto(e)).length;
   useInboxCount.getState().set(pending);
   return { booked: r.count, pending, merged };
