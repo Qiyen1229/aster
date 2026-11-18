@@ -315,5 +315,20 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     // 3. 過去誤歸「其他」的巧之味手工水餃，不會覆蓋新版水餃→午餐規則
     const dumplingDrafts = await draftsFromItem(raw(33, 'LINE', '巧之味手工水餃 140 元', '巧之味手工水餃'), ctx, bank);
     expect(dumplingDrafts[0].categoryId).toBe('exp-lunch');
+
+    // 4. 通知含「收到您的付款／回饋點數將於次月入帳／退款須知」仍維持支出，不會翻成收入
+    const expNotice = await draftsFromItem(
+      raw(34, 'LINE', '已收到您的付款 NT$140，於 巧之味手工水餃 消費（點數回饋將於次月入帳，詳見退款須知）', '巧之味手工水餃'),
+      ctx,
+      bank,
+    );
+    expect(expNotice[0].kind).toBe('expense');
+
+    // 5. 「台灣高鐵」「新光三越」「國泰醫院」不會被「台灣銀行」「新光銀行」「國泰銀行」簡稱截斷或誤認帳戶
+    await db.accounts.add({ id: 'twbank', name: '台灣銀行', type: 'bank', currency: 'TWD', openingMinor: 0, sort: 9, archived: 0, createdAt: 1, updatedAt: 1 } as never);
+    const ctxWithTw = await parseContext();
+    const hsrDrafts = await draftsFromItem(raw(35, 'LINE', '於 台灣高鐵 消費 1,490 元', '台灣高鐵'), ctxWithTw, bank);
+    expect(hsrDrafts[0].accountId).not.toBe('twbank');
+    expect(hsrDrafts[0].note).toBe('台灣高鐵');
   });
 });

@@ -137,8 +137,13 @@ export function parseEntries(input: string, ctx: ParseContext): DraftEntry[] {
       rest = `${before} ${rest.slice(h.index + h.term.length).replace(/^(信用卡|金融卡|卡|銀行|帳戶)/, '')}`;
     }
     rest = rest.replace(/刷卡|信用卡/g, ' ');
-    // 4. 類型
-    let kind: EntryKind = INCOME_RE.test(seg.text) ? 'income' : 'expense';
+    // 4. 類型：「收到您的刷卡消費通知／已收到付款／回饋點數將於次月入帳／退款須知」是消費通知，不是本人收到收入
+    const incomeText = seg.text
+      .replace(/(?:點數|回饋|紅利|LINE\s*POINTS)[^。\n]{0,16}入帳/gi, '')
+      .replace(/(?:退款|退貨)(?:須知|說明|規定|辦法|政策)/g, '');
+    const hasCoreIncome = /薪水|薪資|月薪|領薪|發薪|收入|進帳|入帳|領到|拿到|賺了|賺到|獎金|年終|收紅包|紅包收入|退款|退費|退稅|利息|股利|中獎|報帳|還我|還錢給我|還款/.test(incomeText);
+    const isPaymentNotice = /(?:通知|消費|刷卡|扣款|付款|帳單|發票|訂單)/.test(incomeText);
+    let kind: EntryKind = (INCOME_RE.test(incomeText) && !(isPaymentNotice && !hasCoreIncome)) ? 'income' : 'expense';
     let accountId: string | undefined = accs[0]?.id;
     let toAccountId: string | undefined;
     if (TRANSFER_RE.test(seg.text)) {

@@ -39,14 +39,22 @@ function findTermIndex(lower: string, term: string): number {
   return lower.indexOf(term);
 }
 
+const NON_ACCOUNT_FOLLOW = /^(?:醫院|三越|百貨|人壽|產險|高鐵|台鐵|大哥大|大車隊|啤酒|電力|名|次|天|家|樓|街|路|店|館|市場)/;
+
 /** 依出現位置找出提到的帳戶（同一段文字只算最長的那個詞） */
 export function findAccounts(text: string, accounts: NlpAccount[]): AccountHit[] {
   const lower = text.toLowerCase();
   const hits: AccountHit[] = [];
   for (const a of accounts) {
+    const fullLower = a.name.trim().toLowerCase();
     for (const term of accountTerms(a)) {
       const i = findTermIndex(lower, term);
-      if (i >= 0) hits.push({ id: a.id, index: i, term });
+      if (i >= 0) {
+        if (term !== fullLower && a.type !== 'cash' && NON_ACCOUNT_FOLLOW.test(lower.slice(i + term.length, i + term.length + 4))) {
+          continue;
+        }
+        hits.push({ id: a.id, index: i, term });
+      }
     }
   }
   // 「信用卡」這種泛稱：只有一張信用卡時才對應
