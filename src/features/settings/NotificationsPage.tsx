@@ -120,7 +120,7 @@ export default function NotificationsPage() {
         {row('每週摘要', 'weekly')}
         {row('每月月報', 'monthly')}
         {row('備份提醒', 'backup')}
-        {n.backup && <div className="field"><span className="label">每隔</span><select value={n.backupDays} onChange={(e) => set({ backupDays: Number(e.target.value) })}>{[7, 14, 30, 60].map((d) => <option key={d} value={d}>{d} 天</option>)}</select></div>}
+        {n.backup && <div className="field"><span className="label">每隔</span><select value={n.backupDays} onChange={(e) => set({ backupDays: Number(e.target.value) })}>{[7, 14, 30, 60].map((d) => <option key={d} value={d}>{d === 7 ? '每週（7 天）' : `${d} 天`}</option>)}</select></div>}
       </div>
       <button className="btn tinted" onClick={async () => {
         await notify('🔔 測試通知', '如果你看到這則通知，代表設定成功', '/', 'daily_log', `test:${Date.now()}`);

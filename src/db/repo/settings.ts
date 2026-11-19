@@ -226,7 +226,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lock: { enabled: false, pinHash: '', salt: '', iterations: 210000, webauthn: null, autoLockSec: 60, wipeAfterFails: false },
   notify: {
     enabled: false, daily: true, dailyTime: '21:00', cardDue: true, cardDueDays: 3, budget: true, subscription: true,
-    priceAlert: true, backup: true, backupDays: 14, weekly: true, monthly: true, push: false,
+    priceAlert: true, backup: true, backupDays: 7, weekly: true, monthly: true, push: false,
   },
   importProfiles: [],
   fire: { birthYear: 1995, retireAge: 55, endAge: 90, returnPct: 6, volPct: 15, inflationPct: 2, swrPct: 4, annualExpense: 0, annualSaving: 0, startAssets: 0 },

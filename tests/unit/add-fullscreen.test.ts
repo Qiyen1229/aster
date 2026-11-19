@@ -220,4 +220,70 @@ describe('全螢幕記帳畫布（AddSheet）', () => {
     expect(screen.querySelector('.cat-grid')).not.toBeNull();
     expect(screen.querySelector('.cat-back-bar')).toBeNull();
   });
+
+  it('收入「薪資」包含「零用金」，既有資料庫首次補齊且刪除後不再復活', async () => {
+    const { buildDefaultCategories } = await import('@/db/seed/categories');
+    const { bootstrap } = await import('@/db/bootstrap');
+
+    const oldCats = buildDefaultCategories().filter((c) => c.id !== 'inc-salary-pocket');
+    await db.categories.bulkAdd(oldCats);
+    expect(await db.categories.get('inc-salary-pocket')).toBeUndefined();
+
+    await bootstrap();
+    const added = await db.categories.get('inc-salary-pocket');
+    expect(added).toMatchObject({ id: 'inc-salary-pocket', name: '零用金', kind: 'income', parentId: 'inc-salary' });
+
+    // 使用者主動刪除零用金後再次 bootstrap()，不該重新長回來
+    await db.categories.delete('inc-salary-pocket');
+    await bootstrap();
+    expect(await db.categories.get('inc-salary-pocket')).toBeUndefined();
+  });
+
+  it('編輯既有帳目時仍可使用常用與釘選、複製為新的一筆，並清楚區分「已釘選」與「最近常用」區塊', async () => {
+    const { buildDefaultCategories } = await import('@/db/seed/categories');
+    const { addAccount } = await import('@/db/repo/accounts');
+    const { addTransaction } = await import('@/db/repo/ledger');
+    await db.categories.bulkAdd(buildDefaultCategories());
+    const acc = await addAccount({ name: '中信', type: 'bank', currency: 'TWD', icon: '🏦', color: '', initialBalanceMinor: 100000, includeInNetWorth: true, isLiability: false });
+    const tx1 = await addTransaction({ type: 'expense', accountId: acc.id, categoryId: 'exp-food-lunch', amountMinor: 14000, currency: 'TWD', date: '2026-11-18', ts: Date.now() - 1000, note: '水餃' });
+    const tx2 = await addTransaction({ type: 'expense', accountId: acc.id, categoryId: 'exp-food-drink', amountMinor: 6500, currency: 'TWD', date: '2026-11-18', ts: Date.now(), note: '拿鐵' });
+
+    await act(async () => {
+      useUI.getState().editTx(tx1.id);
+      root.render(React.createElement(AddSheet));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 60)); });
+
+    const screen = document.body.querySelector<HTMLElement>('.add-screen')!;
+    // 編輯模式頂列應同時有 ⚡ 與 刪除按鈕
+    const zapBtn = screen.querySelector<HTMLButtonElement>('.add-topbar button[aria-label="常用與釘選"]')!;
+    const delBtn = screen.querySelector<HTMLButtonElement>('.add-topbar button[aria-label="刪除"]')!;
+    expect(zapBtn).not.toBeNull();
+    expect(delBtn).not.toBeNull();
+
+    // 開啟常用與釘選：顯示釘選目前這筆、複製為新的一筆，與分開的「已釘選」「最近常用」區塊
+    await act(async () => { zapBtn.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    const sheet = document.body.querySelector<HTMLElement>('.sheet[aria-label="常用與釘選"]')!;
+    expect(sheet).not.toBeNull();
+    expect(sheet.textContent).toContain('釘選目前這筆');
+    expect(sheet.textContent).toContain('複製為新的一筆');
+    const recentSec = sheet.querySelector<HTMLElement>('.quick-section[aria-label="最近常用項目"]')!;
+    expect(recentSec.textContent).toContain(tx2.note);
+
+    // 點擊「釘選目前這筆」→ 進到「已釘選」分區
+    const pinHero = sheet.querySelector<HTMLButtonElement>('.quick-pin-hero')!;
+    await act(async () => { pinHero.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    const pinnedSec = sheet.querySelector<HTMLElement>('.quick-section[aria-label="已釘選項目"]')!;
+    expect(pinnedSec.textContent).toContain('水餃');
+    expect(sheet.textContent).toContain('取消釘選「水餃」');
+
+    // 點擊「複製為新的一筆」→ 切為新增模式並帶入原本內容
+    const copyBtn = Array.from(sheet.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes('複製為新的一筆'))!;
+    await act(async () => { copyBtn.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    expect(useUI.getState().add.editTxId).toBeUndefined();
+    expect(useUI.getState().add.prefill).toMatchObject({ mode: 'expense', note: '水餃', accountId: acc.id, categoryId: 'exp-food-lunch' });
+  });
 });

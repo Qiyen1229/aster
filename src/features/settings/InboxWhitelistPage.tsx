@@ -144,9 +144,6 @@ export default function InboxWhitelistPage() {
 
       {tab === 'white' && (
         <section aria-label="白名單管理">
-          <div className="card" style={{ marginBottom: 10, padding: '10px 14px', fontSize: '0.84rem', color: 'var(--text-2)', borderLeft: '3px solid var(--success)' }}>
-            <b>信任指定來源</b>：比對發送者或卡片名稱，不比對通知內文；金額明確且未被標示為疑似重複時才自動記帳。
-          </div>
           <div className="list" style={{ marginBottom: 10 }}>
             <div className="field">
               <input
@@ -189,9 +186,6 @@ export default function InboxWhitelistPage() {
 
       {tab === 'black' && (
         <section aria-label="黑名單管理">
-          <div className="card" style={{ marginBottom: 10, padding: '10px 14px', fontSize: '0.84rem', color: 'var(--text-2)', borderLeft: '3px solid var(--danger)' }}>
-            🚫 <b>自動忽略不打擾</b>：以下發送者（如常聊金額的朋友）或關鍵字（如停車折抵）命中時直接清除，不進收件匣、不跳紅點。
-          </div>
           <div className="list" style={{ marginBottom: 10 }}>
             <div className="field">
               <input

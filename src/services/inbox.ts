@@ -57,7 +57,7 @@ export interface InboxEntry {
 
 /** LINE 裡視為「官方帳號」的發送者：只有這些名稱出現在訊息裡、且像交易通知，才當作消費通知 */
 export const LINE_OFFICIAL_SENDERS = [
-  'LINE Pay', 'LINE Bank', '街口', '悠遊付', '悠遊卡', '一卡通', 'iPASS', 'icash', '全支付', '歐付寶',
+  'LINE Pay', 'LINE錢包', 'LINE 錢包', 'LINE Bank', '街口', '悠遊付', '悠遊卡', '一卡通', 'iPASS', 'icash', '全支付', '歐付寶',
   '國泰世華', '國泰', '中國信託', '中信', '玉山', '台新', 'Richart', '富邦', '永豐', '聯邦', '兆豐', '第一銀行', '華南',
   '合作金庫', '合庫', '彰化銀行', '彰銀', '凱基', '元大', '新光', '星展', '樂天', '渣打', '滙豐', '匯豐', '王道', '陽信', '遠東商銀', '郵局', '台灣Pay', '台灣 Pay',
 ];
@@ -69,6 +69,12 @@ const OFFICIAL_STYLE = /[【[][^】\]]{1,20}[】\]]|您|貴/;
 export function isLineChat(card: string): boolean {
   const app = card.split('\n').map((s) => s.trim()).filter(Boolean).pop() ?? '';
   return /^line$/i.test(app) || (/\bLINE\b/i.test(app) && !/pay|bank|錢包|購物/i.test(app));
+}
+
+/** 是否為純支付轉發渠道（LINE錢包 / LINE Pay / Apple Pay / Google Pay / Samsung Pay 等），背後可能綁多張卡，不該綁死或誤認現金錢包 */
+export function isPaymentRelayCard(card: string): boolean {
+  const app = card.split('\n').map((s) => s.trim()).filter(Boolean).pop() ?? '';
+  return /^(?:line\s*(?:錢包|pay)|apple\s*pay|google\s*pay|samsung\s*pay)$/i.test(app);
 }
 
 /** LINE 訊息是否為重點官方帳號的交易通知（發送者名稱＋交易字眼＋官方口吻，三者缺一不可） */
@@ -255,9 +261,13 @@ export function itemDate(it: Pick<InboxRaw, 'occurred' | 'created_at'>, today = 
 
 type Ctx = Awaited<ReturnType<typeof parseContext>>;
 
-/** 卡片名稱 → 帳戶：學過的對應優先，其次是名稱比對（「玉山 Pi 卡」→ 玉山銀行）；LINE 聊天訊息不當作卡片 */
+/** 卡片名稱 → 帳戶：學過的對應優先，其次是名稱比對（「玉山 Pi 卡」→ 玉山銀行）；LINE 聊天與支付轉發渠道（LINE錢包／LINE Pay 等）不綁死卡片對應 */
 export function cardAccount(card: string, ctx: Ctx, cardMap: Record<string, string>): string | undefined {
   if (!card || isLineChat(card)) return undefined;
+  if (isPaymentRelayCard(card)) {
+    const app = card.split('\n').map((s) => s.trim()).filter(Boolean).pop() ?? '';
+    return ctx.accounts.find((a) => a.name.trim().toLowerCase() === app.toLowerCase())?.id;
+  }
   const learned = cardMap[card];
   if (learned && ctx.accounts.some((a) => a.id === learned)) return learned;
   return findAccounts(card, ctx.accounts)[0]?.id;
@@ -314,12 +324,13 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
   for (const d of drafts) {
     let targetAcc: string | undefined;
     if (it.source === 'notify') {
-      // 若文字中提到非 App 本身的帳戶（例如 LINE Pay 通知提及「國泰世華」），優先以該銀行卡入帳
+      // 若文字中提到非 App 本身的銀行／信用卡帳戶（例如 LINE錢包 通知提及「中信Line Pay卡」→ 中國信託），優先以非現金銀行卡入帳
       const textAccs = findAccounts(it.text, ctx.accounts);
-      const bankAcc = textAccs.find((a) => {
+      const nonAppAccs = textAccs.filter((a) => {
         const accObj = ctx.accounts.find((acc) => acc.id === a.id);
         return accObj && accObj.name.toLowerCase() !== (it.card || '').toLowerCase();
       });
+      const bankAcc = nonAppAccs.find((a) => ctx.accounts.find((acc) => acc.id === a.id)?.type !== 'cash') ?? nonAppAccs[0];
       targetAcc = bankAcc?.id ?? byCard ?? d.accountId;
     } else {
       targetAcc = byCard ?? d.accountId;
@@ -458,10 +469,10 @@ export async function mergeDuplicate(e: InboxEntry): Promise<boolean> {
   return true;
 }
 
-/** 記住「這張卡 → 這個帳戶」（使用者已設定過的對應不會被自動覆蓋；LINE 聊天不學習） */
+/** 記住「這張卡 → 這個帳戶」（使用者已設定過的對應不會被自動覆蓋；LINE 聊天與支付轉發渠道不學習） */
 export function learnCard(card: string | undefined, accountId: string | undefined, opts: { overwrite?: boolean } = {}) {
   if (!card || !accountId) return;
-  if (!opts.overwrite && isLineChat(card)) return;
+  if (!opts.overwrite && (isLineChat(card) || isPaymentRelayCard(card))) return;
   const s = useSettings.getState();
   const existing = s.inbox.cardMap[card];
   if (existing && !opts.overwrite) return;
@@ -488,7 +499,7 @@ export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplic
       if (!res.txIds.length && !res.transferIds.length) alreadyBooked++;
       bookedItemIds.push(e.item.id);
       const first = e.drafts[0];
-      if (first && first.accountSource !== 'default' && !(e.item.source === 'notify' && isLineChat(e.item.card))) learnCard(e.item.card, first.accountId);
+      if (first && first.accountSource !== 'default' && !(e.item.source === 'notify' && (isLineChat(e.item.card) || isPaymentRelayCard(e.item.card)))) learnCard(e.item.card, first.accountId);
     } catch (err) {
       failedItemIds.push(e.item.id);
       console.warn(`[inbox] 入帳失敗，保留於收件匣：item ${e.item.id}`, err);

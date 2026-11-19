@@ -13,13 +13,21 @@ export async function bootstrap() {
   // 預設分類：全新資料庫才建立全部；之後只補上程式需要的系統分類（避免使用者刪掉的預設分類又跑回來，
   // 也避免新裝置的預設值經同步覆蓋其他裝置的修改）
   let isFresh = false;
-  await db.transaction('rw', db.categories, async (tx) => {
+  await db.transaction('rw', db.categories, db.meta, async (tx) => {
     markBaseline(tx);
     const existing = new Set(await db.categories.toCollection().primaryKeys());
     isFresh = existing.size === 0;
     const defaults = buildDefaultCategories();
-    const missing = isFresh ? defaults : defaults.filter((c) => c.id.startsWith('sys-') && !existing.has(c.id));
+    const pocketSeeded = !!(await db.meta.get('seed:inc-salary-pocket'));
+    const missing = isFresh
+      ? defaults
+      : defaults.filter((c) => c.id.startsWith('sys-') && !existing.has(c.id));
+    if (!isFresh && !pocketSeeded && existing.has('inc-salary') && !existing.has('inc-salary-pocket')) {
+      const pocket = defaults.find((c) => c.id === 'inc-salary-pocket');
+      if (pocket) missing.push(pocket);
+    }
     if (missing.length) await db.categories.bulkAdd(missing);
+    if (!pocketSeeded) await db.meta.put({ key: 'seed:inc-salary-pocket', value: 1 });
   });
   // 全新資料庫才補齊預設「其他」子分類，避免使用者刪除或封存後每次啟動又復活
   if (isFresh) {

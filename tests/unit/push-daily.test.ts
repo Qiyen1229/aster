@@ -6,8 +6,8 @@ vi.mock('@/services/api', async (orig) => ({ ...(await orig<object>()), api: vi.
 import { db } from '@/db/schema';
 import { DEFAULT_SETTINGS } from '@/db/repo/settings';
 import { useSettings } from '@/stores/settings';
-import { addDays, todayKey } from '@/domain/period';
-import { hasLoggedOn } from '@/services/notifications';
+import { addDays, toDateKey, todayKey, weekRange } from '@/domain/period';
+import { hasLoggedOn, runReminderChecks } from '@/services/notifications';
 import { upcomingPushItems } from '@/services/push';
 
 const today = todayKey();
@@ -48,11 +48,22 @@ describe('每日記帳提醒：已記帳就不通知', () => {
     expect(await hasLoggedOn(today)).toBe(true);
   });
 
-  it('備份提醒：push id 格式為 backup:YYYY-MM-DD，與本機通知 ID 規則一致', async () => {
-    useSettings.setState({ ...DEFAULT_SETTINGS, notify: { ...DEFAULT_SETTINGS.notify, backup: true, backupDays: 14 } } as never);
+  it('備份提醒預設每週（7 天）一次，同週內只會產生一則通知與推播 ID', async () => {
+    expect(DEFAULT_SETTINGS.notify.backupDays).toBe(7);
+    useSettings.setState({ ...DEFAULT_SETTINGS, weekStart: 1, notify: { ...DEFAULT_SETTINGS.notify, backup: true, backupDays: 7, daily: false, cardDue: false, budget: false, subscription: false, priceAlert: false, weekly: false, monthly: false } } as never);
     const items = await upcomingPushItems(14, new Date(`${today}T00:00:00`).getTime());
     const backupItem = items.find((i) => i.id.startsWith('backup:'));
     expect(backupItem).toBeDefined();
-    expect(backupItem?.id).toMatch(/^backup:\d{4}-\d{2}-\d{2}$/);
+    const expectedPushWeek = weekRange(toDateKey(new Date(backupItem!.at)), 1).start;
+    expect(backupItem?.id).toBe(`backup:${expectedPushWeek}`);
+
+    // 本機備份提醒（超過 20 筆帳目且尚未備份）：同週內檢查多次只會寫入一則每週去重紀錄
+    await db.transactions.bulkAdd(Array.from({ length: 21 }, (_, idx) => tx(`bulk-${idx}`, today)) as never);
+    await db.reminders.clear();
+    await runReminderChecks();
+    await runReminderChecks();
+    const backupReminders = (await db.reminders.toArray()).filter((r) => r.kind === 'backup');
+    expect(backupReminders).toHaveLength(1);
+    expect(backupReminders[0].id).toBe(`backup:${weekRange(today, 1).start}`);
   });
 });

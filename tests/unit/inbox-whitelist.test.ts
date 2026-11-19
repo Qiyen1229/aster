@@ -332,4 +332,47 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     expect(hsrDrafts[0].accountId).not.toBe('twbank');
     expect(hsrDrafts[0].note).toBe('台灣高鐵');
   });
+
+  it('LINE錢包「中信Line Pay卡」正確對應中國信託，不會因 LINE錢包 撞名現金錢包或卡在 cardMap', async () => {
+    const { draftsFromItem, learnCard } = await import('@/services/inbox');
+    const { parseContext } = await import('@/services/quickentry');
+    await db.accounts.bulkPut([
+      { id: 'wallet-cash', name: '錢包', type: 'cash', currency: 'TWD', icon: '👛', color: '', initialBalanceMinor: 50000, balanceMinor: 50000, includeInNetWorth: true, isLiability: false, sort: 0, archived: 0, createdAt: 1, updatedAt: 1 },
+      { id: 'ctbc-bank', name: '中國信託', type: 'bank', currency: 'TWD', icon: '🏦', color: '', initialBalanceMinor: 100000, balanceMinor: 100000, includeInNetWorth: true, isLiability: false, sort: 1, archived: 0, createdAt: 1, updatedAt: 1 },
+    ]);
+    // 模擬過去誤把 LINE錢包 學成 錢包，且預設帳戶設為 中國信託
+    useSettings.setState({
+      inbox: {
+        ...useSettings.getState().inbox,
+        defaultAccountId: 'ctbc-bank',
+        whitelist: ['LINE錢包'],
+        cardMap: { 'LINE錢包': 'wallet-cash' },
+      },
+    });
+    const ctx = await parseContext();
+
+    // 1. 統一超商：回饋：中信Line Pay卡一般（來源卡別 LINE錢包）→ 應精準歸戶到「中國信託」而非「錢包」
+    const ctbcItem = raw(40, 'LINE錢包', 'LINE錢包\n統一超商：回饋：中信Line Pay卡一般 120 元', '統一超商');
+    const ctbcDrafts = await draftsFromItem(ctbcItem, ctx, 'wallet-cash');
+    expect(ctbcDrafts).toHaveLength(1);
+    expect(ctbcDrafts[0].accountId).toBe('ctbc-bank');
+
+    // learnCard 不應再把 LINE錢包 寫死到 cardMap
+    learnCard('LINE錢包', 'wallet-cash');
+    expect(useSettings.getState().inbox.cardMap['LINE錢包']).toBe('wallet-cash'); // 未覆蓋既有值，且無先前紀錄時不會新增
+    learnCard('LINE Pay', 'wallet-cash');
+    expect(useSettings.getState().inbox.cardMap['LINE Pay']).toBeUndefined();
+
+    // 2. 沒提銀行名稱的 LINE錢包 通知 → 退回預設帳戶 中國信託，不被「LINE錢包」吸走成現金錢包
+    const fallbackItem = raw(41, 'LINE錢包', 'LINE錢包\n於 無名小店 消費 80 元', '無名小店');
+    const fallbackDrafts = await draftsFromItem(fallbackItem, ctx, 'wallet-cash');
+    expect(fallbackDrafts[0].accountId).toBe('ctbc-bank');
+
+    // 3. 語意防呆：中信房屋不誤判中國信託；用錢包付午餐仍正常命中現金錢包
+    const houseDrafts = await draftsFromItem(raw(42, '簡訊', '中信房屋仲介服務費 500 元', '中信房屋'), ctx, 'wallet-cash');
+    expect(houseDrafts[0].accountId).toBe('ctbc-bank'); // 注意預設帳戶也是 ctbc-bank，改檢查 findAccounts 直接結果
+    const { findAccounts } = await import('@/domain/nlp');
+    expect(findAccounts('中信房屋 500 元', ctx.accounts)).toEqual([]);
+    expect(findAccounts('用錢包付午餐 100 元', ctx.accounts)[0]?.id).toBe('wallet-cash');
+  });
 });

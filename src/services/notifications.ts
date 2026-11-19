@@ -9,7 +9,7 @@ import type { Reminder } from '@/db/types';
 import { useSettings } from '@/stores/settings';
 import { computeBudgets } from '@/db/repo/plan';
 import { creditCardStatement } from '@/db/repo/accounts';
-import { addDays, todayKey } from '@/domain/period';
+import { addDays, todayKey, weekRange } from '@/domain/period';
 import { formatMoney } from '@/domain/money';
 
 export type NotifyKind = Reminder['kind'];
@@ -152,12 +152,13 @@ export async function runReminderChecks(now = new Date()) {
       sum.insights.slice(0, 2).join(' '), `/reports/summary?unit=${unit}&date=${sum.range.start}`, 'insight', id, { system: !cfg.push });
   }
 
-  // 備份提醒
+  // 備份提醒：同一週（依週一起始日計算）最多通知一次，避免未備份時每天重複洗版
   if (cfg.backup) {
     const last = (await db.meta.get('lastBackupAt'))?.value as number | undefined;
     const txCount = await db.transactions.count();
+    const weekKey = weekRange(today, s.weekStart).start;
     if (txCount > 20 && (!last || Date.now() - last > cfg.backupDays * 86400000)) {
-      await notify('💾 該備份囉', last ? `距離上次備份已 ${Math.floor((Date.now() - last) / 86400000)} 天` : '你還沒有備份過資料', '/settings/backup', 'backup', `backup:${today}`);
+      await notify('💾 該備份囉', last ? `距離上次備份已 ${Math.floor((Date.now() - last) / 86400000)} 天` : '你還沒有備份過資料', '/settings/backup', 'backup', `backup:${weekKey}`);
     }
   }
 }

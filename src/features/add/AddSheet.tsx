@@ -526,6 +526,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
 
   // ── 最近常記：備註欄下方列出過去同名的備註，點一下帶入金額、分類、帳戶、標籤 ──
   const [noteSugs, setNoteSugs] = useState<NoteSuggestion[]>([]);
+  const [quickSugs, setQuickSugs] = useState<NoteSuggestion[]>([]);
   // 釘選的常用項目（v4.1.8）：排在建議最前面，不受「近 90 天」「最近 800 筆」限制；釘選有變動就重新整理建議
   const pinsLive = useLiveQuery(() => listPinned(), []);
   const pins = useMemo(() => pinsLive ?? [], [pinsLive]);
@@ -536,29 +537,37 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       void recentNoteSuggestions(note, mode, txCurrency).then((r) => { if (alive) setNoteSugs(r); }).catch(() => undefined);
     }, 150);
     return () => { alive = false; clearTimeout(t); };
-  }, [note, mode, txCurrency, editing, pins]);  
-  const applyNoteSuggestion = (sg: NoteSuggestion) => {
+  }, [note, mode, txCurrency, editing, pins]);
+  useEffect(() => {
+    if (!quickOpen || (mode !== 'expense' && mode !== 'income')) { setQuickSugs([]); return; }
+    let alive = true;
+    void recentNoteSuggestions('', mode, txCurrency).then((r) => { if (alive) setQuickSugs(r); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [quickOpen, mode, txCurrency, pins]);
+  const pinnedSugs = useMemo(() => quickSugs.filter((x) => !!x.pinnedId), [quickSugs]);
+  const recentSugs = useMemo(() => quickSugs.filter((x) => !x.pinnedId), [quickSugs]);
+  const applyNoteSuggestion = (sg: NoteSuggestion, overwriteAmount = false) => {
     catTouched.current = true;
     setAutoCat(null);
     const c = catMap.get(sg.categoryId);
     if (c && c.kind === kind && !c.archived) { setCatByKind((cur) => ({ ...cur, [c.kind]: c.id })); setMainOpen(c.parentId || c.id); catPickedByKind.current[kind] = true; setCatPicking(false); }
     const acc = accMap.get(sg.accountId);
     if (acc && !acc.archived && acc.currency === txCurrency) setAccountId(acc.id);
-    if (!expr) setExpr(fromMinor(sg.amountMinor, sg.currency).toString());
+    if (overwriteAmount || !expr) setExpr(fromMinor(sg.amountMinor, sg.currency).toString());
     setNote(sg.note);
     if (sg.pinnedId) void touchPinned(sg.pinnedId);
     if (sg.tagIds.length) setTagIds((ids) => [...new Set([...ids, ...sg.tagIds.filter((x) => tagMap.has(x))])]);
     navigator.vibrate?.(8);
   };
 
-  // ── 釘選：把這一筆存成常用，之後在建議最前面一點就套用 ──
+  // ── 釘選：把這一筆存成常用，之後在建議最前面一點就套用（新增與編輯皆可釘選／更新） ──
   const pinType = mode === 'expense' || mode === 'income' ? mode : null;
   // 沒寫備註也能釘選：用分類名稱當名稱（例如「晚餐」），套用時備註就會帶入這個名稱
   const pinName = note.trim() || catMap.get(categoryId)?.name || '';
   const curPin = pinType ? findPinned(pins, { type: pinType, note: pinName, currency: txCurrency }) : undefined;
-  const canPin = !!pinType && !editing && !!pinName && amountMinor > 0 && !!categoryId && !!accountId;
+  const canPin = !!pinType && !!pinName && amountMinor > 0 && !!categoryId && !!accountId;
   const pinChanged = !!curPin && (curPin.payload.amountMinor !== amountMinor || curPin.payload.categoryId !== categoryId || curPin.payload.accountId !== accountId);
-  /** 右上角的釘選鈕：還沒釘→釘選；釘過但內容改了→更新；釘過且沒改→取消釘選。缺金額時說明原因，不是靜默沒反應 */
+  /** 釘選鈕：還沒釘→釘選；釘過但內容改了→更新；釘過且沒改→取消釘選。缺金額時說明原因，不是靜默沒反應 */
   const doPin = async () => {
     if (!pinType) return;
     if (!canPin) { useUI.getState().showSnack({ text: amountMinor > 0 ? '先選好分類與帳戶，再釘選' : '先輸入金額，再釘選這一筆' }); return; }
@@ -568,6 +577,22 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       useUI.getState().showSnack({ text: r.created ? `已釘選「${pinName}」：之後在記帳面板的最前面一點就能套用` : `已更新「${pinName}」的釘選內容` });
       navigator.vibrate?.(8);
     } catch (e) { useUI.getState().showSnack({ text: (e as Error).message }); }
+  };
+  const duplicateAsNew = () => {
+    if (mode !== 'expense' && mode !== 'income') return;
+    setQuickOpen(false);
+    useUI.getState().openAdd({
+      mode,
+      amount: expr || (amountMinor > 0 ? fromMinor(amountMinor, txCurrency).toString() : undefined),
+      currency: txCurrency,
+      categoryId: categoryId || undefined,
+      accountId: accountId || undefined,
+      note,
+      tagIds,
+      projectId: projectId || undefined,
+      skipBudget,
+    });
+    useUI.getState().showSnack({ text: '已複製為新的一筆，可直接調整並儲存' });
   };
   const sugActions = (x: NoteSuggestion) => useUI.getState().showActions(x.note, x.pinnedId
     ? [{ label: '取消釘選', icon: '📌', onSelect: () => void unpin(x.pinnedId!).then(() => useUI.getState().showSnack({ text: `已取消釘選「${x.note}」` })) }]
@@ -672,8 +697,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         aria-label={title}
       >
         <div className="add-shell">
-          {/* 精簡頂列：左側關閉、中間緊湊類型切換（或編輯標題）、右側 ⚡ 常用／釘選或刪除 */}
-          <header className="add-topbar">
+          {/* 精簡頂列：左側關閉、中間緊湊類型切換（或編輯標題）、右側 ⚡ 常用／釘選與編輯刪除 */}
+          <header className={`add-topbar${editing && (mode === 'expense' || mode === 'income') ? ' has-two' : ''}`}>
             <button type="button" className="add-top-btn" onClick={requestClose} aria-label="關閉">
               <Icon name="close" size={19} />
             </button>
@@ -700,9 +725,21 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
             )}
 
             {editing ? (
-              <button type="button" className="add-top-btn danger" onClick={() => void handleDelete()} aria-label="刪除">
-                <Icon name="trash" size={18} />
-              </button>
+              <div className="add-top-actions">
+                {(mode === 'expense' || mode === 'income') && (
+                  <LongPressButton
+                    className={`add-top-btn${pins.length > 0 || curPin ? ' on' : ''}`}
+                    onClick={() => setQuickOpen(true)}
+                    onLongPress={() => setQuickOpen(true)}
+                    aria-label="常用與釘選"
+                  >
+                    <Icon name="zap" size={18} />
+                  </LongPressButton>
+                )}
+                <button type="button" className="add-top-btn danger" onClick={() => void handleDelete()} aria-label="刪除">
+                  <Icon name="trash" size={18} />
+                </button>
+              </div>
             ) : (mode === 'expense' || mode === 'income') ? (
               <LongPressButton
                 className={`add-top-btn${pins.length > 0 || curPin ? ' on' : ''}`}
@@ -1083,53 +1120,143 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         </div>
       </div>
 
-      {/* ⚡ 常用與釘選捷徑選單 */}
+      {/* ⚡ 常用與釘選捷徑選單（獨立分區：操作卡片 / 📌 已釘選 / 🕘 最近常用） */}
       <Sheet open={quickOpen} onClose={() => setQuickOpen(false)} title="常用與釘選">
         {pinType && (
-          <div className="list" style={{ marginBottom: 12 }}>
-            <button type="button" className="row" onClick={() => void doPin()} style={{ width: '100%', textAlign: 'left' }}>
-              <Icon name="pin" size={18} />
-              <span className="row-main">
-                {curPin && !pinChanged ? `取消釘選「${pinName}」` : curPin ? `更新釘選「${pinName}」` : '釘選目前這筆'}
+          <div className="quick-hero">
+            <button
+              type="button"
+              className={`quick-pin-hero${curPin && !pinChanged ? ' active' : ''}`}
+              onClick={() => void doPin()}
+            >
+              <span className="quick-pin-ico" aria-hidden="true"><Icon name="pin" size={18} /></span>
+              <span className="quick-pin-main">
+                <strong>
+                  {curPin && !pinChanged ? `取消釘選「${pinName}」` : curPin ? `更新釘選「${pinName}」` : '釘選目前這筆'}
+                </strong>
+                <span>
+                  {canPin
+                    ? `${catMap.get(categoryId)?.name ?? ''}${account ? ` · ${account.name}` : ''}`
+                    : '輸入金額並選好分類與帳戶即可固定為常用'}
+                </span>
               </span>
-              <span className="muted" style={{ fontSize: '0.8rem' }}>{canPin ? formatMoney(amountMinor, txCurrency) : '需先填金額'}</span>
+              <span className="quick-pin-badge">
+                {canPin ? formatMoney(amountMinor, txCurrency) : '需先填金額'}
+              </span>
             </button>
+            {editing && (
+              <div className="quick-secondary-actions">
+                <button type="button" className="quick-sub-act" onClick={duplicateAsNew}>
+                  <Icon name="copy" size={15} />
+                  <span>複製為新的一筆</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
-        {noteSugs.length > 0 ? (
-          <div className="list" aria-label="常用與釘選列表">
-            {noteSugs.map((x) => {
-              const c = catMap.get(x.categoryId);
-              return (
-                <div key={`${x.pinnedId ?? 'r'}:${x.note}`} className="row" style={{ padding: 0, gap: 0 }}>
-                  <LongPressButton
-                    className="row"
-                    style={{ flex: 1, minWidth: 0, textAlign: 'left', border: 0 }}
-                    onClick={() => { applyNoteSuggestion(x); setQuickOpen(false); }}
-                    onLongPress={() => sugActions(x)}
-                    aria-label={`${x.pinnedId ? '釘選的 ' : ''}${x.note}，${formatMoney(x.amountMinor, x.currency)}，${c?.name ?? ''}`}
-                  >
-                    <span aria-hidden="true" style={{ fontSize: '1.1rem' }}>{x.pinnedId ? '📌' : c?.icon ?? '🕘'}</span>
-                    <span className="row-main">
-                      <b>{x.note}</b>
-                      {c && <span className="muted" style={{ fontSize: '0.8rem', marginLeft: 6 }}>{c.name}</span>}
-                    </span>
-                    <span className="num" style={{ fontWeight: 600 }}>{formatMoney(x.amountMinor, x.currency)}</span>
-                  </LongPressButton>
-                  <button
-                    type="button"
-                    aria-label={`管理「${x.note}」`}
-                    style={{ padding: '10px 12px', color: 'var(--text-2)', flex: 'none' }}
-                    onClick={() => sugActions(x)}
-                  >
-                    <Icon name="more" size={16} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
+
+        {pinnedSugs.length === 0 && recentSugs.length === 0 ? (
           <EmptyState emoji="⚡" title="還沒有常用或釘選項目" text="常記的項目會自動出現在這裡，也可以把目前的記帳釘選起來。" />
+        ) : (
+          <div className="quick-sections" aria-label="常用與釘選列表">
+            <section className="quick-section" aria-label="已釘選項目">
+              <div className="quick-sec-head">
+                <span className="quick-sec-title">📌 已釘選</span>
+                <span className="quick-sec-count">{pinnedSugs.length}</span>
+              </div>
+              {pinnedSugs.length > 0 ? (
+                <div className="quick-list is-pinned">
+                  {pinnedSugs.map((x) => {
+                    const c = catMap.get(x.categoryId);
+                    const acc = accMap.get(x.accountId);
+                    return (
+                      <div key={`pin:${x.pinnedId ?? x.note}`} className="quick-item is-pinned">
+                        <LongPressButton
+                          className="quick-item-tap"
+                          onClick={() => { applyNoteSuggestion(x, true); setQuickOpen(false); }}
+                          onLongPress={() => sugActions(x)}
+                          aria-label={`釘選的 ${x.note}，${formatMoney(x.amountMinor, x.currency)}，${c?.name ?? ''}`}
+                        >
+                          <span className="cat-icon sm" style={{ ['--c' as string]: c?.color ?? 'var(--accent)' }}>
+                            <CatIcon icon={c?.icon ?? '📌'} size={17} />
+                          </span>
+                          <span className="quick-item-main">
+                            <strong>{x.note}</strong>
+                            <span className="quick-item-meta">
+                              {c?.name ?? '未分類'}{acc ? ` · ${acc.name}` : ''}
+                            </span>
+                          </span>
+                          <span className="quick-item-amt num">{formatMoney(x.amountMinor, x.currency)}</span>
+                        </LongPressButton>
+                        <button
+                          type="button"
+                          className="quick-item-act is-pinned"
+                          title={`取消釘選「${x.note}」`}
+                          aria-label={`取消釘選「${x.note}」`}
+                          onClick={() => void unpin(x.pinnedId!).then(() => useUI.getState().showSnack({ text: `已取消釘選「${x.note}」` }))}
+                        >
+                          <Icon name="pin" size={15} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="quick-empty-pin">尚未釘選項目，可點擊上方「釘選目前這筆」或下方圖釘快速固定</div>
+              )}
+            </section>
+
+            {recentSugs.length > 0 && (
+              <section className="quick-section" aria-label="最近常用項目">
+                <div className="quick-sec-head">
+                  <span className="quick-sec-title">🕘 最近常用</span>
+                  <span className="quick-sec-count">{recentSugs.length}</span>
+                </div>
+                <div className="quick-list">
+                  {recentSugs.map((x) => {
+                    const c = catMap.get(x.categoryId);
+                    const acc = accMap.get(x.accountId);
+                    return (
+                      <div key={`rec:${x.note}:${x.categoryId}`} className="quick-item">
+                        <LongPressButton
+                          className="quick-item-tap"
+                          onClick={() => { applyNoteSuggestion(x, true); setQuickOpen(false); }}
+                          onLongPress={() => sugActions(x)}
+                          aria-label={`${x.note}，${formatMoney(x.amountMinor, x.currency)}，${c?.name ?? ''}`}
+                        >
+                          <span className="cat-icon sm" style={{ ['--c' as string]: c?.color ?? '#8E8E93' }}>
+                            <CatIcon icon={c?.icon ?? '🕘'} size={17} />
+                          </span>
+                          <span className="quick-item-main">
+                            <strong>{x.note}</strong>
+                            <span className="quick-item-meta">
+                              {c?.name ?? '未分類'}{acc ? ` · ${acc.name}` : ''}
+                            </span>
+                          </span>
+                          <span className="quick-item-amt num">{formatMoney(x.amountMinor, x.currency)}</span>
+                        </LongPressButton>
+                        <button
+                          type="button"
+                          className="quick-item-act"
+                          title={`釘選「${x.note}」`}
+                          aria-label={`釘選「${x.note}」`}
+                          onClick={() => void pinTransaction({
+                            type: pinType ?? 'expense', note: x.note, amountMinor: x.amountMinor, currency: x.currency,
+                            categoryId: x.categoryId, accountId: x.accountId, tagIds: x.tagIds,
+                          }).then(
+                            () => useUI.getState().showSnack({ text: `已釘選「${x.note}」` }),
+                            (e: Error) => useUI.getState().showSnack({ text: e.message }),
+                          )}
+                        >
+                          <Icon name="pin" size={15} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+          </div>
         )}
       </Sheet>
 

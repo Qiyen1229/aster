@@ -12,7 +12,31 @@ const GENERIC_ACCOUNT_WORDS = new Set([
   'twd', 'usd', 'jpy', 'eur', 'hkd', 'cny', 'rmb', 'plus', 'pro', 'max',
 ]);
 
-/** 帳戶的比對詞：完整名稱、去掉「銀行／卡／帳戶」的名稱（至少 2 個字） */
+/** 台灣常見銀行／發卡品牌簡稱（僅在帳本存在對應非現金帳戶時啟用，讓「中信Line Pay卡」可對應「中國信託」） */
+const BANK_ALIASES: [RegExp, string[]][] = [
+  [/中國信託|ctbc/i, ['中信', 'ctbc']],
+  [/國泰世華|國泰/i, ['國泰', 'cube']],
+  [/玉山/i, ['玉山', 'unicard', 'pi卡']],
+  [/台新/i, ['台新', 'richart', 'gogo', 'flygo']],
+  [/台北富邦|富邦/i, ['富邦', 'j卡']],
+  [/永豐/i, ['永豐', '大戶', 'dawho']],
+  [/合作金庫|合庫/i, ['合庫']],
+  [/彰化銀行|彰銀/i, ['彰銀']],
+  [/第一銀行|一銀/i, ['一銀']],
+  [/台灣銀行|臺灣銀行|台銀/i, ['台銀']],
+  [/華南/i, ['華南']],
+  [/兆豐/i, ['兆豐']],
+  [/聯邦/i, ['聯邦', '吉鶴卡']],
+  [/凱基/i, ['凱基']],
+  [/元大/i, ['元大']],
+  [/遠東/i, ['遠銀']],
+  [/星展|dbs/i, ['星展', 'dbs']],
+  [/滙豐|匯豐|hsbc/i, ['滙豐', '匯豐', 'hsbc']],
+  [/渣打/i, ['渣打']],
+  [/中華郵政|郵局/i, ['郵局', '郵政']],
+];
+
+/** 帳戶的比對詞：完整名稱、去掉「銀行／卡／帳戶」的簡稱、銀行常用別名（至少 2 個字） */
 function accountTerms(a: NlpAccount): string[] {
   const n = a.name.trim();
   const short = n.replace(ACCOUNT_SUFFIX, '').trim();
@@ -24,22 +48,30 @@ function accountTerms(a: NlpAccount): string[] {
       terms.push(w);
     }
   }
+  if (a.type !== 'cash') {
+    for (const [re, aliases] of BANK_ALIASES) {
+      if (re.test(n)) terms.push(...aliases);
+    }
+  }
   if (a.type === 'cash') terms.push('現金');
-  return terms.map((x) => x.toLowerCase());
+  return [...new Set(terms.map((x) => x.toLowerCase()))];
 }
 
 export interface AccountHit { id: string; index: number; term: string }
 
-function findTermIndex(lower: string, term: string): number {
+function findTermIndex(lower: string, term: string, from = 0): number {
+  const slice = from > 0 ? lower.slice(from) : lower;
   if (/^[a-z0-9]+$/.test(term)) {
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const m = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).exec(lower);
-    return m ? m.index : -1;
+    const m = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`).exec(slice);
+    return m ? from + m.index : -1;
   }
-  return lower.indexOf(term);
+  const idx = slice.indexOf(term);
+  return idx >= 0 ? from + idx : -1;
 }
 
-const NON_ACCOUNT_FOLLOW = /^(?:醫院|三越|百貨|人壽|產險|高鐵|台鐵|大哥大|大車隊|啤酒|電力|名|次|天|家|樓|街|路|店|館|市場)/;
+const NON_ACCOUNT_FOLLOW = /^(?:醫院|三越|百貨|人壽|產險|高鐵|台鐵|大哥大|大車隊|啤酒|電力|房屋|建商|建設|兄弟|象|金控|證券|名|次|天|家|樓|街|路|店|館|市場)/;
+const WALLET_CHANNEL_PREFIX = /(?:line\s*|街口|電子|行動|數位|虛擬|悠遊|全支付|apple\s*|google\s*)$/;
 
 /** 依出現位置找出提到的帳戶（同一段文字只算最長的那個詞） */
 export function findAccounts(text: string, accounts: NlpAccount[]): AccountHit[] {
@@ -48,12 +80,21 @@ export function findAccounts(text: string, accounts: NlpAccount[]): AccountHit[]
   for (const a of accounts) {
     const fullLower = a.name.trim().toLowerCase();
     for (const term of accountTerms(a)) {
-      const i = findTermIndex(lower, term);
-      if (i >= 0) {
+      let from = 0;
+      while (from < lower.length) {
+        const i = findTermIndex(lower, term, from);
+        if (i < 0) break;
         if (term !== fullLower && a.type !== 'cash' && NON_ACCOUNT_FOLLOW.test(lower.slice(i + term.length, i + term.length + 4))) {
+          from = i + term.length;
+          continue;
+        }
+        // 避免「LINE錢包」「街口錢包」「電子錢包」等支付通道名稱中的「錢包」被誤認為現金「錢包」帳戶
+        if (term === '錢包' && WALLET_CHANNEL_PREFIX.test(lower.slice(Math.max(0, i - 8), i))) {
+          from = i + term.length;
           continue;
         }
         hits.push({ id: a.id, index: i, term });
+        break;
       }
     }
   }
@@ -113,6 +154,7 @@ const SYNONYMS: Synonym[] = [
   { names: ['禮物'], kind: 'expense', generic: ['禮物', '送禮'] },
   { names: ['獸醫'], kind: 'expense', generic: ['獸醫', '看獸醫'] },
   { names: ['薪資', '本薪'], kind: 'income', generic: ['薪水', '月薪', '薪資', '發薪'] },
+  { names: ['零用金'], kind: 'income', generic: ['零用金', '零用錢'] },
   { names: ['獎金'], kind: 'income', generic: ['獎金', '年終'] },
   { names: ['兼職外快', '兼職'], kind: 'income', generic: ['兼職', '外快', '接案'] },
   { names: ['禮金紅包'], kind: 'income', generic: ['紅包', '禮金', '收紅包'] },

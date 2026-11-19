@@ -48,7 +48,7 @@ const EXPENSE: Main[] = [
 ];
 
 const INCOME: Main[] = [
-  ['salary', '薪資', '💼', '#30D158', [['base', '本薪', '💵'], ['overtime', '加班費', '⏰'], ['allowance', '津貼', '🎫']]],
+  ['salary', '薪資', '💼', '#30D158', [['base', '本薪', '💵'], ['overtime', '加班費', '⏰'], ['allowance', '津貼', '🎫'], ['pocket', '零用金', '🪙']]],
   ['bonus', '獎金', '🏆', '#FFD60A', [['yearend', '年終', '🧧'], ['performance', '績效', '📊']]],
   ['interest', '利息', '🏦', '#64D2FF', [], 'interest'],
   ['dividend', '股利', '💰', '#FF9F0A', [], 'dividend'],
