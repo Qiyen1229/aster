@@ -61,9 +61,9 @@ export const LINE_OFFICIAL_SENDERS = [
   '國泰世華', '國泰', '中國信託', '中信', '玉山', '台新', 'Richart', '富邦', '永豐', '聯邦', '兆豐', '第一銀行', '華南',
   '合作金庫', '合庫', '彰化銀行', '彰銀', '凱基', '元大', '新光', '星展', '樂天', '渣打', '滙豐', '匯豐', '王道', '陽信', '遠東商銀', '郵局', '台灣Pay', '台灣 Pay',
 ];
-const TXN_WORDS = /消費|刷卡|扣款|付款成功|支付成功|交易成功|交易通知|授權|繳費成功|入帳|轉帳|退款|退刷|代扣/;
-/** 官方通知通常有【標題】或稱呼「您／貴客」；朋友聊天通常沒有 */
-const OFFICIAL_STYLE = /[【[][^】\]]{1,20}[】\]]|您|貴/;
+const TXN_WORDS = /消費|刷卡|扣款|付款成功|支付成功|交易成功|交易通知|授權|繳費成功|入帳|轉帳|退款|退刷|代扣|存款/;
+/** 官方通知通常有【標題】、稱呼「您／貴客」，或銀行制式欄位（入帳時間／後四碼／新臺幣金額） */
+const OFFICIAL_STYLE = /[【[][^】\]]{1,20}[】\]]|您|貴|(?:通知|明細|帳號|卡號|末四碼|後四碼|時間|金額)\s*[:：]|(?:新[台臺]幣|NT\$)\s*[\d,]+/;
 
 /** 這則通知是不是來自 LINE 聊天（而不是 LINE Pay、LINE Bank 這類支付 App） */
 export function isLineChat(card: string): boolean {
@@ -77,12 +77,23 @@ export function isPaymentRelayCard(card: string): boolean {
   return /^(?:line\s*(?:錢包|pay)|apple\s*pay|google\s*pay|samsung\s*pay)$/i.test(app);
 }
 
-/** LINE 訊息是否為重點官方帳號的交易通知（發送者名稱＋交易字眼＋官方口吻，三者缺一不可） */
+/** LINE 訊息是否為重點官方帳號的交易通知（支援多行與單行「發送者：內容」，發送者名稱＋交易字眼＋官方格式三者缺一不可） */
 export function isTrustedLineNotice(text: string): boolean {
-  const lines = text.normalize('NFKC').split('\n').map((s) => s.trim()).filter(Boolean);
-  if (lines.length < 2) return false;
-  const sender = lines[0].toLowerCase();
-  const body = lines.slice(1).join('\n');
+  const norm = text.normalize('NFKC');
+  const lines = norm.split('\n').map((s) => s.trim()).filter(Boolean);
+  if (!lines.length) return false;
+  let sender = '';
+  let body = '';
+  if (lines.length >= 2) {
+    const colon = lines[0].match(/^([^:：]{1,30})[:：]\s*(.+)$/);
+    sender = (colon ? colon[1] : lines[0]).trim().toLowerCase();
+    body = colon ? `${colon[2]}\n${lines.slice(1).join('\n')}` : lines.slice(1).join('\n');
+  } else {
+    const colon = lines[0].match(/^([^:：]{1,30})[:：]\s*(.+)$/);
+    if (!colon) return false;
+    sender = colon[1].trim().toLowerCase();
+    body = colon[2];
+  }
   return LINE_OFFICIAL_SENDERS.some((n) => sender === n.normalize('NFKC').toLowerCase()) && TXN_WORDS.test(body) && OFFICIAL_STYLE.test(body);
 }
 
@@ -100,9 +111,15 @@ function matchesList(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }
 export function matchesWhitelist(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }, whitelist: string[]): boolean {
   const names = (it.card ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
   if (isLineChat(it.card ?? '')) {
-    const lines = it.text.split('\n').map((s) => s.trim()).filter(Boolean);
+    const lines = it.text.normalize('NFKC').split('\n').map((s) => s.trim()).filter(Boolean);
     names.length = 0;
-    if (lines.length > 1) names.push(lines[0]);
+    if (lines.length > 1) {
+      const colon = lines[0].match(/^([^:：]{1,30})[:：]/);
+      names.push(colon ? colon[1].trim() : lines[0]);
+    } else if (lines.length === 1) {
+      const colon = lines[0].match(/^([^:：]{1,30})[:：]/);
+      if (colon) names.push(colon[1].trim());
+    }
   }
   return names.some((name) => whitelist.some((w) => w.trim().length > 0 && name.normalize('NFKC').toLowerCase() === w.trim().normalize('NFKC').toLowerCase()));
 }
@@ -298,7 +315,7 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     // 通知／簡訊：多個金額時優先取真實交易金額（避開餘額、額度、手續費），並保留 parseEntries 辨識出的 income（如入帳、薪資、轉入）
     if (it.source === 'notify' || it.source === 'sms' || it.source === 'email') {
       const merchant = it.merchant || noticeMerchant(it.text);
-      const isBalanceOrFee = (d: DraftEntry) => /(?:餘額|結餘|可用額度|信用額度|手續費)/.test(d.raw);
+      const isBalanceOrFee = (d: DraftEntry) => /(?:餘額|結餘|可用額度|信用額度|手續費|(?:帳號|卡號)?(?:後|末)四碼)/.test(d.raw);
       const primary = drafts.find((d) => !isBalanceOrFee(d) && d.amount > 0)
         ?? drafts.find((d) => d.amount > 0)
         ?? drafts[0];
@@ -312,6 +329,9 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
       const fallbackNote = primary.note
         .replace(/【[^】]{1,24}】/g, ' ')
         .replace(/(?:消費|刷卡|交易|付款|扣款|支付)通知\s*[:：]?/g, ' ')
+        .replace(/(?:實際款項|交易明細).*$/g, ' ')
+        .replace(/(?:入帳|交易)時間\s*[:：]?.{0,24}/g, ' ')
+        .replace(/(?:入帳)?(?:帳號|卡號)?(?:後|末)四碼\s*[:：]?\s*\d*/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 40);

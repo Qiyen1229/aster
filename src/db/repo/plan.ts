@@ -397,9 +397,17 @@ export async function removeLoan(debtId: string) {
  * - 對方還我：收入（不計入收支統計，因為原本的支出已只算我的份額）
  * - 我還對方：支出（計入統計，分類用債務上的分類）
  */
-export async function settleDebt(id: string, accountId?: string) {
+export async function settleDebt(
+  id: string,
+  accountId?: string,
+  opts?: { date?: string; ts?: number; note?: string; amountMinor?: number },
+): Promise<string> {
   const d = await db.debts.get(id);
-  if (!d || d.settled) return;
+  if (!d || d.settled) return id;
+  const settleMinor = opts?.amountMinor !== undefined && opts.amountMinor > 0 && opts.amountMinor < d.amountMinor
+    ? opts.amountMinor
+    : d.amountMinor;
+  const isPartial = settleMinor < d.amountMinor;
   let txId: string | undefined;
   if (accountId) {
     const person = await db.people.get(d.personId);
@@ -409,14 +417,31 @@ export async function settleDebt(id: string, accountId?: string) {
       type: theyPay ? 'income' : 'expense',
       accountId,
       categoryId: loan ? (theyPay ? 'sys-debt-in' : 'sys-debt-out') : theyPay ? 'inc-refund' : d.categoryId || 'exp-other_exp',
-      amountMinor: d.amountMinor, currency: d.currency, date: todayKey(), ts: Date.now(),
-      note: `${theyPay ? '收回' : '還給'} ${person?.name ?? ''}${d.note ? `：${d.note}` : ''}`,
+      amountMinor: settleMinor, currency: d.currency, date: opts?.date ?? todayKey(), ts: opts?.ts ?? Date.now(),
+      note: opts?.note?.trim() || `${theyPay ? '收回' : '還給'} ${person?.name ?? ''}${d.note ? `：${d.note}` : ''}`,
       excludeFromStats: theyPay || loan,
       excludeFromBudget: loan || undefined,
     });
     txId = tx.id;
   }
-  await db.debts.update(id, { settled: 1, settledAt: now(), settleTransferId: txId, updatedAt: now() });
+  const t = now();
+  if (isPartial) {
+    const paidId = uid();
+    await db.debts.add({
+      ...d,
+      id: paidId,
+      amountMinor: settleMinor,
+      settled: 1,
+      settledAt: t,
+      settleTransferId: txId,
+      createdAt: t,
+      updatedAt: t,
+    });
+    await db.debts.update(id, { amountMinor: d.amountMinor - settleMinor, updatedAt: t });
+    return paidId;
+  }
+  await db.debts.update(id, { settled: 1, settledAt: t, settleTransferId: txId, updatedAt: t });
+  return id;
 }
 
 /** 取消結清：若結清時有入帳，一併刪除（軟刪除）該筆帳目，帳戶餘額回復，避免再次結清時重複入帳 */

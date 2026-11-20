@@ -39,13 +39,13 @@ _PROMO_NOISE_RE = re.compile(
     re.IGNORECASE,
 )
 _TX_SIGNAL_RE = re.compile(
-    r"消費|刷卡|付款|扣款|扣帳|簽帳|交易|授權|請款|轉帳|轉出|轉入|入帳|存入|匯款|提款|提領|支付|儲值|加值|繳費|繳款|退款|退貨|退刷|NT\$|NTD|TWD|USD|JPY|EUR|HKD",
+    r"消費|刷卡|付款|扣款|扣帳|簽帳|交易|授權|請款|轉帳|轉出|轉入|入帳|存入|匯款|提款|提領|支付|儲值|加值|繳費|繳款|退款|退貨|退刷|NT\$|NTD|TWD|USD|JPY|EUR|HKD|新台幣|新臺幣|台幣|臺幣",
     re.IGNORECASE,
 )
 _DIGIT_RE = re.compile(r"\d")
 _ACTUAL_TX_RE = re.compile(
     r"(?:消費|刷卡|付款|扣款|扣帳|簽帳|交易|轉帳|轉出|轉入|入帳|存入|匯款|提款|支付|儲值|退款)"
-    r"(?:成功|完成)?(?:金額)?\s*[:：]?\s*(?:(?:NT\$|NTD|TWD|USD|JPY|EUR|HKD)\s*[\d,]+|[\d,]+(?:\.\d+)?\s*元)",
+    r"(?:成功|完成|通知)?(?:金額)?\s*[:：]?\s*(?:(?:NT\$|NTD|TWD|USD|JPY|EUR|HKD|新台幣|新臺幣|台幣|臺幣)\s*[\d,]+|[\d,]+(?:\.\d+)?\s*元)",
     re.IGNORECASE,
 )
 

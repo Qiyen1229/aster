@@ -374,5 +374,16 @@ describe('啟動自動入帳：白名單發送者不用開全域自動入帳', (
     const { findAccounts } = await import('@/domain/nlp');
     expect(findAccounts('中信房屋 500 元', ctx.accounts)).toEqual([]);
     expect(findAccounts('用錢包付午餐 100 元', ctx.accounts)[0]?.id).toBe('wallet-cash');
+
+    // 4. 中國信託 LINE Flex 存款入帳通知（含「新臺幣 1,500 元」與「入帳帳號後四碼：7068」無【】／您字眼）
+    expect(matchesWhitelist(raw(43, 'LINE', '中國信託：存款入帳通知 新臺幣 1,500 元'), ['中國信託'])).toBe(true);
+    expect(matchesWhitelist(raw(44, 'LINE', '中國信託\n存款入帳通知\n新臺幣 1,500 元\n入帳時間：2026/11/20 13:37:16\n入帳帳號後四碼：7068'), ['中國信託'])).toBe(true);
+    const ctbcDeposit = await draftsFromItem(
+      raw(44, 'LINE', '中國信託\n存款入帳通知\n新臺幣 1,500 元\n入帳時間：2026/11/20 13:37:16\n入帳帳號後四碼：7068\n實際款項入帳狀況及入帳時間，仍以本行存摺顯示及實際入帳時間為主'),
+      ctx,
+      'wallet-cash',
+    );
+    expect(ctbcDeposit).toHaveLength(1);
+    expect(ctbcDeposit[0]).toMatchObject({ kind: 'income', amount: 1500, accountId: 'ctbc-bank' });
   });
 });

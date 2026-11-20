@@ -203,6 +203,10 @@ export async function deleteTransactions(ids: string[]): Promise<void> {
         if (debts.some((d) => d!.settled)) throw new Error('請先取消結清相關欠款，再刪除分帳帳目');
         for (const d of debts) await db.debts.update(d!.id, { deletedAt: now, updatedAt: now });
       }
+      // 若刪除的是還款／收款結清帳目，自動將對應欠款恢復為「未結清」，讓應收／應付頁面重新出現
+      for (const d of await db.debts.filter((x) => !x.deletedAt && x.settled === 1 && x.settleTransferId === id).toArray()) {
+        await db.debts.update(d.id, { settled: 0, settledAt: undefined, settleTransferId: undefined, updatedAt: now });
+      }
       await db.transactions.update(id, { deletedAt: now, updatedAt: now });
       await bump(tx.accountId, -txEffect(tx));
       await durablesOnTxDelete(id, now);

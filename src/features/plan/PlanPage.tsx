@@ -53,7 +53,7 @@ export default function PlanPage() {
     <main className="page plan-page">
       <h1 className="large-title" style={{ marginTop: 12 }}>專案與預算</h1>
 
-      <div className="sub-row" role="tablist" aria-label="規劃分頁" style={{ marginBottom: 12, overflowX: 'auto', flexWrap: 'nowrap', paddingBottom: 4 }}>
+      <div className="sub-row plan-tabs" role="tablist" aria-label="規劃分頁">
         {TABS.map((t) => (
           <button
             key={t.key}

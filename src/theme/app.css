@@ -2195,7 +2195,8 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
   box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 .sub-cell[aria-pressed='true'] .cat-icon { background: rgba(255, 255, 255, 0.22); }
-.sub-row { display: flex; gap: 6px; overflow-x: auto; padding: 8px 2px; }
+.sub-row { display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; touch-action: pan-x; overscroll-behavior-x: contain; padding: 8px 2px; }
+.plan-tabs { margin-bottom: 12px; flex-wrap: nowrap; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
 .pill {
   flex: none; height: 34px; padding: 0 12px; border-radius: 17px; background: var(--surface-2);
   display: inline-flex; align-items: center; gap: 4px; font-size: 0.85rem; white-space: nowrap;
@@ -3852,6 +3853,28 @@ button.accent, button.muted { min-height: 44px; }
 }
 .quick-item-act:active { transform: scale(0.92); background: var(--surface-2); }
 .quick-item-act.is-pinned { color: var(--accent-text); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+/* 記一筆借貸「還款／收款」欠款選擇清單 */
+.loan-debt-list { display: flex; flex-direction: column; gap: 6px; max-height: 170px; overflow-y: auto; overscroll-behavior: contain; }
+.loan-debt-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px;
+  border-radius: 13px; text-align: left;
+  background: var(--surface-1); border: 1px solid var(--line);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.loan-debt-item.selected {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.loan-dir-tag {
+  flex: none; padding: 3px 8px; border-radius: 999px; font-size: 0.74rem; font-weight: 600;
+}
+.loan-dir-tag.pos { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.loan-dir-tag.neg { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.loan-debt-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.loan-debt-meta strong { font-size: 0.88rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.loan-debt-meta span { font-size: 0.74rem; color: var(--text-2); }
+.loan-debt-amt { flex: none; font-size: 0.9rem; font-weight: 700; color: var(--text); }
 
 
 

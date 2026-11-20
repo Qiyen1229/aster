@@ -286,4 +286,46 @@ describe('全螢幕記帳畫布（AddSheet）', () => {
     expect(useUI.getState().add.editTxId).toBeUndefined();
     expect(useUI.getState().add.prefill).toMatchObject({ mode: 'expense', note: '水餃', accountId: acc.id, categoryId: 'exp-food-lunch' });
   });
+
+  it('記一筆中的借貸支援切換「還款／收款」，列出並選取目前未結清欠款完成還款', async () => {
+    const { buildDefaultCategories } = await import('@/db/seed/categories');
+    const { addAccount } = await import('@/db/repo/accounts');
+    const { addLoan } = await import('@/db/repo/plan');
+    await db.categories.bulkAdd(buildDefaultCategories());
+    const acc = await addAccount({ name: '銀行', type: 'bank', currency: 'TWD', icon: '🏦', color: '', initialBalanceMinor: 100000, includeInNetWorth: true, isLiability: false });
+    const { debtId } = await addLoan({ direction: 'i_owe_them', personName: '小華', amountMinor: 25000, currency: 'TWD', date: '2026-11-18', ts: 1, note: '聚餐墊付', accountId: acc.id });
+
+    await act(async () => {
+      useUI.getState().openAdd();
+      root.render(React.createElement(AddSheet));
+    });
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+
+    const screen = document.body.querySelector<HTMLElement>('.add-screen')!;
+    const loanTab = Array.from(screen.querySelectorAll<HTMLButtonElement>('.add-topbar .segmented button')).find((b) => b.textContent === '借貸')!;
+    await act(async () => { loanTab.click(); });
+
+    const settleTab = Array.from(screen.querySelectorAll<HTMLButtonElement>('.segmented button')).find((b) => b.textContent?.includes('還款／收款'))!;
+    expect(settleTab).toBeTruthy();
+    await act(async () => { settleTab.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+
+    const debtBtn = screen.querySelector<HTMLButtonElement>('.loan-debt-item')!;
+    expect(debtBtn).not.toBeNull();
+    expect(debtBtn.textContent).toContain('我欠 小華');
+    expect(debtBtn.textContent).toContain('聚餐墊付');
+
+    await act(async () => { debtBtn.click(); });
+    expect(debtBtn.getAttribute('aria-checked')).toBe('true');
+
+    // 按鍵盤「完成」送出還款
+    const submitBtn = Array.from(screen.querySelectorAll<HTMLButtonElement>('.keypad-dock button')).find((b) => b.textContent?.includes('完成'))!;
+    await act(async () => { submitBtn.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 80)); });
+
+    const settled = (await db.debts.get(debtId))!;
+    expect(settled.settled).toBe(1);
+    expect(settled.settleTransferId).toBeTruthy();
+    expect((await db.accounts.get(acc.id))?.balanceMinor).toBe(100000);
+  });
 });

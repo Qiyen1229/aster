@@ -23,6 +23,8 @@ describe('LINE 誤記防護', () => {
   it('官方帳號的交易通知才放行', () => {
     expect(isTrustedLineNotice('LINE Pay\n您已於 全家 消費 NT$85，付款成功')).toBe(true);
     expect(isTrustedLineNotice('國泰世華\n您的信用卡於 7-ELEVEN 刷卡消費 120 元')).toBe(true);
+    expect(isTrustedLineNotice('中國信託\n存款入帳通知\n新臺幣 1,500 元\n入帳時間：2026/11/20 13:37:16\n入帳帳號後四碼：7068')).toBe(true);
+    expect(isTrustedLineNotice('中國信託：存款入帳通知 新臺幣 1,500 元')).toBe(true);
     expect(isTrustedLineNotice('【國泰世華】本月帳單已產生')).toBe(false);
   });
 

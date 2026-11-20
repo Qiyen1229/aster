@@ -132,6 +132,7 @@ def test_transaction_boilerplate_is_not_marketing_noise() -> None:
         "跨行轉入 NT$30000，本次免收手續費",
         "您於全聯消費 NT$280，電子帳單已寄送",
         "付款 120 元完成；立即登錄活動享抽獎",
+        "中國信託：存款入帳通知 新臺幣 1,500 元",
     ]:
         assert not is_noise_notification(HookItem(source="notify", text=text))
     for text in [

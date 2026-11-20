@@ -210,6 +210,26 @@ describe('v4.1.50 帳務一致性', () => {
     expect(await recomputeBalances(false)).toEqual([]);
   });
 
+  it('在首頁刪除還款／收款帳目後，對應欠款自動恢復為未結清', async () => {
+    const { settleDebt } = await import('@/db/repo/plan');
+    const { debtId } = await addLoan({
+      direction: 'i_owe_them', personName: '阿明', amountMinor: 30000, currency: 'TWD', date: '2026-11-18', ts: 1, note: '代墊晚餐', accountId,
+    });
+    expect((await db.accounts.get(accountId))?.balanceMinor).toBe(130000);
+    await settleDebt(debtId, accountId);
+    const settled = (await db.debts.get(debtId))!;
+    expect(settled.settled).toBe(1);
+    expect(settled.settleTransferId).toBeTruthy();
+    expect((await db.accounts.get(accountId))?.balanceMinor).toBe(100000);
+
+    // 模擬從首頁／明細刪除還款交易
+    await deleteTransactions([settled.settleTransferId!]);
+    const reopened = (await db.debts.get(debtId))!;
+    expect(reopened.settled).toBe(0);
+    expect(reopened.settleTransferId).toBeUndefined();
+    expect((await db.accounts.get(accountId))?.balanceMinor).toBe(130000);
+  });
+
   it('結轉預算超過 24 期仍使用完整歷史與目前區間', async () => {
     await saveBudget({ name: '週預算', periodType: 'week', startDate: '2026-01-01', amountMinor: 10000, currency: 'TWD', categoryId: '', projectId: '', rollover: true, alertPercents: [80], active: 1 });
     const [v] = await computeBudgets('2026-11-18');

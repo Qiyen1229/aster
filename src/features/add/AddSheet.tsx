@@ -11,7 +11,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from 'react-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
-import type { Attachment } from '@/db/types';
+import type { Attachment, Debt } from '@/db/types';
 import {
   addTransaction, addTransfer, deleteTransactions, deleteTransfers, lastTransaction, restoreTransactions, restoreTransfers,
   updateTransaction, updateTransfer,
@@ -34,7 +34,7 @@ import { AccountPicker, CurrencyPicker, DurablePicker, ProjectPicker, TagPicker 
 import { computeSplit, SplitSheet, type SplitState } from './SplitSheet';
 import { lifeLabel } from '@/domain/durable';
 import { LifeSpanSheet } from '../plan/LifeSpanSheet';
-import { addDebts, addLoan, findOrCreatePerson, removeLoan } from '@/db/repo/plan';
+import { addDebts, addLoan, findOrCreatePerson, removeLoan, settleDebt, unsettleDebt } from '@/db/repo/plan';
 import { addDurable, durableOfTx, syncTxDurable } from '@/db/repo/durables';
 import { countRuleHit, recentNoteSuggestions, suggestCategory, type CategorySuggestion } from '@/services/autocat';
 import { findPinned, listPinned, pinTransaction, touchPinned, unpin } from '@/db/repo/pinned';
@@ -76,7 +76,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   const { all: allCats, map: catMap } = useCategories();
   const { list: tags, map: tagMap } = useTags();
   const { list: projects, map: projMap } = useProjects();
-  const people = useLiveQuery(() => db.people.toArray(), []) ?? [];
+  const peopleRaw = useLiveQuery(() => db.people.toArray(), []);
+  const people = useMemo(() => peopleRaw ?? [], [peopleRaw]);
 
   const editing = !!(editTxId || editTransferId);
   const [loaded, setLoaded] = useState(!editing);
@@ -107,9 +108,15 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   const [durableLinked, setDurableLinked] = useState(false);
   const [atts, setAtts] = useState<{ id: string; url: string; fresh: boolean }[]>([]);
   const [split, setSplit] = useState<SplitState>({ mode: 'equal', people: [] });
-  /** 應收／應付：對象、是否同時動到帳戶（借出／借入） */
+  /** 應收／應付：對象、是否同時動到帳戶（借出／借入）、以及從記一筆直接還款／收款 */
   const [personName, setPersonName] = useState('');
   const [loanViaAccount, setLoanViaAccount] = useState(true);
+  const [loanSettle, setLoanSettle] = useState(false);
+  const [settleDebtId, setSettleDebtId] = useState('');
+  const openDebtsLive = useLiveQuery(() => db.debts.filter((d) => !d.deletedAt && !d.settled).toArray(), []);
+  const sortedOpenDebts = useMemo(() => [...(openDebtsLive ?? [])].sort((a, b) => (a.date < b.date ? 1 : -1)), [openDebtsLive]);
+  const personMap = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
+  const selectedDebt = useMemo(() => sortedOpenDebts.find((d) => d.id === settleDebtId), [sortedOpenDebts, settleDebtId]);
   /** 編輯「餘額調整」時記住原本的帳戶與差額，用來還原調整前的基準餘額 */
   const [editAdjust, setEditAdjust] = useState<{ accountId: string; deltaMinor: number } | null>(null);
   const [picker, setPicker] = useState<Picker>(null);
@@ -311,7 +318,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   const onKey = useCallback((k: string) => setExpr((e) => pressKey(e, k, exp)), [exp]);
 
   const reset = () => {
-    setExpr(''); setNote(''); setAtts([]); setFee(''); setToAmount(null); setPersonName(''); setDurableYears(0); setDurableCustom(0); setDurableLinked(false); setSkipBudget(false);
+    setExpr(''); setNote(''); setAtts([]); setFee(''); setToAmount(null); setPersonName(''); setSettleDebtId(''); setDurableYears(0); setDurableCustom(0); setDurableLinked(false); setSkipBudget(false);
     setTime(nowTime());
   };
 
@@ -359,7 +366,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
     const v = evaluate(expr);
     if (!v) { useUI.getState().showSnack({ text: '請輸入金額' }); return; }
     if (!account && !(loan && !loanViaAccount)) { useUI.getState().showSnack({ text: '請先新增帳戶' }); return; }
-    if (loan && !personName.trim()) { useUI.getState().showSnack({ text: mode === 'receivable' ? '請輸入欠款人（誰欠你）' : '請輸入債權人（你欠誰）' }); return; }
+    if (loan && loanSettle && !selectedDebt) { useUI.getState().showSnack({ text: '請先選取要還款或收款的欠款項目' }); return; }
+    if (loan && !loanSettle && !personName.trim()) { useUI.getState().showSnack({ text: mode === 'receivable' ? '請輸入欠款人（誰欠你）' : '請輸入債權人（你欠誰）' }); return; }
     if (mode !== 'adjust' && v.lte(0)) { useUI.getState().showSnack({ text: '金額需大於 0' }); return; }
     const ts = new Date(`${date}T${time || '12:00'}:00`).getTime();
     setBusy(true);
@@ -372,7 +380,29 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         : manualSplit && split.payer !== undefined ? ['debts']
           : ['transactions', ...(manualSplit?.shares.some((s) => s.minor > 0) ? [`split:${manualSplit.shares.filter((s) => s.minor > 0).length}`] : []), ...(mode === 'expense' && durableYears > 0 ? ['durable'] : [])];
       const created = await commitManualEntry(sourceId, async () => {
-      if (loan) {
+      if (loan && loanSettle && selectedDebt) {
+        const amt = toMinor(v, txCurrency);
+        const who = personMap.get(selectedDebt.personId)?.name ?? '';
+        const paidAmt = Math.min(amt, selectedDebt.amountMinor);
+        const targetId = await settleDebt(selectedDebt.id, loanViaAccount ? account!.id : undefined, {
+          date, ts, note: note.trim() || undefined, amountMinor: paidAmt,
+        });
+        const isPartial = paidAmt < selectedDebt.amountMinor;
+        notify = () => snackUndo(
+          `${selectedDebt.direction === 'they_owe_me' ? '已收回' : '已還給'} ${who} ${formatMoney(paidAmt, selectedDebt.currency)}${isPartial ? '（部分還款）' : ''}`,
+          async () => {
+            if (isPartial) {
+              const paid = await db.debts.get(targetId);
+              const orig = await db.debts.get(selectedDebt.id);
+              if (paid?.settleTransferId) await deleteTransactions([paid.settleTransferId]);
+              if (orig && paid) await db.debts.update(orig.id, { amountMinor: orig.amountMinor + paid.amountMinor, updatedAt: Date.now() });
+              await db.debts.delete(targetId);
+            } else {
+              await unsettleDebt(targetId);
+            }
+          },
+        );
+      } else if (loan) {
         const amt = toMinor(v, txCurrency);
         const res = await addLoan({
           id: sourceId ? `${sourceId}-0` : undefined,
@@ -767,8 +797,19 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
               )}
               {!editTransferId && !(editTxId && mode === 'adjust') && isLoanMode(mode) && !editing && (
                 <div style={{ marginBottom: 6 }}>
-                  <Segmented value={mode} onChange={(m) => setMode(m as AddMode)} ariaLabel="借貸方向"
-                    options={[{ value: 'receivable', label: '借出（誰欠你）' }, { value: 'payable', label: '借入（你欠誰）' }]} />
+                  <Segmented
+                    value={loanSettle ? 'settle' : mode}
+                    onChange={(m) => {
+                      if (m === 'settle') setLoanSettle(true);
+                      else { setLoanSettle(false); setSettleDebtId(''); setMode(m as AddMode); }
+                    }}
+                    ariaLabel="借貸方向"
+                    options={[
+                      { value: 'receivable', label: '借出' },
+                      { value: 'payable', label: '借入' },
+                      { value: 'settle', label: sortedOpenDebts.length ? `還款／收款 (${sortedOpenDebts.length})` : '還款／收款' },
+                    ]}
+                  />
                 </div>
               )}
 
@@ -779,6 +820,10 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                     <span className="muted" style={{ fontSize: '0.8rem' }}>調整後餘額</span>
                   ) : mode === 'transfer' ? (
                     <span className="muted" style={{ fontSize: '0.8rem' }}>轉出金額 {account?.currency}</span>
+                  ) : loan && loanSettle ? (
+                    <span className="muted" style={{ fontSize: '0.8rem' }}>
+                      {selectedDebt ? (selectedDebt.direction === 'they_owe_me' ? '收回金額' : '還款金額') : '還款／收款'} {txCurrency}
+                    </span>
                   ) : loan && loanViaAccount ? (
                     <span className="muted" style={{ fontSize: '0.8rem' }}>{mode === 'receivable' ? '借出金額' : '借入金額'} {txCurrency}</span>
                   ) : (
@@ -893,8 +938,64 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                 );
               })()}
 
-              {/* 應收／應付：對象與是否動到帳戶 */}
-              {loan && (
+              {/* 應收／應付：新增借貸 或 選取現有欠款進行還款／收款 */}
+              {loan && loanSettle ? (
+                <div style={{ marginBottom: 8 }}>
+                  {sortedOpenDebts.length === 0 ? (
+                    <EmptyState emoji="🤝" title="目前沒有未結清的欠款" text="所有應收／應付帳款都已結清；可切到「借出」或「借入」新增。" />
+                  ) : (
+                    <>
+                      <div className="loan-debt-list" role="radiogroup" aria-label="未結清欠款列表">
+                        {sortedOpenDebts.map((d: Debt) => {
+                          const who = personMap.get(d.personId)?.name ?? '對象';
+                          const picked = settleDebtId === d.id;
+                          const theyOwe = d.direction === 'they_owe_me';
+                          return (
+                            <button
+                              key={d.id}
+                              type="button"
+                              role="radio"
+                              aria-checked={picked}
+                              className={`loan-debt-item${picked ? ' selected' : ''}`}
+                              onClick={() => {
+                                setSettleDebtId(d.id);
+                                setExpr(fromMinor(d.amountMinor, d.currency).toString());
+                                setCurrency(d.currency);
+                                setNote(`${theyOwe ? '收回' : '還給'} ${who}${d.note ? `：${d.note}` : ''}`);
+                                if (d.loanTxId) {
+                                  void db.transactions.get(d.loanTxId).then((tx) => {
+                                    if (tx && accMap.has(tx.accountId)) setAccountId(tx.accountId);
+                                  });
+                                }
+                              }}
+                            >
+                              <span className={`loan-dir-tag ${theyOwe ? 'pos' : 'neg'}`}>
+                                {theyOwe ? `${who} 欠我` : `我欠 ${who}`}
+                              </span>
+                              <span className="loan-debt-meta">
+                                <strong>{d.note || (theyOwe ? '別人欠款' : '我的欠債')}</strong>
+                                <span>{d.date}</span>
+                              </span>
+                              <span className="loan-debt-amt num">{formatMoney(d.amountMinor, d.currency)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="list" style={{ marginTop: 8 }}>
+                        <label className="field" style={{ cursor: 'pointer' }}>
+                          <span className="row-main">入帳到帳戶（更新帳戶餘額）</span>
+                          <Switch checked={loanViaAccount} onChange={setLoanViaAccount} label="入帳到帳戶" />
+                        </label>
+                      </div>
+                      <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 4px 0' }}>
+                        {selectedDebt
+                          ? '可調整上方金額進行全額或部分還款；完成後會自動更新該筆欠款狀態。'
+                          : '點選一筆目前的欠債或應收款即可帶入金額與備註進行還款／收款。'}
+                      </p>
+                    </>
+                  )}
+                </div>
+              ) : loan && (
                 <div style={{ marginBottom: 8 }}>
                   <div className="list" style={{ marginBottom: 8 }}>
                     <div className="field">
@@ -916,8 +1017,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                   )}
                   <p className="muted" style={{ fontSize: '0.75rem', margin: '4px 4px 0' }}>
                     {loanViaAccount
-                      ? '借出／借入不算支出或收入，不影響收支統計與預算；收回或還款時到「專案 → 應收應付」結清。'
-                      : '只記錄欠款、不動帳戶餘額；之後到「專案 → 應收應付」結清時再記入帳戶。'}
+                      ? '借出／借入不算支出或收入，不影響收支統計與預算；收回或還款時可切到上方「還款／收款」或到「專案 → 應收應付」結清。'
+                      : '只記錄欠款、不動帳戶餘額；之後可切到「還款／收款」或到「專案 → 應收應付」結清。'}
                   </p>
                 </div>
               )}
