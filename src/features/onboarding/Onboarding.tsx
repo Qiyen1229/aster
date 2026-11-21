@@ -3,14 +3,16 @@
  * 之後的新功能另外由設定裡的「新」標記與更新通知帶出（release.json）；每次發佈都要檢查有沒有資格進入功能介紹（見 showcase.ts 開頭）。
  */
 import { ICON_192 } from '@/ui/assets';
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { addAccount, ACCOUNT_TYPES } from '@/db/repo/accounts';
-import { loadSampleData } from '@/db/seed/sample';
+import { clearSampleData, hasSampleData, loadSampleData } from '@/db/seed/sample';
+import { saveSetting } from '@/db/repo/settings';
 import type { AccountType } from '@/db/types';
 import { CURRENCIES, toMinor } from '@/domain/money';
 import { evaluate } from '@/domain/calc-expr';
 import { useSettings } from '@/stores/settings';
+import { Icon } from '@/ui/Icon';
 import { Segmented } from '@/ui/controls';
 import { ShowcaseCarousel } from './ShowcaseCarousel';
 import { ACCENTS } from '../settings/SettingsPage';
@@ -18,14 +20,22 @@ import { ACCENTS } from '../settings/SettingsPage';
 export default function Onboarding() {
   const s = useSettings();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const isReplay = s.onboarded || params.get('replay') === '1';
+  const wasOnboarded = useRef(isReplay);
   const [step, setStep] = useState(0);
   const [accName, setAccName] = useState('錢包');
   const [accType, setAccType] = useState<AccountType>('cash');
   const [balance, setBalance] = useState('');
   const [busy, setBusy] = useState(false);
+  const finishing = useRef(false);
+  const step4EnteredAt = useRef(0);
   const STEPS = 5;
 
   const finish = async (withSample: boolean) => {
+    if (finishing.current) return;
+    if (withSample && performance.now() - step4EnteredAt.current < 350) return;
+    finishing.current = true;
     setBusy(true);
     try {
       if (accName.trim()) {
@@ -36,20 +46,47 @@ export default function Onboarding() {
           initialBalanceMinor: info.liability ? -Math.abs(v) : v, includeInNetWorth: true, isLiability: info.liability,
         });
       }
-      if (withSample) await loadSampleData();
+      if (withSample) {
+        if (!(await hasSampleData())) await loadSampleData();
+      } else {
+        if (await hasSampleData()) await clearSampleData();
+      }
       s.set('onboarded', true);
+      await saveSetting('onboarded', true);
+      if (!wasOnboarded.current) {
+        s.set('gestureTourDone', false);
+        await saveSetting('gestureTourDone', false);
+      }
       navigate('/', { replace: true });
     } finally {
+      finishing.current = false;
       setBusy(false);
     }
   };
 
-  const next = () => setStep((x) => Math.min(STEPS - 1, x + 1));
+  const next = () => setStep((x) => {
+    const nxt = Math.min(STEPS - 1, x + 1);
+    if (nxt === STEPS - 1) step4EnteredAt.current = performance.now();
+    return nxt;
+  });
 
   return (
     <main className="onb">
-      <div className="steps" aria-label={`第 ${step + 1} 步，共 ${STEPS} 步`}>
-        {Array.from({ length: STEPS }, (_, i) => <i key={i} className={i === step ? 'on' : ''} />)}
+      <div className="onb-head">
+        <div className="steps" aria-label={`第 ${step + 1} 步，共 ${STEPS} 步`}>
+          {Array.from({ length: STEPS }, (_, i) => <i key={i} className={i === step ? 'on' : ''} />)}
+        </div>
+        {isReplay && (
+          <button
+            type="button"
+            className="icon-btn onb-close"
+            aria-label="關閉導覽"
+            disabled={busy}
+            onClick={() => navigate('/', { replace: true })}
+          >
+            <Icon name="close" size={20} />
+          </button>
+        )}
       </div>
 
       {step === 0 && (
@@ -74,7 +111,7 @@ export default function Onboarding() {
       {step === 1 && (
         <>
           <h1>功能介紹</h1>
-          <p style={{ marginBottom: 12 }}>Aster 最強的 6 招，左右滑動看看。</p>
+          <p style={{ marginBottom: 12 }}>Aster 必備技能，左右滑動看看。</p>
           <ShowcaseCarousel />
           <div className="grow" />
           <button className="btn" onClick={next}>下一步</button>
@@ -119,8 +156,8 @@ export default function Onboarding() {
             </div>
           </div>
           <div className="grow" />
-          <button className="btn" onClick={next} disabled={!accName.trim()}>下一步</button>
-          <button className="btn secondary" style={{ marginTop: 8 }} onClick={() => { setAccName(''); next(); }}>略過</button>
+          <button key="step-3-next" className="btn" onClick={next} disabled={!accName.trim()}>下一步</button>
+          <button key="step-3-skip" className="btn secondary" style={{ marginTop: 8 }} onClick={() => { setAccName(''); next(); }}>略過</button>
         </>
       )}
 
@@ -129,8 +166,8 @@ export default function Onboarding() {
           <h1>要先看看範例嗎？</h1>
           <p>載入 90 天示範帳目，體驗月曆、列表與報表。可在「設定 → 資料」一鍵清除，不影響你自己的帳。</p>
           <div className="grow" />
-          <button className="btn" disabled={busy} onClick={() => void finish(true)}>{busy ? '準備中…' : '載入範例資料'}</button>
-          <button className="btn secondary" style={{ marginTop: 8 }} disabled={busy} onClick={() => void finish(false)}>從空白開始</button>
+          <button key="step-4-blank" className="btn" disabled={busy} onClick={() => void finish(false)}>{busy ? '準備中…' : '從空白開始'}</button>
+          <button key="step-4-sample" className="btn secondary" style={{ marginTop: 8 }} disabled={busy} onClick={() => void finish(true)}>{busy ? '準備中…' : '載入範例資料'}</button>
         </>
       )}
 

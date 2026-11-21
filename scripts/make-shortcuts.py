@@ -2,7 +2,7 @@
 """產生並簽署精簡後的兩個可匯入 iPhone 捷徑，輸出到 public/shortcuts/。
 
 - Aster 自動記帳：內建台灣主流銀行 App、LINE Pay、街口等通知自動化 ＋ 錢包（Apple Pay 交易）自動化觸發器，刷實體卡、網購、掃碼、感應付款跳通知全自動入帳
-- Aster 隨手記：對 Siri 說一句話記帳 ＋ 在任何 App 分享文字記帳（無文字時自動啟動語音聽寫；有分享文字時直接記帳）
+- Aster 隨手記：對 Siri 說話兩段式記帳 ＋ 在任何 App 分享文字記帳（無分享文字時由 Siri／輸入框詢問「要記什麼？」；有分享文字時直接記帳）
 
 捷徑裡不含任何網址或權杖：匯入時只問一題「貼上連結碼」（App 會先複製到剪貼簿），
 連結碼就是 https://你的網址/api/hook/inbox?t=clr_… 。所以同一組檔案每位使用者都能用。
@@ -123,6 +123,49 @@ def dict_value(items: list[dict]) -> dict:
     return {"Value": {"WFDictionaryFieldValueItems": items}, "WFSerializationType": "WFDictionaryFieldValue"}
 
 
+def _show_hook_message(req_id: str) -> list[dict]:
+    """安全解析捷徑 HTTP 回應：先轉純文字再檢查是否為 JSON 物件，避免伺服器或代理回傳 HTML（RTF）時在「取得辭典值」崩潰。"""
+    resp_text_id, cond_id, msg_id = (str(uuid.uuid4()).upper() for _ in range(3))
+    return [
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+         "WFWorkflowActionParameters": {
+             "UUID": resp_text_id,
+             "WFTextActionText": var_text(output(req_id, "URL 的內容")),
+         }},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+         "WFWorkflowActionParameters": {
+             "GroupingIdentifier": cond_id,
+             "WFCondition": 8,  # Begins With
+             "WFConditionalActionString": "{",
+             "WFControlFlowMode": 0,
+             "WFInput": variable(output(resp_text_id, "文字")),
+         }},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.getvalueforkey",
+         "WFWorkflowActionParameters": {
+             "UUID": msg_id,
+             "WFDictionaryKey": "message",
+             "WFInput": {"Value": output(resp_text_id, "文字"), "WFSerializationType": "WFTextTokenAttachment"},
+         }},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+         "WFWorkflowActionParameters": {"Text": var_text(output(msg_id, "字典值"))}},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+         "WFWorkflowActionParameters": {
+             "GroupingIdentifier": cond_id,
+             "WFControlFlowMode": 1,
+         }},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
+         "WFWorkflowActionParameters": {
+             "Text": text("無法連線到 Aster 伺服器，請確認連結碼與網路是否正常"),
+         }},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
+         "WFWorkflowActionParameters": {
+             "UUID": cond_id,
+             "GroupingIdentifier": cond_id,
+             "WFControlFlowMode": 2,
+         }},
+    ]
+
+
 def build(
     body: list[dict],
     extra_actions: list[dict] | None = None,
@@ -132,7 +175,7 @@ def build(
     triggers: list[dict] | None = None,
 ) -> dict:
     """連結碼（匯入時填）→ 其他前置動作 → POST JSON → （Siri）唸出伺服器回覆"""
-    code_id, req_id, msg_id = (str(uuid.uuid4()).upper() for _ in range(3))
+    code_id, req_id = (str(uuid.uuid4()).upper() for _ in range(2))
     actions = [
         {"WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
          "WFWorkflowActionParameters": {"UUID": code_id, "WFTextActionText": text("")}},
@@ -145,6 +188,7 @@ def build(
              "ShowHeaders": True,
              "WFHTTPHeaders": dict_value([
                  field("Content-Type", text("application/json")),
+                 field("Accept", text("application/json")),
                  field("Connection", text("close")),
              ]),
              "WFHTTPBodyType": "JSON",
@@ -152,13 +196,7 @@ def build(
          }},
     ]
     if speak_result:
-        actions += [
-            {"WFWorkflowActionIdentifier": "is.workflow.actions.getvalueforkey",
-             "WFWorkflowActionParameters": {"UUID": msg_id, "WFDictionaryKey": "message", "WFInput": {
-                 "Value": output(req_id, "URL 的內容"), "WFSerializationType": "WFTextTokenAttachment"}}},
-            {"WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
-             "WFWorkflowActionParameters": {"Text": var_text(output(msg_id, "字典值"))}},
-        ]
+        actions += _show_hook_message(req_id)
     actions += extra_actions or []
     wf: dict = {
         "WFWorkflowClientVersion": "2607.0.1",
@@ -217,12 +255,11 @@ def auto() -> dict:
 
 
 def voice() -> dict:
-    """Aster 隨手記：對 Siri 說話記帳 ＋ 在分享選單記帳"""
+    """Aster 隨手記：對 Siri 說話記帳（詢問「要記什麼？」）＋ 在分享選單記帳"""
     cond_id = str(uuid.uuid4()).upper()
-    dictate_id = str(uuid.uuid4()).upper()
+    ask_id = str(uuid.uuid4()).upper()
     code_id = str(uuid.uuid4()).upper()
     req_id = str(uuid.uuid4()).upper()
-    msg_id = str(uuid.uuid4()).upper()
     detect_id = str(uuid.uuid4()).upper()
 
     actions = [
@@ -248,9 +285,11 @@ def voice() -> dict:
          "WFWorkflowActionParameters": {
              "GroupingIdentifier": cond_id, "WFControlFlowMode": 1,
          }},
-        {"WFWorkflowActionIdentifier": "is.workflow.actions.dictatetext",
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.ask",
          "WFWorkflowActionParameters": {
-             "UUID": dictate_id, "WFSpeechLanguage": "zh-TW",
+             "UUID": ask_id,
+             "WFAskActionPrompt": "要記什麼？",
+             "WFInputType": "Text",
          }},
         {"WFWorkflowActionIdentifier": "is.workflow.actions.conditional",
          "WFWorkflowActionParameters": {
@@ -264,6 +303,7 @@ def voice() -> dict:
              "ShowHeaders": True,
              "WFHTTPHeaders": dict_value([
                  field("Content-Type", text("application/json")),
+                 field("Accept", text("application/json")),
                  field("Connection", text("close")),
              ]),
              "WFHTTPBodyType": "JSON",
@@ -272,11 +312,7 @@ def voice() -> dict:
                  field("text", var_text(output(cond_id, "如果的結果"))),
              ]),
          }},
-        {"WFWorkflowActionIdentifier": "is.workflow.actions.getvalueforkey",
-         "WFWorkflowActionParameters": {"UUID": msg_id, "WFDictionaryKey": "message", "WFInput": {
-             "Value": output(req_id, "URL 的內容"), "WFSerializationType": "WFTextTokenAttachment"}}},
-        {"WFWorkflowActionIdentifier": "is.workflow.actions.showresult",
-         "WFWorkflowActionParameters": {"Text": var_text(output(msg_id, "字典值"))}},
+        *_show_hook_message(req_id),
     ]
 
     return {

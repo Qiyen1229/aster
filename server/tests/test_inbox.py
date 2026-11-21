@@ -201,3 +201,19 @@ def test_hook_pushes_to_subscribed_devices(api: Api, monkeypatch) -> None:  # no
     assert r5.status_code == 200 and r5.json()["ok"]
     assert r5.json().get("message") != "已略過非消費通知"
     assert len(api.get("/api/inbox/items").json()) == 3
+
+
+def test_hook_errors_always_include_message(api: Api) -> None:
+    """iPhone 捷徑統一讀取 JSON `message`：驗證 /api/hook/* 的 401/422 錯誤也回傳 message。"""
+    api.register("alice")
+    token = api.post("/api/inbox/tokens", {"name": "iPhone"}).json()["token"]
+
+    bad_tok = _hook("clr_wrong", {"text": "午餐 100"})
+    assert bad_tok.status_code == 401
+    bad_body = bad_tok.json()
+    assert bad_body["detail"] and bad_body["message"] == bad_body["detail"]
+
+    empty_payload = _hook(token, {"source": "siri"})
+    assert empty_payload.status_code == 422
+    empty_body = empty_payload.json()
+    assert empty_body["detail"] and empty_body["message"] == empty_body["detail"]

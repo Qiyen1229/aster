@@ -88,6 +88,8 @@ export interface NotifySettings {
 
 export interface Settings {
   onboarded: boolean;
+  /** 首頁互動式手勢教學是否已完成（既有升級用戶預設 true；新用戶完成 Onboarding 後設為 false 觸發一次） */
+  gestureTourDone?: boolean;
   locale: 'zh-TW' | 'en';
   baseCurrency: string;
   theme: ThemeMode;
@@ -190,6 +192,7 @@ export interface FireSettings {
 
 export const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
+  gestureTourDone: true,
   locale: 'zh-TW',
   baseCurrency: 'TWD',
   theme: 'system',

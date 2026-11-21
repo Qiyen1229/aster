@@ -13,7 +13,7 @@ import { startTransition, useEffect, useLayoutEffect, useRef, useState } from 'r
 import { makeSpring, projectEnd, sampleSpring, stepSpring, trackAt, type SpringTrack } from '@/domain/spring';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Icon, type IconName } from '@/ui/Icon';
-import { holdGuard } from '@/services/voice';
+import { holdGuard, openVoice, releaseVoice } from '@/services/voice';
 import { haptic } from '@/services/haptics';
 import { markDockNav } from './navSource';
 import { useUI } from '@/stores/ui';
@@ -35,6 +35,7 @@ export function isLedgerPath(pathname: string) {
   return pathname === '/' || pathname === '/add' || pathname.startsWith('/ledger');
 }
 
+const HOLD_MS = 350;
 const SWIPE_UP_PX = 34; // 往上滑超過這個距離＝叫出 AI
 const HOME = '/'; // 滑動選取時，中間首頁按鈕的代號
 
@@ -380,7 +381,7 @@ export function TabBar({ hidden = false }: { hidden?: boolean } = {}) {
     useChat.getState().setOpen(true);
   };
 
-  // 按住往上滑在任何頁面叫出 AI；短按維持原本功能（語音記帳改由首頁右下角獨立按鈕同步觸發）
+  // 長按：僅記帳區在手勢內同步開始語音辨識（iOS 需在使用者手勢內啟動）；往上滑在任何頁面叫出 AI。短按維持原本功能
   const onDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (e.button > 0) return;
     held.current = false;
@@ -392,12 +393,23 @@ export function TabBar({ hidden = false }: { hidden?: boolean } = {}) {
     } catch {
       /* 忽略 */
     }
+    if (plusMode) {
+      timer.current = window.setTimeout(() => {
+        held.current = true;
+        heldKind.current = 'voice';
+        haptic('medium');
+        openVoice(true);
+      }, HOLD_MS);
+    }
   };
 
   const onMove = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (held.current || !pressing) return;
     const up = startY.current - e.clientY;
+    // 手指已經開始往上滑：不要再讓「長按語音」在滑到一半時搶先跳出來（慢慢滑的人會誤開語音彈窗）
+    if (up > 10 && plusMode) window.clearTimeout(timer.current);
     if (up > SWIPE_UP_PX) {
+      window.clearTimeout(timer.current);
       held.current = true;
       heldKind.current = 'ai';
       openAi();
@@ -407,6 +419,7 @@ export function TabBar({ hidden = false }: { hidden?: boolean } = {}) {
   const onUp = () => {
     window.clearTimeout(timer.current);
     setPressing(false);
+    if (held.current && heldKind.current === 'voice') void releaseVoice();
     holdGuard(false);
   };
 
@@ -432,7 +445,7 @@ export function TabBar({ hidden = false }: { hidden?: boolean } = {}) {
         <div className="tab-center" ref={(el) => { if (el) tabEls.current.set(HOME, el); else tabEls.current.delete(HOME); }}>
           <button
             className={`dynamic-fab${plusMode ? ' mode-plus' : ' mode-logo'}${pressing ? ' pressing' : ''}${aiHold ? ' ai-hold' : ''}${scrubTo === HOME ? ' scrub-target' : ''}${hasAlert ? ' has-alert' : ''}`}
-            aria-label={plusMode ? '新增記帳' : '回到記帳主頁'}
+            aria-label={plusMode ? '新增記帳（長按語音記帳、上滑開啟 Cilo）' : '回到記帳主頁（上滑開啟 Cilo）'}
             onPointerDown={onDown}
             onPointerMove={onMove}
             onPointerUp={onUp}

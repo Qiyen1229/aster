@@ -424,7 +424,8 @@ function AboutHubSheet({ open, onClose }: { open: boolean; onClose: () => void }
           }}>{checking ? '檢查中…' : '檢查更新'}</button>
         </Row>
         <Row icon="sparkles" tint="#0A84FF" label="版本更新重點" onClick={() => { onClose(); openWhatsNew(); }} />
-        <Row icon="compass" tint="#FF9F0A" label="重新執行首次引導" onClick={() => { s.set('onboarded', false); navTo('/onboarding'); }} />
+        <Row icon="compass" tint="#FF9F0A" label="重新執行首次引導" onClick={() => navTo('/onboarding?replay=1')} />
+        <Row icon="sparkles" tint="#5856D6" label="重看手勢教學" onClick={() => { s.set('gestureTourDone', false); navTo('/'); }} />
         <Row icon="lock" tint="#30B0C7" label="隱私權政策" onClick={() => navTo('/privacy')} />
         <Row icon="note" tint="#8E8E93" label="服務條款與授權" onClick={() => navTo('/terms')} />
         <details className="set-details" style={{ margin: '8px 4px 4px' }}>

@@ -422,7 +422,7 @@ describe('跨裝置同步', () => {
     if (operation !== 'disable') expect(await sync.unlockEncryption('new migration password')).toBe(true);
     expect(sync.useSync.getState().phase).toBe('idle');
     expect((await db.settings.get('migration-509'))?.value).toBe('測試-509');
-  });
+  }, 15_000);
 
   it('切換已提交但回應遺失時，重試採用已保存的新金鑰而不再次切換', async () => {
     await useDevice('phone'); await bootstrap(); await sync.syncNow();

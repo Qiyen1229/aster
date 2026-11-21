@@ -125,10 +125,17 @@ async def lifespan(_: FastAPI):
         t.cancel()
 
 
+def _hook_payload(request: Request, body: dict) -> dict:
+    """iPhone 捷徑固定讀取 `message` 欄位：確保 /api/hook/* 的錯誤回應也一律帶有 `message`。"""
+    if request.url.path.startswith("/api/hook/") and "detail" in body and "message" not in body:
+        return {**body, "message": body["detail"]}
+    return body
+
+
 def create_app() -> FastAPI:
     s = get_settings()
     app = FastAPI(
-        title="Aster API", version="4.1.52", lifespan=lifespan,
+        title="Aster API", version="4.1.53", lifespan=lifespan,
         docs_url="/api/docs" if s.env != "production" else None, redoc_url=None, openapi_url="/api/openapi.json" if s.env != "production" else None,
     )
 
@@ -155,19 +162,20 @@ def create_app() -> FastAPI:
         return response
 
     @app.exception_handler(ServiceError)
-    async def _service_error(_: Request, exc: ServiceError) -> JSONResponse:
-        return JSONResponse({"detail": exc.message}, status_code=exc.status_code, headers=exc.headers)
+    async def _service_error(request: Request, exc: ServiceError) -> JSONResponse:
+        return JSONResponse(_hook_payload(request, {"detail": exc.message}), status_code=exc.status_code, headers=exc.headers)
 
     @app.exception_handler(RequestValidationError)
-    async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         # 只回傳欄位與繁體中文訊息，不回傳使用者輸入的原值（避免密碼出現在回應或日誌中）
         errors = [{"field": ".".join(str(x) for x in e.get("loc", [])[1:]), "message": translate_validation_error(e)} for e in exc.errors()]
-        return JSONResponse({"detail": errors[0]["message"] if errors else "輸入資料格式錯誤", "errors": errors}, status_code=422)
+        detail = errors[0]["message"] if errors else "輸入資料格式錯誤"
+        return JSONResponse(_hook_payload(request, {"detail": detail, "errors": errors}), status_code=422)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
         log.exception("未處理的錯誤 path=%s", request.url.path, exc_info=exc)
-        return JSONResponse({"detail": "伺服器發生錯誤，請稍後再試"}, status_code=500)
+        return JSONResponse(_hook_payload(request, {"detail": "伺服器發生錯誤，請稍後再試"}), status_code=500)
 
     for r in (health.router, auth.router, admin.router, sync.router, push.router, notify.router, einvoice.router, ai.router, inbox.router, inbox.hook_router):
         app.include_router(r)

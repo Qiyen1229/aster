@@ -27,11 +27,11 @@ import { HomeHero } from './HomeHero';
 import { TravelHero } from './TravelHero';
 import { TravelTimeline } from './TravelTimeline';
 import { RemindersSheet, useUnreadCount } from './RemindersSheet';
+import { GestureTour } from '../onboarding/GestureTour';
 import { useInboxCount } from '@/services/inboxCount';
 import { syncNow } from '@/services/sync';
 import { refreshRates } from '@/services/fx';
 import { haptic } from '@/services/haptics';
-import { holdGuard, openVoice, releaseVoice } from '@/services/voice';
 import { LedgerRow } from '../ledger/LedgerRow';
 
 const Widgets = lazy(() => import('./Widgets').then((m) => ({ default: m.Widgets })));
@@ -45,7 +45,7 @@ export default function HomePage() {
   const selected = useUI((s) => s.selectedDate);
   const setSelected = useUI((s) => s.setSelectedDate);
   const openAdd = useUI((s) => s.openAdd);
-  const { weekStart, calendarCollapsed, baseCurrency, homeWidgets, travelModeProjectId, set } = useSettings();
+  const { onboarded, gestureTourDone, weekStart, calendarCollapsed, baseCurrency, homeWidgets, travelModeProjectId, set } = useSettings();
   const travelProject = useLiveQuery(
     () => (travelModeProjectId ? db.projects.get(travelModeProjectId) : undefined),
     [travelModeProjectId]
@@ -59,8 +59,6 @@ export default function HomePage() {
   const effectiveCalendarMode = travelProject ? 'ledger' : calendarMode;
   const [monthOpen, setMonthOpen] = useState(false);
   const [remindersOpen, setRemindersOpen] = useState(false);
-  const [voicePressing, setVoicePressing] = useState(false);
-  const voiceDownAt = useRef(0);
   const unread = useUnreadCount() + useInboxCount((x) => x.n + x.extra);
 
   // 下拉刷新（Pull-to-Refresh）：硬體加速、零重繪
@@ -577,41 +575,9 @@ export default function HomePage() {
       )}
       </div>
 
-      {/* 右下角獨立語音記帳按鈕：MediaRecorder 同步啟動錄音，長按講完放開自動辨識入帳，輕點則持續錄音 */}
-      <button
-        type="button"
-        className={`home-voice-fab${voicePressing ? ' pressing' : ''}`}
-        aria-label="語音記帳（輕點或按住說話）"
-        onPointerDown={(e) => {
-          if (e.button > 0) return;
-          e.preventDefault();
-          voiceDownAt.current = performance.now();
-          setVoicePressing(true);
-          holdGuard(true);
-          haptic('medium');
-          try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-          openVoice(true, true);
-        }}
-        onPointerUp={() => {
-          if (!voicePressing) return;
-          setVoicePressing(false);
-          const elapsed = performance.now() - voiceDownAt.current;
-          holdGuard(false);
-          void releaseVoice(elapsed);
-        }}
-        onPointerCancel={() => {
-          if (!voicePressing) return;
-          setVoicePressing(false);
-          holdGuard(false);
-          void releaseVoice(0);
-        }}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        <Icon name="mic" size={26} />
-      </button>
-
       <MonthPicker open={monthOpen} onClose={() => setMonthOpen(false)} year={year} month0={month0} onPick={goMonth} />
       <RemindersSheet open={remindersOpen} onClose={() => setRemindersOpen(false)} />
+      {onboarded && gestureTourDone === false && <GestureTour desktop={desktop} />}
     </main>
   );
 }

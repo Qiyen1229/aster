@@ -111,7 +111,7 @@ export default function ShortcutsPage() {
         <summary><b>⚡ 什麼是 iPhone 自動記帳捷徑？</b></summary>
         <p className="muted">設定好後，刷卡、網購、LINE Pay 掃碼付款或收到銀行通知時，iPhone 會自動將消費送進 Aster 收件匣，方便你在首頁隨時核對記帳。</p>
         <ol className="inbox-steps">
-          <li><span>💳</span><div><b>照常付款或呼叫 Siri</b><br />刷實體卡、網購、LINE Pay 掃碼，或先對 Siri 說「嘿 Siri，Aster 隨手記」，等 Siri 回應後再說「早餐 65 現金」</div></li>
+          <li><span>💳</span><div><b>照常付款或呼叫 Siri（兩段式）</b><br />刷實體卡、網購、LINE Pay 掃碼自動記；Siri 請先只喊捷徑名稱「嘿 Siri，Aster 隨手記」（或改名後的「隨手記」），等 Siri 問「要記什麼？」後再說「早餐 60 塊中國信託」——iOS 捷徑不支援單句同時夾帶金額參數。想一鍵直達也可將「Aster 隨手記」綁定至 iPhone <b>動作按鈕</b>或<b>背面輕點兩下</b></div></li>
           <li><span>📨</span><div><b>捷徑自動寄出</b><br />在捷徑內開啟「<b>自動化操作</b>」後，銀行 App、LINE 或 Apple Pay 跳通知時就會自動把金額與商家送進 Aster</div></li>
           <li><span>✅</span><div><b>首頁核對入帳</b><br />在首頁收件匣一鍵記帳；若開啟「看得懂的直接記帳」，打開 App 會直接入帳到今日帳目</div></li>
         </ol>
@@ -236,17 +236,17 @@ function ShortcutGuides() {
         <p className="muted">Aster 會從通知文字中解析金額、商店名稱與卡片帳戶，非交易的驗證碼與廣告推播會自動過濾略過。</p>
       </details>
       <details className="card">
-        <summary><b>🎙 對 Siri 說一句話記帳</b></summary>
+        <summary><b>🎙 對 Siri 說話兩段式記帳</b></summary>
         <ol>
-          <li>「捷徑」→ 右上角「＋」新增捷徑，名稱取「<b>記一筆</b>」（這就是對 Siri 說的話）。</li>
-          <li>加入動作「<b>聽寫文字</b>」，語言選「中文（台灣）」。</li>
+          <li>「捷徑」→ 右上角「＋」新增捷徑，名稱取簡短好喊的「<b>隨手記</b>」（這就是對 Siri 說的話）。</li>
+          <li>加入動作「<b>要求輸入</b>」，輸入類型選「文字」，提示文字填「要記什麼？」。</li>
           {common}
         </ol>
         <table className="inbox-fields"><tbody>
           <tr><td><code>source</code></td><td>siri</td></tr>
-          <tr><td><code>text</code></td><td>選「<b>聽寫的文字</b>」</td></tr>
+          <tr><td><code>text</code></td><td>選「<b>詢問的輸入</b>」</td></tr>
         </tbody></table>
-        <p className="muted">說「嘿 Siri，記一筆」，再說「昨天午餐 150 刷玉山卡」或「早餐 60 午餐 120」，一句話可以記好幾筆。</p>
+        <p className="muted">先對 Siri 只說捷徑名稱「嘿 Siri，隨手記」，等 Siri 問「要記什麼？」後再說「昨天午餐 150 刷玉山卡」或「早餐 60 午餐 120」（iOS 捷徑無法在單一句指令直接帶入明細）；亦可綁定至動作按鈕或背面輕點兩下。</p>
       </details>
     </div>
   );
