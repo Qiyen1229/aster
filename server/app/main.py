@@ -8,10 +8,11 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import admin, ai, auth, einvoice, health, inbox, notify, push, sync
-from app.api.cookies import CSRF_HEADER, csrf_accepts, csrf_binding, csrf_name, new_csrf_token, set_csrf_cookie
+from app.api.cookies import CSRF_HEADER, csrf_accepts, csrf_binding, csrf_name, new_csrf_token, read_access, read_bearer_token, read_refresh, set_csrf_cookie
 from app.core.config import get_settings
 from app.core.logging import mask_email, setup_logging
 from app.core.security import hash_password, utcnow
@@ -53,6 +54,14 @@ def translate_validation_error(e: dict) -> str:
         return f"{label}的值不在允許的選項中"
     return "輸入資料格式錯誤"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+BEARER_AUTH_PATHS = {
+    "/api/auth/login",
+    "/api/auth/register",
+    "/api/auth/refresh",
+    "/api/auth/logout",
+    "/api/auth/forgot-password",
+    "/api/auth/reset-password",
+}
 
 
 def bootstrap_admin() -> None:
@@ -135,7 +144,7 @@ def _hook_payload(request: Request, body: dict) -> dict:
 def create_app() -> FastAPI:
     s = get_settings()
     app = FastAPI(
-        title="Aster API", version="4.1.54", lifespan=lifespan,
+        title="Aster API", version="4.1.55", lifespan=lifespan,
         docs_url="/api/docs" if s.env != "production" else None, redoc_url=None, openapi_url="/api/openapi.json" if s.env != "production" else None,
     )
 
@@ -146,6 +155,16 @@ def create_app() -> FastAPI:
         # /api/hook/：iPhone 捷徑以權杖驗證、不使用 Cookie，沒有 CSRF 風險
         if request.url.path.startswith("/api/hook/"):
             return await call_next(request)
+        # 原生／Bearer 模式（無 Cookie 登入依賴）：明確使用 Authorization: Bearer 或無 Cookie 的 Bearer 認證端點才放行 CSRF
+        has_auth_cookies = bool(read_access(request) or read_refresh(request))
+        is_bearer_auth_call = (
+            request.url.path in BEARER_AUTH_PATHS
+            and request.headers.get("x-auth-mode", "").strip().lower() == "bearer"
+        )
+        if not has_auth_cookies and (read_bearer_token(request) is not None or is_bearer_auth_call):
+            response = await call_next(request)
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            return response
         binding = csrf_binding(request)
         valid = csrf_accepts(cookie, request)
         if request.url.path.startswith("/api/") and request.method not in SAFE_METHODS:
@@ -179,6 +198,17 @@ def create_app() -> FastAPI:
 
     for r in (health.router, auth.router, admin.router, sync.router, push.router, notify.router, einvoice.router, ai.router, inbox.router, inbox.hook_router):
         app.include_router(r)
+
+    cors_origins = s.parsed_cors_origins
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "X-Auth-Mode"],
+            expose_headers=["X-Totp-Required", "X-Sync-Error"],
+        )
     return app
 
 

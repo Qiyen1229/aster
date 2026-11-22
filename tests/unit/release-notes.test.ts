@@ -34,9 +34,9 @@ describe('更新說明資料', () => {
 });
 
 describe('featuresBetween：從舊版到新版中途所有功能', () => {
-  it('★ 不是只有最新一版：舊版 1.0.0 → 1.2.0 會拿到中間每一版，新的在前', () => {
+  it('★ 不是只有最新一版：舊版 1.0.0 → 1.2.0 會拿到中間每一版，由舊到新排序', () => {
     const r = featuresBetween('1.0.0', '1.2.0', N);
-    expect(r.map((x) => `${x.version} ${x.title}`)).toEqual(['1.2.0 D', '1.1.0 B', '1.1.0 C', '1.0.1 A']);
+    expect(r.map((x) => `${x.version} ${x.title}`)).toEqual(['1.0.1 A', '1.1.0 B', '1.1.0 C', '1.2.0 D']);
   });
   it('不含「上次看過的那一版」本身，含目前版本；超過目前版本的不算', () => {
     expect(featuresBetween('1.0.1', '1.1.0', N).map((x) => x.title)).toEqual(['B', 'C']);
@@ -50,18 +50,18 @@ describe('featuresBetween：從舊版到新版中途所有功能', () => {
   it('版本號用數字比較（1.10.0 比 1.9.0 新）', () => {
     expect(cmpVersion('1.10.0', '1.9.0')).toBeGreaterThan(0);
   });
-  it('condenseHighlights：10 項以內原樣保留，超過 10 項自動濃縮為 10 個精華（保留最新 3 項並跨版本抽樣）', () => {
+  it('condenseHighlights：10 項以內原樣保留，超過 10 項自動濃縮為 10 個精華（保留最新 3 項在最後並跨版本抽樣）', () => {
     const mk = (n: number): WhatsNewItem[] => Array.from({ length: n }, (_, i) => ({
-      version: `4.1.${n - i}`, date: '2026-11-14', title: `F${n - i}`, intro: 'i', howto: 'h',
+      version: `4.1.${i + 1}`, date: '2026-11-14', title: `F${i + 1}`, intro: 'i', howto: 'h',
     }));
     expect(condenseHighlights(mk(8))).toHaveLength(8);
     expect(condenseHighlights(mk(10))).toHaveLength(10);
     const condensed = condenseHighlights(mk(25));
     expect(condensed).toHaveLength(10);
-    expect(condensed.slice(0, 3).map((x) => x.title)).toEqual(['F25', 'F24', 'F23']);
-    // 由新到舊順序不變
+    expect(condensed.slice(-3).map((x) => x.title)).toEqual(['F23', 'F24', 'F25']);
+    // 由舊到新順序不變
     for (let i = 1; i < condensed.length; i++) {
-      expect(cmpVersion(condensed[i - 1].version, condensed[i].version)).toBeGreaterThan(0);
+      expect(cmpVersion(condensed[i - 1].version, condensed[i].version)).toBeLessThan(0);
     }
   });
 });

@@ -64,7 +64,7 @@ async function ledgerFor(t: TradeInput & { id: string }, stock: Stock) {
   return { transactionId: main.id, feeTransactionId: feeId };
 }
 
-const tradeTables = () => [db.stock_trades, db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.debts, db.categories, db.exchange_rates];
+const tradeTables = () => [db.stocks, db.stock_trades, db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.debts, db.categories, db.exchange_rates, db.settings];
 
 export async function addTrade(input: TradeInput): Promise<StockTrade> {
   const stock = await db.stocks.get(input.stockId);
@@ -112,7 +112,7 @@ export async function restoreTrade(id: string): Promise<void> {
 
 export type DividendInput = Omit<Dividend, 'id' | 'createdAt' | 'updatedAt' | 'transactionId' | 'stockTradeId'> & { syncToLedger: boolean };
 
-const dividendTables = () => [db.dividends, db.stock_trades, db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.debts, db.categories, db.exchange_rates];
+const dividendTables = () => [db.dividends, db.stocks, db.stock_trades, db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.debts, db.categories, db.exchange_rates, db.settings];
 
 export async function saveDividend(input: DividendInput, id?: string): Promise<string> {
   const { syncToLedger, ...data } = input;

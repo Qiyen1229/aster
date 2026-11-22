@@ -741,7 +741,7 @@
 }
 
 /* 完整配色放在自由點綴色之後，避免儲存的 Accent 覆蓋主題搭配。 */
-:root:is([data-palette='graphite'], [data-palette='jade'], [data-palette='amber']) {
+:root:is([data-palette='graphite'], [data-palette='jade'], [data-palette='obsidian']) {
   --bg-elev: var(--surface);
   --surface-3: var(--sep);
   --text-3: var(--text-2);
@@ -756,8 +756,8 @@
   --down-green: #28714f;
 }
 /* 深色模式共用中性灰底：色相只留在 accent，避免整頁被主題色濾鏡罩住；
-   新增主題只需提供 --accent 與 --on-accent，其餘深色 token 由此規則繼承 */
-:root:is([data-palette='graphite'], [data-palette='jade'], [data-palette='amber'])[data-theme='dark'] {
+   graphite / jade 共用中性石墨表面，obsidian 採純粹霧面黑曜石表面 */
+:root:is([data-palette='graphite'], [data-palette='jade'], [data-palette='obsidian'])[data-theme='dark'] {
   --bg: #131518;
   --surface: #1c1f23;
   --surface-2: #272b30;
@@ -800,21 +800,25 @@
   --accent: #a1c9b0;
   --on-accent: #183123;
 }
-:root[data-palette='amber'] {
-  --bg: #f3f1ed;
-  --surface: #fdfcf9;
-  --surface-2: #e9e4dc;
-  --text: #302a23;
-  --text-2: #6b6052;
-  --sep: #e1dacf;
-  --accent: #80602c;
-  --accent-soft: #ece3d2;
-  --danger: #b13e43;
-  --up-red: #b13e43;
+:root[data-palette='obsidian'] {
+  --bg: #f6f6f8;
+  --surface: #ffffff;
+  --surface-2: #ebecf0;
+  --text: #16171d;
+  --text-2: #555866;
+  --sep: #dcdde4;
+  --accent: #9a6b32;
+  --accent-text: #855923;
+  --accent-soft: #efe6d8;
 }
-:root[data-palette='amber'][data-theme='dark'] {
-  --accent: #d8b984;
-  --on-accent: #302513;
+:root[data-palette='obsidian'][data-theme='dark'] {
+  --bg: #0b0c0f;
+  --surface: #15161b;
+  --surface-2: #20222a;
+  --sep: #2a2c35;
+  --accent: #e7bd87;
+  --accent-text: #e7bd87;
+  --on-accent: #1b1308;
 }
 
 /* 旅遊模式專屬主題「島嶼假期」：海空漸層背景＋暖紙明信片卡片＋珊瑚／芒果點綴。
@@ -917,6 +921,10 @@ img { display: block; max-width: 100%; }
 button, a, label, summary, [role='button'], [role='tab'], [role='radio'], [role='switch'],
 .tab, .pill, .chip, .key, .pin-key, .cat-cell, .swatch, .fab {
   touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+input, textarea, select {
+  -webkit-user-select: text;
+  user-select: text;
 }
 button img, a img, .cat-icon, .tab svg { -webkit-user-drag: none; }
 /* iOS 對小於 16px 的輸入框會在聚焦時自動放大畫面且不會縮回；觸控裝置一律至少 16px（優先於 .field input 等元件樣式） */
@@ -1305,8 +1313,8 @@ a { color: inherit; text-decoration: none; }
   width: auto;
   margin-left: auto;
   text-align: right;
-  display: inline-flex;
-  justify-content: flex-end;
+  position: relative;
+  z-index: 1;
 }
 input[type="date"]::-webkit-date-and-time-value,
 input[type="month"]::-webkit-date-and-time-value,
@@ -3560,6 +3568,22 @@ button.accent, button.muted { min-height: 44px; }
 .segmented button::after { content: ''; position: absolute; inset: -4px 0; }
 .pill, .btn.small { position: relative; }
 .pill::after, .btn.small::after { content: ''; position: absolute; inset: -5px -2px; }
+.pill-picker-input {
+  position: absolute;
+  inset: -5px -2px;
+  width: calc(100% + 4px);
+  height: calc(100% + 10px);
+  opacity: 0.001;
+  z-index: 2;
+  cursor: pointer;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  font-size: 16px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.pill:has(> .pill-picker-input)::after { pointer-events: none; }
 
 
 /* ───── 串流回答：文字尾端的游標 ───── */

@@ -1046,13 +1046,11 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                 )}
                 <span className="pill" style={{ position: 'relative' }}>
                   <Icon name="calendar" size={16} /> {dateLabel}
-                  <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="日期"
-                    style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%' }} />
+                  <input type="date" className="pill-picker-input" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="日期" />
                 </span>
                 <span className="pill num" style={{ position: 'relative' }}>
                   <Icon name="clock" size={16} /> {time}
-                  <input type="time" value={time} onChange={(e) => setTime(e.target.value)} aria-label="時間"
-                    style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%' }} />
+                  <input type="time" className="pill-picker-input" value={time} onChange={(e) => e.target.value && setTime(e.target.value)} aria-label="時間" />
                 </span>
                 {mode === 'transfer' && (
                   <span className="pill">

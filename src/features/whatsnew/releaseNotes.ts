@@ -25,6 +25,26 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.55', date: '2026-11-22',
+    features: [
+      {
+        title: '日期時間選擇修復',
+        intro: '修正「記一筆」與各表單的日期、時間欄位在 iPhone Safari／主畫面 App 中無法點開或更改的問題，確保觸控區不再被遮擋。',
+        howto: '開啟「記一筆」、股票交易或計畫表單，直接點擊日期或時間即可正常切換。',
+      },
+      {
+        title: '股票交易儲存修復',
+        intro: '修復新增／編輯股票交易與股利連動記帳時，因 IndexedDB 交易未宣告 settings／stocks 資料表導致的 NotFoundError 儲存失敗問題。',
+        howto: '在「投資」頁面新增或編輯買賣交易與股利並開啟同步記帳即可正常儲存。',
+      },
+      {
+        title: '更新重點舊到新排序',
+        intro: '調整「版本更新重點」視窗的呈現順序，改為越前面的頁面顯示越舊版本、越往後越新版本，方便依序瀏覽每次更新。',
+        howto: '開啟版本更新重點視窗或從「設定 → 關於 Aster」重看更新重點，往後翻頁即可看到最新內容。',
+      },
+    ],
+  },
+  {
     version: '4.1.54', date: '2026-11-22',
     features: [
       {
@@ -926,26 +946,26 @@ export interface WhatsNewItem extends ReleaseFeature { version: string; date: st
 
 export const MAX_WHATSNEW_ITEMS = 10;
 
-/** 從 seen（上次看過的版本，不含）到 current（含）之間所有版本的功能，新的在前；同一版的功能維持寫的順序 */
+/** 從 seen（上次看過的版本，不含）到 current（含）之間所有版本的功能，由舊到新排序；同一版的功能維持寫的順序 */
 export function featuresBetween(seen: string, current: string, notes: readonly ReleaseNote[] = RELEASE_NOTES): WhatsNewItem[] {
   return [...notes]
     .filter((n) => cmpVersion(n.version, seen) > 0 && cmpVersion(n.version, current) <= 0)
-    .sort((a, b) => cmpVersion(b.version, a.version))
+    .sort((a, b) => cmpVersion(a.version, b.version))
     .flatMap((n) => n.features.map((f) => ({ ...f, version: n.version, date: n.date })));
 }
 
-/** 超過 10 項時自動濃縮為 10 個精華：保留最新 3 項，其餘依版本跨度均勻抽樣（維持由新到舊順序） */
+/** 超過 10 項時自動濃縮為 10 個精華：保留最新 3 項，其餘依版本跨度均勻抽樣（維持由舊到新順序，最新在最後） */
 export function condenseHighlights(items: readonly WhatsNewItem[], max = MAX_WHATSNEW_ITEMS): WhatsNewItem[] {
   if (items.length <= max) return [...items];
-  const headCount = Math.min(3, max);
-  const tailSlots = max - headCount;
-  const head = items.slice(0, headCount);
-  const rest = items.slice(headCount);
-  if (tailSlots <= 0 || rest.length === 0) return head;
+  const tailCount = Math.min(3, max);
+  const headSlots = max - tailCount;
+  const tail = items.slice(items.length - tailCount);
+  const rest = items.slice(0, items.length - tailCount);
+  if (headSlots <= 0 || rest.length === 0) return tail;
   const picked: WhatsNewItem[] = [];
-  for (let i = 0; i < tailSlots; i++) {
-    const idx = Math.floor((i * rest.length) / tailSlots);
+  for (let i = 0; i < headSlots; i++) {
+    const idx = Math.floor((i * rest.length) / headSlots);
     picked.push(rest[idx]);
   }
-  return [...head, ...picked];
+  return [...picked, ...tail];
 }

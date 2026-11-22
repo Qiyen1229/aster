@@ -34,16 +34,19 @@ export function openWhatsNew(items?: WhatsNewItem[]) {
   useWhatsNewStore.getState().open(items);
 }
 
-/** 取得最近版本重點新功能（若主動開啟時無未讀新功能，則展示最近版本的項目供瀏覽） */
+/** 取得最近版本重點新功能（若主動開啟時無未讀新功能，則展示最近版本的項目供瀏覽，由舊到新排序） */
 export function getRecentFeatures(notes: readonly ReleaseNote[] = RELEASE_NOTES): WhatsNewItem[] {
-  const list: WhatsNewItem[] = [];
+  const picked: ReleaseNote[] = [];
+  let count = 0;
   for (const n of notes) {
-    for (const f of n.features) {
-      list.push({ ...f, version: n.version, date: n.date });
-    }
-    if (list.length >= 3) break;
+    if (!n.features.length) continue;
+    picked.push(n);
+    count += n.features.length;
+    if (count >= 3) break;
   }
-  return list;
+  return picked
+    .reverse()
+    .flatMap((n) => n.features.map((f) => ({ ...f, version: n.version, date: n.date })));
 }
 
 /** 決定要不要跳出視窗，並記下目前版本（純邏輯，方便測試）。storage 讀寫失敗就當作沒有紀錄 */

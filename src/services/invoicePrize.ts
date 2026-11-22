@@ -111,7 +111,7 @@ export async function claimPrize(entry: PrizeEntry): Promise<Transaction> {
   const categoryId = await prizeCategoryId();
   if (!categoryId) throw new Error('找不到收入分類');
 
-  return db.transaction('rw', [db.transactions, db.accounts, db.attachments, db.settings], async () => {
+  return db.transaction('rw', [db.transactions, db.accounts, db.attachments, db.settings, db.exchange_rates], async () => {
     const existing = await db.transactions.where('invoiceNo').equals(entry.number).toArray();
     if (existing.some((t) => !t.deletedAt && t.type === 'income')) {
       entry.claimed = true;

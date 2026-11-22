@@ -1,7 +1,7 @@
 {
   "name": "aster",
   "private": true,
-  "version": "4.1.54",
+  "version": "4.1.55",
   "type": "module",
   "scripts": {
     "dev": "vite --port 9122 --host",
@@ -21,6 +21,15 @@
     "check": "tsc --noEmit && eslint . && NODE_OPTIONS='--no-warnings' vitest run"
   },
   "dependencies": {
+    "@capacitor/browser": "^8.0.5",
+    "@capacitor/core": "^8.6.2",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.6.2",
+    "@capacitor/local-notifications": "^8.3.1",
+    "@capacitor/push-notifications": "^8.1.3",
+    "@capacitor/share": "^8.0.3",
+    "@capgo/capacitor-native-biometric": "^8.9.3",
     "@tanstack/react-virtual": "^3.14.14",
     "browser-image-compression": "^2.0.2",
     "date-fns": "^3.6.0",
@@ -36,6 +45,7 @@
     "zustand": "^4.5.7"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.2",
     "@eslint/js": "^9.39.5",
     "@types/node": "^22.20.5",
     "@types/react": "^18.3.31",
