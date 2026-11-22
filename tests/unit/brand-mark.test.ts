@@ -4,8 +4,8 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as IconModule from '@/ui/Icon';
 
-describe('品牌標記改用極簡花體 A', () => {
-  it('brand 為三筆圓頭筆鋒＋頂峰星點，與全 App 圖示同一套 24×24 currentColor 語言', async () => {
+describe('品牌標記改用金色折疊緞帶 A ＋三柱成長圖表', () => {
+  it('brand 為折疊緞帶 A 路徑＋三根遞增柱狀，與全 App 圖示同一套 24×24 currentColor 語言', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -15,13 +15,12 @@ describe('品牌標記改用極簡花體 A', () => {
     const svg = container.querySelector('svg');
     expect(svg?.getAttribute('viewBox')).toBe('0 0 24 24');
     expect(svg?.getAttribute('stroke')).toBe('currentColor');
-    expect(svg?.getAttribute('stroke-linecap')).toBe('round');
     const paths = svg?.querySelectorAll('path');
-    expect(paths).toHaveLength(3);
-    expect(paths?.[2].getAttribute('stroke-width')).toBe('1.8');
-    const dot = svg?.querySelector('circle');
-    expect(dot?.getAttribute('fill')).toBe('currentColor');
-    expect(dot?.getAttribute('stroke')).toBe('none');
+    expect(paths).toHaveLength(1);
+    expect(paths?.[0].getAttribute('fill')).toBe('currentColor');
+    const rects = svg?.querySelectorAll('rect');
+    expect(rects).toHaveLength(3);
+    expect(rects?.[0].getAttribute('fill')).toBe('currentColor');
     expect(svg?.classList.contains('brand')).toBe(true);
     await act(async () => { root.unmount(); });
     container.remove();

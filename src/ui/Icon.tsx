@@ -22,10 +22,10 @@ const ICON_NODES: Record<string, React.ReactNode> = {
   ),
   brand: (
     <>
-      <path d="M4.5 15.5C3.8 17.5 5.5 19 7.2 18.2C9 17 9.5 13.8 7.6 12.2C5.8 10.8 4.8 13 6.6 15.2C8.2 17 11.2 11.8 16.2 3.5" />
-      <path d="M16.2 3.5C15.4 6.8 13 14.8 11.8 18.5C11.4 19.6 10.4 20.2 9.5 19.5" />
-      <path d="M7.2 14.8C10.2 14.2 13.5 13.6 18.8 11.5" strokeWidth={1.8} />
-      <circle cx="16.2" cy="3.5" r="0.9" fill="currentColor" stroke="none" />
+      <path d="M3 18.5L10.2 6.8C11.4 4.9 13.7 4.9 15 6.8L16.3 8.8C17.8 8.9 19.4 9.2 21 9.8C18.6 9.3 16.4 9.6 14.4 11.4L8.8 16.9C7.6 18 6.2 18.5 4.7 18.5H3Z" fill="currentColor" stroke="none" />
+      <rect x="11.4" y="15.1" width="2.3" height="3.4" rx="0.8" fill="currentColor" fillOpacity="0.45" stroke="none" />
+      <rect x="14.9" y="13.2" width="2.3" height="5.3" rx="0.8" fill="currentColor" fillOpacity="0.45" stroke="none" />
+      <rect x="18.4" y="11.3" width="2.3" height="7.2" rx="0.8" fill="currentColor" fillOpacity="0.45" stroke="none" />
     </>
   ),
   pin: (

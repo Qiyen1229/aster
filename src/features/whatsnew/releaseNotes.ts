@@ -25,6 +25,16 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.54', date: '2026-11-22',
+    features: [
+      {
+        title: '品牌圖示全面換新',
+        intro: '將 App 圖示、瀏覽器分頁圖示、啟動畫面與頂部品牌標記全面更換為全新「金色折疊緞帶 A ＋三柱成長圖表」設計，搭配深色黑金質感更一致。',
+        howto: '瀏覽器與新加入主畫面的裝置會自動顯示新版圖示；若手機先前已加入主畫面，因 iOS／Android 系統會在安裝時快取圖示，需先刪除舊捷徑再重新「加入主畫面」才會換成新圖示。',
+      },
+    ],
+  },
+  {
     version: '4.1.53', date: '2026-11-21',
     features: [
       {

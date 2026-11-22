@@ -469,7 +469,7 @@ export function TabBar({ hidden = false }: { hidden?: boolean } = {}) {
               <Icon name="plus" size={28} stroke={2.4} />
             </span>
 
-            {/* 品牌標記圖層：極簡花體 A，與全 App 圖示同一線條語言 */}
+            {/* 品牌標記圖層：金色折疊緞帶 A ＋成長柱狀，與全 App 圖示同一線條語言 */}
             <span className={`fab-layer${plusMode ? ' off' : ''}`} aria-hidden="true">
               <Icon name="brand" size={26} stroke={2} className="brand" />
             </span>
