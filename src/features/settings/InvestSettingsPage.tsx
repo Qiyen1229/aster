@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { providerById } from '@/services/quotes/providers';
 import { diagnoseSources, type SourceCheck } from '@/services/quotes/registry';
-import { proxied } from '@/services/quotes/http';
+import { defaultProxyBase, proxied } from '@/services/quotes/http';
 import { AUTH_ENABLED, useAuth } from '@/stores/auth';
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
@@ -64,7 +64,7 @@ export default function InvestSettingsPage() {
   const test = async () => {
     setTesting(true);
     try {
-      const base = (q.proxyUrl || '/proxy').replace(/\/$/, '');
+      const base = (q.proxyUrl || defaultProxyBase()).replace(/\/$/, '');
       const h = await fetch(`${base}/health`, { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
       if (!h.ok) throw new Error(`health HTTP ${h.status}`);
       const { url, headers } = proxied('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');

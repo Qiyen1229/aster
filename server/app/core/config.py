@@ -24,6 +24,8 @@ class Settings(BaseSettings):
 
     cookie_secure: Literal["auto", "true", "false"] = "auto"
     cookie_samesite: Literal["lax", "strict"] = "lax"
+    # 跨源存取（CORS）：供 Capacitor／原生 App（如 capacitor://localhost）連到獨立 NAS 後端；逗號分隔，留空則不啟用 CORS
+    cors_origins: str = "capacitor://localhost,ionic://localhost,http://localhost,https://localhost"
 
     login_rate_limit_per_minute: int = Field(5, ge=1)
     register_rate_limit_per_minute: int = Field(5, ge=1)
@@ -111,6 +113,10 @@ class Settings(BaseSettings):
     admin_username: str = ""
     admin_email: str = ""
     admin_password: str = ""
+
+    @property
+    def parsed_cors_origins(self) -> list[str]:
+        return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def sqlalchemy_url(self) -> str:

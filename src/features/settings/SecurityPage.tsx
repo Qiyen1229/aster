@@ -1,10 +1,11 @@
 /**
  * 隱私與安全：App 鎖（PIN）、Face ID／Touch ID（WebAuthn）、自動上鎖時間、背景模糊、隱藏金額。
  */
+import { Capacitor } from '@capacitor/core';
 import { LabelHint } from '@/ui/Hint';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { biometricAvailable, disableLock, registerBiometric, setPin, useLock } from '@/services/lock';
+import { biometricAvailable, disableBiometric, disableLock, registerBiometric, setPin, useLock } from '@/services/lock';
 import { useSettings } from '@/stores/settings';
 import { useUI, ask } from '@/stores/ui';
 import { Switch } from '@/ui/controls';
@@ -46,9 +47,9 @@ export default function SecurityPage() {
         {s.lock.enabled && (
           <>
             <button className="row" onClick={() => setPinStep('new')}><span className="row-main">變更 PIN 碼</span><Icon name="chevronR" className="row-chev" /></button>
-            <div className="field">{bioOK ? <span className="label" style={{ flex: 1 }}>Face ID／Touch ID</span> : <LabelHint id="sec.bio" label="Face ID／Touch ID" hint="此裝置或瀏覽器不支援（需 HTTPS）" />}
+            <div className="field">{bioOK ? <span className="label" style={{ flex: 1 }}>Face ID／Touch ID</span> : <LabelHint id="sec.bio" label="Face ID／Touch ID" hint={Capacitor.isNativePlatform() ? '此裝置尚未設定 Face ID／Touch ID' : '此裝置或瀏覽器不支援（需 HTTPS）'} />}
               <Switch checked={!!s.lock.webauthn} label="生物辨識" onChange={async (v) => {
-                if (!v) { s.set('lock', { ...s.lock, webauthn: null }); return; }
+                if (!v) { disableBiometric(); return; }
                 try { await registerBiometric(); useUI.getState().showSnack({ text: '已啟用生物辨識解鎖' }); }
                 catch (e) { useUI.getState().showSnack({ text: `無法啟用：${(e as Error).message}` }); }
               }} />

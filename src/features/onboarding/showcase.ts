@@ -91,7 +91,7 @@ export const CANDIDATES: ShowcaseFeature[] = [
   {
     id: 'themes', icon: 'palette', title: '三套完整配色', since: '4.1.29', power: 1, novelty: 2,
     pitch: '背景、卡片與點綴色一次搭配好',
-    bullets: ['石墨冰藍、霧白墨綠、暖灰琥珀', '支援深色、淺色與跟隨系統', '經典灰階保留自由選色'],
+    bullets: ['黑曜香檳金、石墨冰藍、霧白墨綠', '支援深色、淺色與跟隨系統', '經典灰階保留自由選色'],
     howto: '到「設定 → 主題」',
   },
   {

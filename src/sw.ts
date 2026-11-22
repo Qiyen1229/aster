@@ -7,6 +7,7 @@
  * - 匯率等外部 API 採 NetworkFirst，離線時使用最後一次結果
  * - 背景推播（push）：顯示伺服器排定的提醒；點擊通知開啟對應頁面（notificationclick）
  */
+import { clientsClaim } from 'workbox-core';
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { NetworkFirst, StaleWhileRevalidate } from 'workbox-strategies';
@@ -17,6 +18,7 @@ declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: Array<{ url: str
 
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
+clientsClaim();
 
 registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), { denylist: [/^\/proxy\//, /^\/api\//, /^\/shortcuts\//] }));
 
@@ -31,7 +33,11 @@ registerRoute(
 );
 
 self.addEventListener('message', (event) => {
-  if (event.data?.type === 'SKIP_WAITING') void self.skipWaiting();
+  if (event.data?.type === 'SKIP_WAITING') {
+    const p = self.skipWaiting();
+    if (typeof event.waitUntil === 'function') event.waitUntil(p);
+    else void p;
+  }
 });
 
 self.addEventListener('push', (event) => {

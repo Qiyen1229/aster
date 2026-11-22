@@ -147,4 +147,32 @@ describe('首次引導 Onboarding：文案與範例資料行為', () => {
     expect(await db.transactions.count()).toBeGreaterThan(0);
     expect((await db.settings.get('onboarded'))?.value).toBe(true);
   });
+
+  it('步驟 2 預設選中「黑曜香檳金」，切到「經典灰階」才顯示點綴色票並即時更新套用', async () => {
+    await renderOnboarding();
+    await act(async () => { clickButton(host, '開始設定'); });
+    await act(async () => { clickButton(host, '下一步'); });
+
+    const paletteGroup = host.querySelector('[role="group"][aria-label="全域風格主題"]');
+    expect(paletteGroup).not.toBeNull();
+    expect(host.textContent).not.toContain('暖灰琥珀');
+
+    const obsidianBtn = Array.from(paletteGroup!.querySelectorAll('button')).find((b) => b.textContent?.includes('黑曜香檳金'));
+    const defaultBtn = Array.from(paletteGroup!.querySelectorAll('button')).find((b) => b.textContent?.includes('經典灰階'));
+    expect(obsidianBtn?.getAttribute('aria-pressed')).toBe('true');
+    expect(defaultBtn?.getAttribute('aria-pressed')).toBe('false');
+    expect(host.querySelector('.swatches')).toBeNull();
+
+    await act(async () => { defaultBtn?.click(); });
+    expect(useSettings.getState().themePalette).toBe('default');
+    expect(document.documentElement.dataset.palette).toBe('default');
+    expect(defaultBtn?.getAttribute('aria-pressed')).toBe('true');
+    expect(host.querySelectorAll('.swatches .swatch').length).toBeGreaterThan(0);
+
+    await act(async () => { obsidianBtn?.click(); });
+    expect(useSettings.getState().themePalette).toBe('obsidian');
+    expect(document.documentElement.dataset.palette).toBe('obsidian');
+    expect(obsidianBtn?.getAttribute('aria-pressed')).toBe('true');
+    expect(host.querySelector('.swatches')).toBeNull();
+  });
 });

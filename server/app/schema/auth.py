@@ -122,6 +122,18 @@ class UserPublic(BaseModel):
     totp_enabled: bool = False
 
 
+class BearerAuthResponse(UserPublic):
+    """原生 App（Bearer 模式）登入／註冊／刷新／變更密碼回傳：除使用者資料外附帶 JWT 權杖。"""
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class RefreshTokenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    refresh_token: str | None = Field(default=None, max_length=4096)
+
+
 class TotpStatus(BaseModel):
     enabled: bool
     recovery_left: int = 0

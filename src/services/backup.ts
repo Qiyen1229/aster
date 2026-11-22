@@ -5,6 +5,9 @@
  * - CSV（帳目＋轉帳）、Excel（帳目／帳戶／投資交易／股利 多工作表）
  * - 儲存：桌機用 File System Access API；iPhone 用分享表單（可存到「檔案」或 iCloud Drive）；否則下載
  */
+import { Capacitor } from '@capacitor/core';
+import { Directory, Filesystem } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 import { db } from '@/db/schema';
 import type { Account, Category, Transaction, Transfer } from '@/db/types';
 import { fromMinor } from '@/domain/money';
@@ -24,7 +27,10 @@ const BACKUP_FORMAT = 1;
 const DEVICE_STATE_TABLES = new Set(['meta', OUTBOX, 'errors']);
 
 async function blobToB64(b: Blob): Promise<string> {
-  const buf = new Uint8Array(await b.arrayBuffer());
+  const ab = typeof b.arrayBuffer === 'function'
+    ? await b.arrayBuffer()
+    : await new Response(b).arrayBuffer();
+  const buf = new Uint8Array(ab);
   let s = '';
   for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
   return btoa(s);
@@ -354,8 +360,20 @@ export async function restoreBackup(file: File, mode: 'replace' | 'merge', passp
   return { tables, rows };
 }
 
-/** 儲存檔案：桌機另存新檔 → 行動裝置分享表單 → 下載 */
+/** 儲存檔案：原生 App 寫入暫存並呼叫分享表單 → 桌機另存新檔 → 行動裝置分享表單 → 下載 */
 export async function saveFile(blob: Blob, filename: string, mime: string): Promise<'saved' | 'shared' | 'downloaded' | 'cancelled'> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const data = await blobToB64(blob);
+      const written = await Filesystem.writeFile({ path: filename, data, directory: Directory.Cache });
+      await Share.share({ title: filename, url: written.uri, dialogTitle: filename });
+      return 'shared';
+    } catch (e) {
+      const msg = (e as Error)?.message?.toLowerCase() ?? '';
+      if ((e as Error)?.name === 'AbortError' || msg.includes('cancel')) return 'cancelled';
+      throw e;
+    }
+  }
   const w = window as any;
   if (w.showSaveFilePicker && !/iPhone|iPad|Android/.test(navigator.userAgent)) {
     try {

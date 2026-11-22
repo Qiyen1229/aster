@@ -4,6 +4,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { getApiBase, isBearerMode } from '@/services/api';
 import { Icon } from '@/ui/Icon';
 
 const UPDATED = '2026-11-08';
@@ -28,12 +29,28 @@ function Shell({ title, children }: { title: string; children: ReactNode }) {
 
 const H = ({ children }: { children: ReactNode }) => <h2 className="legal-h">{children}</h2>;
 
-function useContact(): string {
-  const [contact, setContact] = useState('');
+export function getConfiguredSupportEmail(raw = import.meta.env.VITE_SUPPORT_EMAIL): string {
+  return (raw ?? '').trim();
+}
+
+export function useContact(configuredEmail = getConfiguredSupportEmail()): string {
+  const [contact, setContact] = useState(configuredEmail);
   useEffect(() => {
-    void fetch('/api/auth/forgot-info', { credentials: 'same-origin', signal: AbortSignal.timeout(10_000) }).then((r) => (r.ok ? r.json() : null)).then((j: { contact?: string } | null) => setContact(j?.contact ?? ''), () => undefined);
-  }, []);
+    if (configuredEmail) {
+      setContact(configuredEmail);
+      return;
+    }
+    void fetch(`${getApiBase()}/auth/forgot-info`, { credentials: isBearerMode() ? 'omit' : 'same-origin', signal: AbortSignal.timeout(10_000) }).then((r) => (r.ok ? r.json() : null)).then((j: { contact?: string } | null) => setContact(j?.contact ?? ''), () => undefined);
+  }, [configuredEmail]);
   return contact;
+}
+
+function ContactText({ contact }: { contact: string }) {
+  if (!contact) return null;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) {
+    return <>：<a className="accent" href={`mailto:${contact}`}><b>{contact}</b></a></>;
+  }
+  return <>：<b>{contact}</b></>;
 }
 
 export function PrivacyPage() {
@@ -65,7 +82,7 @@ export function PrivacyPage() {
       <H>安全</H>
       <p>連線使用 HTTPS；密碼以 Argon2id 雜湊；可啟用雙因素驗證、App 鎖與「已登入的裝置」管理。沒有任何系統能保證百分之百安全，建議定期備份。</p>
       <H>聯絡</H>
-      <p>隱私相關問題請洽架設這個站台的管理員{contact ? <>：<b>{contact}</b></> : '（站台的聯絡方式請向管理員索取）'}。</p>
+      <p>隱私相關問題請洽架設這個站台的管理員{contact ? <ContactText contact={contact} /> : '（站台的聯絡方式請向管理員索取）'}。</p>
     </Shell>
   );
 }
@@ -91,7 +108,7 @@ export function TermsPage() {
       <H>變更與終止</H>
       <p>條款有重大變更時會在 App 內公告。你可以隨時刪除帳號並停止使用。</p>
       <H>聯絡</H>
-      <p>有任何問題請洽管理員{contact ? <>：<b>{contact}</b></> : ''}。</p>
+      <p>有任何問題請洽管理員{contact ? <ContactText contact={contact} /> : ''}。</p>
     </Shell>
   );
 }

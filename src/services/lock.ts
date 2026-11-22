@@ -5,6 +5,8 @@
  *   並檢查 challenge、origin、User Verified 旗標 —— 不需要伺服器。
  * 注意：App 鎖保護的是「畫面」，資料本身仍以明文存在瀏覽器儲存空間（見已知限制）。
  */
+import { Capacitor } from '@capacitor/core';
+import { NativeBiometric } from '@capgo/capacitor-native-biometric';
 import { create } from 'zustand';
 import { useSettings } from '@/stores/settings';
 
@@ -42,15 +44,27 @@ export function disableLock() {
   s.set('lock', { ...s.lock, enabled: false, pinHash: '', salt: '', webauthn: null });
 }
 
-// ───── WebAuthn ─────
+// ───── 生物辨識（原生 Face ID／Touch ID 與 WebAuthn） ─────
 
 export async function biometricAvailable(): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const res = await NativeBiometric.isAvailable();
+      return !!res.isAvailable;
+    } catch { return false; }
+  }
   try {
     return !!window.PublicKeyCredential && (await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable());
   } catch { return false; }
 }
 
 export async function registerBiometric(): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    await NativeBiometric.verifyIdentity({ reason: '啟用 Face ID／Touch ID 解鎖 Aster 記帳', title: '生物辨識驗證', useFallback: false });
+    const s = useSettings.getState();
+    s.set('lock', { ...s.lock, webauthn: { credId: 'native', publicKey: 'native', alg: 0 } });
+    return;
+  }
   const cred = (await navigator.credentials.create({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
@@ -93,9 +107,20 @@ export function derToRaw(der: Uint8Array): Uint8Array {
   return raw;
 }
 
+export function disableBiometric(): void {
+  const s = useSettings.getState();
+  s.set('lock', { ...s.lock, webauthn: null });
+}
+
 export async function verifyBiometric(): Promise<boolean> {
   const { lock } = useSettings.getState();
   if (!lock.webauthn) return false;
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await NativeBiometric.verifyIdentity({ reason: '解鎖 Aster 記帳', title: '生物辨識驗證', useFallback: true });
+      return true;
+    } catch { return false; }
+  }
   const challenge = crypto.getRandomValues(new Uint8Array(32));
   const cred = (await navigator.credentials.get({
     publicKey: {

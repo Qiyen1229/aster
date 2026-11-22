@@ -15,7 +15,7 @@ import { useSettings } from '@/stores/settings';
 import { Icon } from '@/ui/Icon';
 import { Segmented } from '@/ui/controls';
 import { ShowcaseCarousel } from './ShowcaseCarousel';
-import { ACCENTS } from '../settings/SettingsPage';
+import { ACCENTS, PALETTES } from '../settings/SettingsPage';
 
 export default function Onboarding() {
   const s = useSettings();
@@ -121,15 +121,33 @@ export default function Onboarding() {
       {step === 2 && (
         <>
           <h1>挑一個喜歡的樣子</h1>
-          <p>深色、淺色或跟隨系統，再選一個主題色。</p>
+          <p>深色、淺色或跟隨系統，再選一個風格主題。</p>
           <Segmented value={s.theme} onChange={(v) => s.set('theme', v)}
             options={[{ value: 'system', label: '跟隨系統' }, { value: 'light', label: '淺色' }, { value: 'dark', label: '深色' }]} />
-          <div className="swatches" style={{ marginTop: 16, justifyContent: 'center' }}>
-            {ACCENTS.map((a) => (
-              <button key={a.key} className="swatch" style={{ ['--c' as string]: a.color, width: 44, height: 44 }} aria-pressed={s.accent === a.key}
-                aria-label={a.name} onClick={() => s.set('accent', a.key)} />
+          <div className="palette-options" role="group" aria-label="全域風格主題" style={{ marginTop: 16 }}>
+            {PALETTES.map((p) => (
+              <button key={p.key} type="button" className="palette-option"
+                aria-pressed={(s.themePalette ?? 'obsidian') === p.key}
+                onClick={() => s.set('themePalette', p.key)}>
+                <span className="palette-preview" aria-hidden="true" style={{ background: p.preview[0] }}>
+                  <span className="palette-preview-card" style={{ background: p.preview[1] }}>
+                    <span style={{ background: p.preview[2] }} />
+                    <span style={{ background: p.preview[2] }} />
+                  </span>
+                </span>
+                <span className="palette-name">{p.name}</span>
+                <span className="palette-desc">{p.desc}</span>
+              </button>
             ))}
           </div>
+          {(s.themePalette ?? 'obsidian') === 'default' && (
+            <div className="swatches" style={{ marginTop: 12, justifyContent: 'center' }}>
+              {ACCENTS.map((a) => (
+                <button key={a.key} className="swatch" style={{ ['--c' as string]: a.color, width: 44, height: 44 }} aria-pressed={s.accent === a.key}
+                  aria-label={a.name} onClick={() => s.set('accent', a.key)} />
+              ))}
+            </div>
+          )}
           <p style={{ marginTop: 16 }}>收支顏色</p>
           <Segmented value={s.upColor} onChange={(v) => s.set('upColor', v)}
             options={[{ value: 'green', label: '支出紅・收入綠' }, { value: 'red', label: '支出綠・收入紅' }]} />

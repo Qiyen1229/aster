@@ -8,7 +8,9 @@
  * - 帳戶：學到的卡片對應 → 文字裡的帳戶名稱 → 規則／商家記憶 → 收件匣預設帳戶 → 上次使用的帳戶
  * - 暫存在伺服器上的內容沒有端對端加密（捷徑沒有你的加密密碼）；處理後立即刪除，30 天未處理自動清除
  */
-import { api } from './api';
+import { Capacitor } from '@capacitor/core';
+import { Browser } from '@capacitor/browser';
+import { api, getApiOrigin } from './api';
 import { useInboxCount } from './inboxCount';
 import { extractDate, findAccounts, findAmounts, matchCategory, parseEntries, shortDate, toHalfWidth, type DraftEntry } from '@/domain/nlp';
 import { findDuplicate, type DupCandidate } from '@/domain/dedupe';
@@ -160,7 +162,7 @@ export const SOURCE_LABEL: Record<InboxRaw['source'], { icon: string; label: str
 /** 首頁提示用的待確認數 */
 export { useInboxCount };
 
-export const hookUrl = () => `${location.origin}/api/hook/inbox`;
+export const hookUrl = () => `${getApiOrigin() || location.origin}/api/hook/inbox`;
 
 /** 預先做好、簽署過的捷徑（scripts/make-shortcuts.py 產生 public/shortcuts/aster-<key>.shortcut）；name＝匯入後的捷徑名稱 */
 export const SHORTCUTS = [
@@ -181,7 +183,12 @@ export const shortcutFileUrl = (s: ShortcutDef) => `/shortcuts/aster-${s.key}.sh
 export const shortcutIcloudUrl = (s: ShortcutDef) => `https://www.icloud.com/shortcuts/${s.icloud}`;
 
 export function openShortcutImport(s: ShortcutDef): void {
-  location.href = shortcutIcloudUrl(s);
+  const url = shortcutIcloudUrl(s);
+  if (Capacitor.isNativePlatform()) {
+    void Browser.open({ url });
+    return;
+  }
+  location.href = url;
 }
 
 /** 連結碼＝網址＋?t=權杖：捷徑匯入時只要貼上這一串。存在這台裝置（依使用者區分），之後加其他捷徑可重用 */

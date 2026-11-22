@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'node_modules/**', 'server/**', 'public/**', 'aster-nas.zip', '.claude/**', '.playwright-mcp/**'] },
+  { ignores: ['dist/**', 'ios/**', 'node_modules/**', 'server/**', 'public/**', 'aster-nas.zip', '.claude/**', '.playwright-mcp/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   { files: ['docker/**/*.mjs', 'scripts/**/*.mjs', 'tests/e2e/**/*.mjs'], languageOptions: { globals: { ...globals.node } } },

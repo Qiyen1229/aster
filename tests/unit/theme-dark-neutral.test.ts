@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 // Vitest 預設把 CSS import 換成空字串，改讀原始檔檢查 token 架構。
 const css = readFileSync(new URL('../../src/theme/app.css', import.meta.url), 'utf8');
 
-const PALETTES = ['graphite', 'jade', 'amber'] as const;
+const PALETTES = ['graphite', 'jade', 'obsidian'] as const;
+const SHARED_DARK_PALETTES = ['graphite', 'jade'] as const;
 const SURFACE_TOKENS = ['--bg', '--surface', '--surface-2', '--text', '--text-2', '--sep'] as const;
 
 function ruleBody(selector: RegExp): string {
@@ -22,13 +23,34 @@ describe('深色模式中性灰底：三套主題共用表面色，色相只留�
     expect(ruleBody(sharedDarkSelector)).toMatch(new RegExp(`${token}:\\s*#[0-9a-f]{6}`));
   });
 
-  it.each(PALETTES)('%s 深色規則只帶 --accent 與 --on-accent，不覆寫中性表面', (palette) => {
+  it.each(SHARED_DARK_PALETTES)('%s 深色規則只帶 --accent 與 --on-accent，不覆寫中性表面', (palette) => {
     const body = ruleBody(paletteDark(palette));
     expect(body).toMatch(/--accent:\s*#[0-9a-f]{6}/);
     expect(body).toMatch(/--on-accent:\s*#[0-9a-f]{6}/);
     for (const token of [...SURFACE_TOKENS, '--accent-soft']) {
       expect(body, `${palette} 深色不應覆寫 ${token}`).not.toContain(`${token}:`);
     }
+  });
+
+  it('obsidian 深色規則採純粹霧面黑曜石表面與香檳金點綴', () => {
+    const body = ruleBody(paletteDark('obsidian'));
+    expect(body).toContain('--bg: #0b0c0f');
+    expect(body).toContain('--surface: #15161b');
+    expect(body).toContain('--surface-2: #20222a');
+    expect(body).toContain('--sep: #2a2c35');
+    expect(body).toContain('--accent: #e7bd87');
+    expect(body).toContain('--accent-text: #e7bd87');
+    expect(body).toMatch(/--on-accent:\s*#[0-9a-f]{6}/);
+  });
+
+  it('obsidian 淺色規則採高對比鈦銀白底與古銅金點綴', () => {
+    const body = ruleBody(paletteLight('obsidian'));
+    expect(body).toContain('--bg: #f6f6f8');
+    expect(body).toContain('--surface: #ffffff');
+    expect(body).toContain('--surface-2: #ebecf0');
+    expect(body).toContain('--accent: #9a6b32');
+    expect(body).toContain('--accent-text: #855923');
+    expect(body).toContain('--accent-soft: #efe6d8');
   });
 
   it('三套主題的深色 accent 各自不同', () => {

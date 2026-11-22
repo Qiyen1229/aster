@@ -6,6 +6,8 @@
  * 啟用端對端加密時，推播文字不含金額與名稱。
  * 限制：iPhone 需 iOS 16.4 以上、加入主畫面，且網站需 HTTPS；到價提醒需要即時報價，仍只在 App 開啟時檢查。
  */
+import { Capacitor } from '@capacitor/core';
+import { PushNotifications } from '@capacitor/push-notifications';
 import { db } from '@/db/schema';
 import { creditCardStatement } from '@/db/repo/accounts';
 import { addDays, toDateKey, todayKey, weekRange } from '@/domain/period';
@@ -19,7 +21,41 @@ import { hasLoggedOn, notificationSupport, requestPermission } from './notificat
 export interface PushItem { id: string; at: number; title: string; body: string; url: string }
 
 export function pushSupported(): boolean {
+  if (Capacitor.isNativePlatform()) return AUTH_ENABLED;
   return AUTH_ENABLED && 'serviceWorker' in navigator && 'PushManager' in window && notificationSupport() !== 'needs-install' && notificationSupport() !== 'unsupported';
+}
+
+let cachedNativeToken: string | null = null;
+
+async function registerNativePushToken(timeoutMs = 10_000): Promise<string> {
+  let perm = await PushNotifications.checkPermissions();
+  if (perm.receive === 'prompt' || perm.receive === 'prompt-with-rationale') {
+    perm = await PushNotifications.requestPermissions();
+  }
+  if (perm.receive !== 'granted') throw new Error('請先允許通知');
+
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    const handles: Array<{ remove: () => Promise<void> }> = [];
+    const timer = setTimeout(() => done(() => reject(new Error('取得推播憑證逾時'))), timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      for (const h of handles) void h.remove().catch(() => undefined);
+    };
+    const done = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn();
+    };
+    void Promise.all([
+      PushNotifications.addListener('registration', (token) => done(() => resolve(token.value))),
+      PushNotifications.addListener('registrationError', (err) => done(() => reject(new Error(err.error || '推播註冊失敗')))),
+    ]).then((list) => {
+      handles.push(...list);
+      if (!settled) void PushNotifications.register().catch((e) => done(() => reject(e)));
+    }).catch((e) => done(() => reject(e)));
+  });
 }
 
 const fromB64Url = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)), (c) => c.charCodeAt(0));
@@ -35,6 +71,18 @@ export const fetchPushStatus = async (): Promise<PushStatus> => api<PushStatus>(
  * 只要有任何一邊遺失，開關看起來是開的卻永遠收不到通知——所以每次開啟 App 都檢查。
  */
 export async function ensurePushSubscription(): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    if (!AUTH_ENABLED) return false;
+    if (cachedNativeToken) return true;
+    const device = await deviceId();
+    const token = await registerNativePushToken();
+    cachedNativeToken = token;
+    await api('/push/subscribe', {
+      method: 'POST',
+      body: { device_id: device, endpoint: `apns://${token}`, keys: { p256dh: '', auth: '' }, platform: 'ios', token },
+    }).catch(() => undefined);
+    return true;
+  }
   if (!pushSupported() || notificationSupport() !== 'granted') return false;
   const reg = await navigator.serviceWorker.ready;
   const device = await deviceId();
@@ -62,11 +110,16 @@ export async function disablePush(): Promise<void> {
   const s = useSettings.getState();
   s.set('notify', { ...s.notify, push: false });
   try {
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    if (sub) {
-      await api('/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }).catch(() => undefined);
-      await sub.unsubscribe();
+    if (Capacitor.isNativePlatform()) {
+      cachedNativeToken = null;
+      await PushNotifications.unregister().catch(() => undefined);
+    } else {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await api('/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } }).catch(() => undefined);
+        await sub.unsubscribe();
+      }
     }
     // 排程以帳號為單位：還有開著的對外通道（Discord／Telegram／LINE）時要重排，不能整批清空
     if (await import('./outgoing').then((m) => m.hasActiveChannels())) await schedulePush();

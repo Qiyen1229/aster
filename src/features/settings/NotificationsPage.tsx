@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { disablePush, enablePush, fetchPushStatus, pushSupported, schedulePush, sendTestPush, type PushStatus } from '@/services/push';
 import { AUTH_ENABLED } from '@/stores/auth';
 import { useNavigate } from 'react-router-dom';
-import { isIOS, notificationSupport, notify, requestPermission, runReminderChecks, type PermissionState } from '@/services/notifications';
+import { checkNotificationSupport, isIOS, notificationSupport, notify, requestPermission, runReminderChecks, type PermissionState } from '@/services/notifications';
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
 import { Switch } from '@/ui/controls';
@@ -28,6 +28,7 @@ export default function NotificationsPage() {
   const n = s.notify;
   const set = (patch: Partial<NotifySettings>) => s.set('notify', { ...n, ...patch });
   const [perm, setPerm] = useState<PermissionState>(notificationSupport());
+  useEffect(() => { void checkNotificationSupport().then(setPerm); }, []);
   const [pushBusy, setPushBusy] = useState(false);
   const [pst, setPst] = useState<PushStatus | null>(null);
   const refreshPst = () => { if (AUTH_ENABLED && n.push) void fetchPushStatus().then(setPst, () => setPst(null)); };

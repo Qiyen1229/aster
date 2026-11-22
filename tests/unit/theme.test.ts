@@ -17,7 +17,7 @@ const palettes = [
   { palette: 'default', light: '#f1f2f3', dark: '#111213' },
   { palette: 'graphite', light: '#e1e2e3', dark: '#212223' },
   { palette: 'jade', light: '#e1f2e3', dark: '#213223' },
-  { palette: 'amber', light: '#f1e2d3', dark: '#312213' },
+  { palette: 'obsidian', light: '#f6f6f8', dark: '#0b0c0f' },
 ] as const;
 
 let applyTheme: typeof import('@/stores/settings')['applyTheme'];
@@ -119,10 +119,10 @@ describe('applyTheme', () => {
     expectMetaColor('#abcdef');
   });
 
-  it('沒有 themePalette 時使用 default，保留 accent 與收支配色', () => {
+  it('沒有 themePalette 時使用 obsidian，保留 accent 與收支配色', () => {
     applyTheme({ theme: 'light', accent: 'gold', upColor: 'green' });
-    expect(document.documentElement.dataset).toMatchObject({ theme: 'light', palette: 'default', accent: 'gold', updown: 'green' });
-    expectMetaColor('#f1f2f3');
+    expect(document.documentElement.dataset).toMatchObject({ theme: 'light', palette: 'obsidian', accent: 'gold', updown: 'green' });
+    expectMetaColor('#f6f6f8');
   });
 });
 
@@ -131,15 +131,16 @@ describe('hydrate 主題偏好', () => {
     ['default', 'default'],
     ['graphite', 'graphite'],
     ['jade', 'jade'],
-    ['amber', 'amber'],
+    ['obsidian', 'obsidian'],
     ['oled', 'graphite'],
     ['slate', 'graphite'],
     ['ocean', 'graphite'],
     ['forest', 'jade'],
-    ['oat', 'amber'],
-    [undefined, 'default'],
-    [null, 'default'],
-    ['unknown', 'default'],
+    ['amber', 'obsidian'],
+    ['oat', 'obsidian'],
+    [undefined, 'obsidian'],
+    [null, 'obsidian'],
+    ['unknown', 'obsidian'],
   ];
 
   it.each(cases)('%j → %s，套用新主題但不改其他設定或輸入物件', (value, expected) => {
@@ -174,18 +175,18 @@ describe('hydrate 主題偏好', () => {
     expect(settingsRepo.saveSetting).not.toHaveBeenCalled();
   });
 
-  it('缺少 themePalette 的舊設定也會在 store 補上 default', () => {
+  it('缺少 themePalette 的舊設定也會在 store 補上 obsidian', () => {
     const input = structuredClone(DEFAULT_SETTINGS);
     delete input.themePalette;
     useSettings.setState({ themePalette: 'jade' });
     useSettings.getState().hydrate(input);
-    expect(useSettings.getState().themePalette).toBe('default');
-    expect(document.documentElement.dataset.palette).toBe('default');
+    expect(useSettings.getState().themePalette).toBe('obsidian');
+    expect(document.documentElement.dataset.palette).toBe('obsidian');
     expect(input).not.toHaveProperty('themePalette');
     expect(settingsRepo.saveSetting).not.toHaveBeenCalled();
   });
 
-  it.each(['graphite', 'jade', 'amber'] as const)('切到 %s 再回 default，仍使用保存的 accent 偏好', (palette) => {
+  it.each(['graphite', 'jade', 'obsidian'] as const)('切到 %s 再回 default，仍使用保存的 accent 偏好', (palette) => {
     useSettings.getState().hydrate({ ...structuredClone(DEFAULT_SETTINGS), theme: 'light', accent: 'pink', upColor: 'red' });
     useSettings.getState().set('themePalette', palette);
     expect(useSettings.getState()).toMatchObject({ themePalette: palette, accent: 'pink', upColor: 'red' });
@@ -226,12 +227,12 @@ describe('系統深淺色事件', () => {
     }
     expect(settingsRepo.saveSetting).not.toHaveBeenCalled();
     // 事件必須讀取最新 store，而不是捕捉 hydrate 時的 palette。
-    useSettings.getState().set('themePalette', 'amber');
+    useSettings.getState().set('themePalette', 'obsidian');
     changeSystemTheme(!initialDark);
-    expect(document.documentElement.dataset.palette).toBe('amber');
-    expectMetaColor(initialDark ? '#f1e2d3' : '#312213');
+    expect(document.documentElement.dataset.palette).toBe('obsidian');
+    expectMetaColor(initialDark ? '#f6f6f8' : '#0b0c0f');
     expect(settingsRepo.saveSetting).toHaveBeenCalledTimes(1);
-    expect(settingsRepo.saveSetting).toHaveBeenCalledWith('themePalette', 'amber');
+    expect(settingsRepo.saveSetting).toHaveBeenCalledWith('themePalette', 'obsidian');
   });
 
   it.each(['light', 'dark'] as const)('手動 %s 優先於 system change；改回 system 後才跟隨', (theme) => {

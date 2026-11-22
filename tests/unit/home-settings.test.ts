@@ -29,25 +29,26 @@ const paletteCases: [unknown, ThemePalette][] = [
   ['default', 'default'],
   ['graphite', 'graphite'],
   ['jade', 'jade'],
-  ['amber', 'amber'],
+  ['obsidian', 'obsidian'],
   ['oled', 'graphite'],
   ['slate', 'graphite'],
   ['ocean', 'graphite'],
   ['forest', 'jade'],
-  ['oat', 'amber'],
-  [undefined, 'default'],
-  [null, 'default'],
-  ['', 'default'],
-  ['unknown', 'default'],
-  ['Graphite', 'default'],
-  [' jade ', 'default'],
-  ['__proto__', 'default'],
-  ['constructor', 'default'],
-  ['toString', 'default'],
-  [0, 'default'],
-  [false, 'default'],
-  [{ palette: 'jade' }, 'default'],
-  [['amber'], 'default'],
+  ['amber', 'obsidian'],
+  ['oat', 'obsidian'],
+  [undefined, 'obsidian'],
+  [null, 'obsidian'],
+  ['', 'obsidian'],
+  ['unknown', 'obsidian'],
+  ['Graphite', 'obsidian'],
+  [' jade ', 'obsidian'],
+  ['__proto__', 'obsidian'],
+  ['constructor', 'obsidian'],
+  ['toString', 'obsidian'],
+  [0, 'obsidian'],
+  [false, 'obsidian'],
+  [{ palette: 'jade' }, 'obsidian'],
+  [['amber'], 'obsidian'],
 ];
 
 describe('主題偏好相容性', () => {
@@ -100,9 +101,9 @@ describe('主題偏好相容性', () => {
     }
   });
 
-  it('尚未保存主題偏好時使用 default，不新增任何設定列', async () => {
-    expect(DEFAULT_SETTINGS.themePalette).toBe('default');
-    expect((await loadSettings()).themePalette).toBe('default');
+  it('尚未保存主題偏好時使用 obsidian，不新增任何設定列', async () => {
+    expect(DEFAULT_SETTINGS.themePalette).toBe('obsidian');
+    expect((await loadSettings()).themePalette).toBe('obsidian');
     expect(await db.settings.toArray()).toEqual([]);
   });
 });

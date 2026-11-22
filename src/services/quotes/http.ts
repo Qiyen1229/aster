@@ -2,6 +2,7 @@
  * 報價用 HTTP：經由 CORS 代理（NAS Docker 同源 /proxy 或 Cloudflare Worker），
  * 含逾時、重試（指數退避）、每個網域的最小請求間隔（節流）。
  */
+import { getAccessToken, getApiOrigin, isBearerMode, refreshAuthSession } from '@/services/api';
 import { useSettings } from '@/stores/settings';
 
 const lastHit = new Map<string, number>();
@@ -32,26 +33,31 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number) {
   }
 }
 
+export function defaultProxyBase(): string {
+  const origin = getApiOrigin();
+  return origin ? `${origin}/proxy` : '/proxy';
+}
+
 export function proxied(url: string): { url: string; headers: Record<string, string> } {
   const { proxyUrl, proxyToken } = useSettings.getState().quote;
-  const base = (proxyUrl || '/proxy').replace(/\/$/, '');
+  const base = (proxyUrl || defaultProxyBase()).replace(/\/$/, '');
+  const headers: Record<string, string> = proxyToken ? { 'x-clure-token': proxyToken } : {};
+  if (!proxyUrl && isBearerMode()) {
+    const at = getAccessToken();
+    if (at) headers.Authorization = `Bearer ${at}`;
+  }
   return {
     url: `${base}/fetch?url=${encodeURIComponent(url)}`,
-    headers: proxyToken ? { 'x-clure-token': proxyToken } : {},
+    headers,
   };
 }
 
 /**
  * NAS 的 /proxy/ 只允許已登入的使用者（nginx auth_request）。代理回 401 時（Access Token 過期，
- * 或還留著 1.2.1 以前只送往 /api 的舊 Cookie），直接刷新權杖取得新的 Cookie 再重試一次。同時多個請求只刷新一次。
+ * 或還留著 1.2.1 以前只送往 /api 的舊 Cookie），直接刷新權杖取得新的 Cookie／Bearer 再重試一次。與 api() 共用同一個刷新鎖。
  */
-let refreshing: Promise<boolean> | null = null;
 async function refreshLogin(): Promise<boolean> {
-  refreshing ??= import('../api')
-    .then(({ api }) => api('/auth/refresh', { method: 'POST' }))
-    .then(() => true, () => false)
-    .finally(() => setTimeout(() => { refreshing = null; }, 0));
-  return refreshing;
+  return refreshAuthSession();
 }
 
 /**
@@ -75,11 +81,15 @@ async function getBody<T>(url: string, opts: { direct?: boolean; retries?: numbe
     try {
       await throttle(host);
       const useDirect = direct && attempt === 0;
-      const target = useDirect ? { url, headers: {} } : proxied(url);
+      const isBuiltinProxy = !useDirect && !useSettings.getState().quote.proxyUrl;
+      let target = useDirect ? { url, headers: {} } : proxied(url);
       let res = await fetchWithTimeout(target.url, { headers: target.headers }, timeoutMs);
-      if (res.status === 401 && !useDirect && !reauthed && target.url.startsWith('/')) {
+      if (res.status === 401 && isBuiltinProxy && !reauthed) {
         reauthed = true;
-        if (await refreshLogin()) res = await fetchWithTimeout(target.url, { headers: target.headers }, timeoutMs);
+        if (await refreshLogin()) {
+          target = proxied(url);
+          res = await fetchWithTimeout(target.url, { headers: target.headers }, timeoutMs);
+        }
       }
       if (!res.ok) {
         // 代理失敗時會在本文帶原因（例如連不上外網的 DNS／逾時），一起顯示才找得到問題

@@ -4,6 +4,8 @@
  * （iOS 16.4+ 需先「加入主畫面」並允許通知）。不支援或未授權時，提醒會顯示在 App 內的提醒中心（鈴鐺）。
  * 啟用帳號系統時，另可開啟背景推播（services/push.ts）：由自架伺服器在 App 關閉時送出預先排好的提醒。
  */
+import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { db } from '@/db/schema';
 import type { Reminder } from '@/db/types';
 import { useSettings } from '@/stores/settings';
@@ -23,13 +25,47 @@ export function isIOS(): boolean {
 
 export type PermissionState = 'granted' | 'denied' | 'default' | 'unsupported' | 'needs-install';
 
+let nativePermCache: PermissionState = 'default';
+
+function mapNativePermission(display?: string): PermissionState {
+  if (display === 'granted') return 'granted';
+  if (display === 'denied') return 'denied';
+  return 'default';
+}
+
+function hashNotificationId(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return (Math.abs(h) % 2_000_000_000) + 1;
+}
+
 export function notificationSupport(): PermissionState {
+  if (Capacitor.isNativePlatform()) return nativePermCache;
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return 'unsupported';
   if (isIOS() && !isStandalone()) return 'needs-install';
   if (!('Notification' in window) || !('serviceWorker' in navigator)) return 'unsupported';
   return Notification.permission as PermissionState;
 }
 
+export async function checkNotificationSupport(): Promise<PermissionState> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const { display } = await LocalNotifications.checkPermissions();
+      nativePermCache = mapNativePermission(display);
+      return nativePermCache;
+    } catch {
+      return nativePermCache;
+    }
+  }
+  return notificationSupport();
+}
+
 export async function requestPermission(): Promise<PermissionState> {
+  if (Capacitor.isNativePlatform()) {
+    const { display } = await LocalNotifications.requestPermissions();
+    nativePermCache = mapNativePermission(display);
+    return nativePermCache;
+  }
   const s = notificationSupport();
   if (s === 'needs-install' || s === 'unsupported') return s;
   const r = await Notification.requestPermission();
@@ -48,7 +84,23 @@ export async function notify(title: string, body: string, url = '/', kind: Notif
   // 同時轉送到對外通道（Discord／Telegram／LINE／Webhook）；靜音的（system:false）不轉送
   if (opts.system !== false) void import('./outgoing').then((m) => m.emitFromReminder(kind, title, body, url, id));
   const { notify: cfg } = useSettings.getState();
-  if (opts.system === false || !cfg.enabled || notificationSupport() !== 'granted') return;
+  if (opts.system === false || !cfg.enabled) return;
+  const perm = Capacitor.isNativePlatform() ? await checkNotificationSupport() : notificationSupport();
+  if (perm !== 'granted') return;
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await LocalNotifications.schedule({
+        notifications: [{
+          id: hashNotificationId(id),
+          title,
+          body,
+          schedule: { at: new Date(Date.now() + 200) },
+          extra: { url },
+        }],
+      });
+    } catch { /* 忽略 */ }
+    return;
+  }
   try {
     const reg = await navigator.serviceWorker.ready;
     await reg.showNotification(title, { body, icon: '/icons/icon-192.png', badge: '/icons/favicon-32.png', tag: id, data: { url } });

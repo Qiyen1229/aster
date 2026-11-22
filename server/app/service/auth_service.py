@@ -309,12 +309,15 @@ class AuthService:
         return user, tokens
 
     # ───── 登出 ─────
-    def logout(self, refresh_token: str | None, user: User | None, client: ClientInfo) -> None:
+    def logout(self, refresh_token: str | None, user: User | None, client: ClientInfo, family_id: str | None = None) -> None:
         payload = decode_token(refresh_token or "", "refresh")
+        fam = family_id
         if payload:
             row = self.tokens.get(payload["jti"])
             if row:
-                self.tokens.revoke_family(row.family_id, utcnow())
+                fam = row.family_id
+        if fam:
+            self.tokens.revoke_family(fam, utcnow())
         self.audit.record("auth.logout", client, user_id=user.id if user else (int(payload["sub"]) if payload else None))
         self.db.commit()
 

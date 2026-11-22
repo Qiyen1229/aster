@@ -3,6 +3,7 @@
  * 整合為 4 大主題集中入口：記帳與分類、自動化與智慧、介面與通知、系統與資料。
  * 主頁面俐落清爽、一目瞭然；性質相近的功能合併於專屬面板內。
  */
+import { Capacitor } from '@capacitor/core';
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -118,10 +119,10 @@ export const ACCENTS: { key: AccentKey; name: string; color: string }[] = [
 ];
 
 export const PALETTES: { key: ThemePalette; name: string; desc: string; preview: [string, string, string] }[] = [
+  { key: 'obsidian', name: '黑曜香檳金', desc: '純粹黑曜，香檳鎏金', preview: ['#0b0c0f', '#15161b', '#e7bd87'] },
   { key: 'default', name: '經典灰階', desc: '自由搭配點綴色', preview: ['#f2f2f7', '#ffffff', '#0fb5d4'] },
   { key: 'graphite', name: '石墨冰藍', desc: '中性石墨，清冷冰藍', preview: ['#131518', '#1c1f23', '#a1cce5'] },
   { key: 'jade', name: '霧白墨綠', desc: '清透霧白，沉穩墨綠', preview: ['#f1f4f1', '#ffffff', '#346c53'] },
-  { key: 'amber', name: '暖灰琥珀', desc: '柔和暖灰，低調琥珀', preview: ['#f3f1ed', '#fdfcf9', '#80602c'] },
 ];
 
 /** 設定列：左側色塊圖示 + 標題 (+ ⓘ 浮窗) + 右側狀態/控制項 */
@@ -197,7 +198,7 @@ function AppearanceSheet({ open, onClose }: { open: boolean; onClose: () => void
           <div className="palette-options" role="group" aria-label="全域風格主題">
             {PALETTES.map((p) => (
               <button key={p.key} type="button" className="palette-option"
-                aria-pressed={(s.themePalette ?? 'default') === p.key}
+                aria-pressed={(s.themePalette ?? 'obsidian') === p.key}
                 onClick={() => s.set('themePalette', p.key)}>
                 <span className="palette-preview" aria-hidden="true" style={{ background: p.preview[0] }}>
                   <span className="palette-preview-card" style={{ background: p.preview[1] }}>
@@ -212,7 +213,7 @@ function AppearanceSheet({ open, onClose }: { open: boolean; onClose: () => void
           </div>
           <div className="row-sub" style={{ whiteSpace: 'normal' }}>三套完整主題已搭配點綴色，皆支援深淺色與跟隨系統。</div>
         </div>
-        {(s.themePalette ?? 'default') === 'default' && (
+        {(s.themePalette ?? 'obsidian') === 'default' && (
           <div className="row set-stack">
             <div className="row-title">點綴色（Accent）</div>
             <div className="swatches" role="radiogroup" aria-label="主題色">
@@ -412,16 +413,18 @@ function AboutHubSheet({ open, onClose }: { open: boolean; onClose: () => void }
     <Sheet open={open} onClose={onClose} title="關於 Aster">
       <div className="list">
         <Row icon="info" tint="#8E8E93" label="版本">
-          <span className="row-value muted" style={{ fontSize: '0.85rem', marginRight: 8 }}>v{__APP_VERSION__}</span>
-          <button className="pill" disabled={checking} onClick={async () => {
-            setChecking(true);
-            try {
-              const r = await checkForUpdate();
-              if (r === 'reloading') snack('找到新版本，正在更新…');
-              else if (r === 'latest') snack('已經是最新版本 ✓');
-              else location.reload();
-            } catch { snack('無法連線到伺服器，請稍後再試'); } finally { setChecking(false); }
-          }}>{checking ? '檢查中…' : '檢查更新'}</button>
+          <span className="row-value muted" style={{ fontSize: '0.85rem', marginRight: Capacitor.isNativePlatform() ? 0 : 8 }}>v{__APP_VERSION__}</span>
+          {!Capacitor.isNativePlatform() && (
+            <button className="pill" disabled={checking} onClick={async () => {
+              setChecking(true);
+              try {
+                const r = await checkForUpdate();
+                if (r === 'reloading') snack('找到新版本，正在更新…');
+                else if (r === 'latest') snack('已經是最新版本 ✓');
+                else location.reload();
+              } catch { snack('無法連線到伺服器，請稍後再試'); } finally { setChecking(false); }
+            }}>{checking ? '檢查中…' : '檢查更新'}</button>
+          )}
         </Row>
         <Row icon="sparkles" tint="#0A84FF" label="版本更新重點" onClick={() => { onClose(); openWhatsNew(); }} />
         <Row icon="compass" tint="#FF9F0A" label="重新執行首次引導" onClick={() => navTo('/onboarding?replay=1')} />
@@ -678,7 +681,7 @@ export default function SettingsPage() {
       {/* 3. 介面與通知 */}
       <Group title="介面與通知">
         <Row icon="palette" tint="#0A84FF" label="主題" newSince="4.1.29" onClick={() => setLookOpen(true)}>
-          <span className="row-value muted" style={{ fontSize: '0.85rem' }}>{s.theme === 'system' ? '跟隨系統' : s.theme === 'dark' ? '深色' : '淺色'} · {PALETTES.find((p) => p.key === (s.themePalette ?? 'default'))?.name ?? '經典'}{(s.themePalette ?? 'default') === 'default' ? ` · ${ACCENTS.find((a) => a.key === s.accent)?.name ?? ''}` : ''}</span>
+          <span className="row-value muted" style={{ fontSize: '0.85rem' }}>{s.theme === 'system' ? '跟隨系統' : s.theme === 'dark' ? '深色' : '淺色'} · {PALETTES.find((p) => p.key === (s.themePalette ?? 'obsidian'))?.name ?? '黑曜香檳金'}{(s.themePalette ?? 'obsidian') === 'default' ? ` · ${ACCENTS.find((a) => a.key === s.accent)?.name ?? ''}` : ''}</span>
         </Row>
         <Row icon="bell" tint="#FF3B30" label="通知與提醒" onClick={() => navigate('/settings/notifications')} />
       </Group>

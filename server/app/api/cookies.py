@@ -58,6 +58,17 @@ def read_access(request: Request) -> str | None:
     return request.cookies.get(access_name(request))
 
 
+def read_bearer_token(request: Request) -> str | None:
+    auth = request.headers.get("authorization")
+    if not auth:
+        return None
+    scheme, _, token = auth.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token or None
+
+
 def read_refresh(request: Request) -> str | None:
     """Refresh Token。升級到前綴版之前登入的人還帶著舊名稱的 Cookie：只在刷新與登出時暫時接受，換發後就改用新名稱。"""
     return request.cookies.get(refresh_name(request)) or request.cookies.get(_REFRESH)

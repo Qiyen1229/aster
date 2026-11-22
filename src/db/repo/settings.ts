@@ -6,15 +6,15 @@ import type { DecimalsMode } from '@/domain/money';
 import type { ImportProfile } from '@/services/importer';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
-export type ThemePalette = 'default' | 'graphite' | 'jade' | 'amber';
+export type ThemePalette = 'default' | 'graphite' | 'jade' | 'obsidian';
 
 export function normalizeThemePalette(value: unknown): ThemePalette {
   switch (value) {
-    case 'graphite': case 'jade': case 'amber': case 'default': return value;
+    case 'graphite': case 'jade': case 'obsidian': case 'default': return value;
     case 'oled': case 'slate': case 'ocean': return 'graphite';
     case 'forest': return 'jade';
-    case 'oat': return 'amber';
-    default: return 'default';
+    case 'amber': case 'oat': return 'obsidian';
+    default: return 'obsidian';
   }
 }
 /** 文字大小：'system' 跟隨 iPhone「文字大小」設定，數字為根字級（px） */
@@ -196,7 +196,7 @@ export const DEFAULT_SETTINGS: Settings = {
   locale: 'zh-TW',
   baseCurrency: 'TWD',
   theme: 'system',
-  themePalette: 'default',
+  themePalette: 'obsidian',
   fontSize: 'system',
   accent: 'cyan',
   upColor: 'green',

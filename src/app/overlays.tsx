@@ -1,11 +1,13 @@
 /**
  * 全域浮層：Snackbar（復原）、長按動作選單、新版本提示、背景隱私遮罩。
  */
+import { Capacitor } from '@capacitor/core';
 import { ICON_192 } from '@/ui/assets';
 import { useEffect, useRef, useState } from 'react';
 import { useUI } from '@/stores/ui';
 import { useSettings } from '@/stores/settings';
 import { useLock } from '@/services/lock';
+import { applyServiceWorkerUpdate } from '@/services/appUpdate';
 import { Sheet, trapTabKey } from '@/ui/Sheet';
 import { CatIcon } from '@/ui/Icon';
 
@@ -155,15 +157,18 @@ export function InputHost() {
 /** Service Worker 更新提示：「有新版本，點擊更新」 */
 export function UpdatePrompt() {
   const [updateFn, setUpdateFn] = useState<null | ((reload?: boolean) => Promise<void>)>(null);
+  const [updating, setUpdating] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [offlineReady, setOfflineReady] = useState(false);
   const dismissedAtRef = useRef<number | null>(null);
+  const regRef = useRef<ServiceWorkerRegistration | null>(null);
 
   useEffect(() => {
-    if (!('serviceWorker' in navigator) || import.meta.env.DEV) return;
+    const isDev = import.meta.env.DEV && import.meta.env.MODE !== 'test';
+    if (Capacitor.isNativePlatform() || !('serviceWorker' in navigator) || isDev) return;
     let cancelled = false;
-    let timer: any = null;
-    let intervalTimer: any = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let intervalTimer: ReturnType<typeof setInterval> | null = null;
     let onVis: (() => void) | null = null;
     import('virtual:pwa-register').then(({ registerSW }) => {
       if (cancelled) return;
@@ -176,6 +181,7 @@ export function UpdatePrompt() {
         onRegisteredSW: (_url, reg) => {
           // 每 30 分鐘檢查更新
           if (!reg) return;
+          regRef.current = reg;
           timer = setInterval(() => reg.update().catch(() => undefined), 30 * 60 * 1000);
         },
       });
@@ -185,6 +191,7 @@ export function UpdatePrompt() {
         if (document.visibilityState === 'visible') {
           dismissedAtRef.current = null;
           setDismissed(false);
+          regRef.current?.update().catch(() => undefined);
         }
       };
       document.addEventListener('visibilitychange', onVis);
@@ -210,6 +217,15 @@ export function UpdatePrompt() {
     setDismissed(true);
   };
 
+  const handleUpdate = async () => {
+    if (updating || !updateFn) return;
+    setUpdating(true);
+    await applyServiceWorkerUpdate({
+      updateSW: updateFn,
+      registration: regRef.current,
+    });
+  };
+
   useEffect(() => {
     if (!offlineReady) return;
     useUI.getState().showSnack({ text: '已可離線使用 ✓' });
@@ -219,8 +235,12 @@ export function UpdatePrompt() {
   return (
     <div className="banner" role="alert">
       <span>有新版本，點擊更新（更新後會跳出這次新增的功能說明）</span>
-      <button className="btn small" onClick={() => updateFn(true)}>更新</button>
-      <button className="btn small secondary" onClick={handleDismiss}>稍後</button>
+      <button type="button" className="btn small" disabled={updating} onClick={() => void handleUpdate()}>
+        {updating ? '更新中…' : '更新'}
+      </button>
+      <button type="button" className="btn small secondary" disabled={updating} onClick={handleDismiss}>
+        稍後
+      </button>
     </div>
   );
 }

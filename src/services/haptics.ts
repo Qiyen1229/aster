@@ -11,6 +11,9 @@
  * 3. 於純 iOS Web / PWA 環境自動安靜降級，保證無任何例外拋出與效能負擔。
  */
 
+import { Capacitor } from '@capacitor/core';
+import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
+
 export type HapticStyle = 'selection' | 'light' | 'medium' | 'heavy' | 'success' | 'warning';
 
 export const PATTERNS: Record<HapticStyle, number | number[]> = {
@@ -26,6 +29,7 @@ let lastTick = 0;
 
 /** 檢查當前運行環境是否具備震動或觸覺回饋硬體 API */
 export function isHapticsSupported(): boolean {
+  if (Capacitor.isNativePlatform()) return true;
   if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
   if (typeof navigator.vibrate === 'function') return true;
   if (typeof (window as any).webkit?.messageHandlers?.haptics?.postMessage === 'function') return true;
@@ -40,6 +44,15 @@ export function haptic(style: HapticStyle = 'light'): void {
   lastTick = now;
 
   try {
+    if (Capacitor.isNativePlatform()) {
+      if (style === 'selection') void Haptics.selectionChanged();
+      else if (style === 'light') void Haptics.impact({ style: ImpactStyle.Light });
+      else if (style === 'medium') void Haptics.impact({ style: ImpactStyle.Medium });
+      else if (style === 'heavy') void Haptics.impact({ style: ImpactStyle.Heavy });
+      else if (style === 'success') void Haptics.notification({ type: NotificationType.Success });
+      else if (style === 'warning') void Haptics.notification({ type: NotificationType.Warning });
+      return;
+    }
     if (typeof navigator.vibrate === 'function') {
       navigator.vibrate(PATTERNS[style]);
       return;
