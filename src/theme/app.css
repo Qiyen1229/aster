@@ -2076,11 +2076,26 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
 .sheet-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px 8px; }
 .sheet-head h2 { flex: 1; text-align: center; margin: 0; font-size: 1.05rem; font-weight: 600; }
 .sheet-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 16px; -webkit-overflow-scrolling: touch; }
-/* 系統鍵盤開啟時（app/viewport.ts 設定 --kb、--vvh、--vvt 與 .kb-open）：抽屜貼齊鍵盤上緣、高度不超過可見範圍 */
-.sheet { bottom: var(--kb, 0px); }
-.kb-open .sheet-backdrop { inset: 0; }
-.kb-open .sheet { padding-bottom: 0; max-height: calc(var(--vvh, 100dvh) - var(--safe-t) - 12px); animation: none; transform: none; will-change: auto; }
-.kb-open .sheet.full { height: calc(var(--vvh, 100dvh) - var(--safe-t) - 12px); }
+/* 系統鍵盤開啟時（app/viewport.ts 設定 --kb、--vvh、--vvt 與 .kb-open）：抽屜以視覺視口頂端錨定，貼齊鍵盤上緣、高度不超過可見範圍 */
+html:not(.is-desktop).kb-open .sheet-backdrop { inset: 0; }
+html:not(.is-desktop).kb-open .sheet {
+  top: calc(var(--vvt, 0px) + var(--safe-t) + 8px);
+  bottom: auto;
+  height: calc(var(--vvh, 100dvh) - var(--safe-t) - 8px);
+  max-height: calc(var(--vvh, 100dvh) - var(--safe-t) - 8px);
+  padding-bottom: 0;
+  animation: none;
+  transform: none !important;
+  will-change: auto;
+}
+html:not(.is-desktop).kb-open .sheet.full {
+  height: calc(var(--vvh, 100dvh) - var(--safe-t) - 8px);
+}
+html:not(.is-desktop).kb-open .dlg-wrap {
+  top: var(--vvt, 0px);
+  height: var(--vvh, 100dvh);
+  bottom: auto;
+}
 /* 打字時收起記帳面板的數字鍵盤與底部 Tab Bar，讓輸入框不被擋住 */
 .kb-open .keypad-dock, .kb-open .tabbar { display: none; }
 @keyframes sheet-in { from { transform: translateY(100%); } }
@@ -2331,8 +2346,8 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
 .privacy-shield img { width: 72px; height: 72px; border-radius: 16px; }
 
 /* ---------- 其他 ---------- */
-.stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.stat { padding: 12px; border-radius: 14px; background: var(--surface-2); }
+.stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { padding: 12px; border-radius: 14px; background: var(--surface-2); min-width: 0; overflow: hidden; }
 button.stat.clickable {
   cursor: pointer;
   text-align: left;
@@ -3582,6 +3597,11 @@ button.accent, button.muted { min-height: 44px; }
   font-size: 16px;
   -webkit-user-select: text;
   user-select: text;
+}
+.pill-picker-input::-webkit-date-and-time-value,
+.pill-picker-input::-webkit-calendar-picker-indicator {
+  width: 100%;
+  height: 100%;
 }
 .pill:has(> .pill-picker-input)::after { pointer-events: none; }
 

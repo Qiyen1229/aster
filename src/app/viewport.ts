@@ -74,15 +74,28 @@ export function installViewportTracking(): () => void {
     root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
     root.style.setProperty('--vvt', open ? `${vvt}px` : '0px');
     root.classList.toggle('kb-open', open);
+    if (open && document.activeElement instanceof HTMLElement) {
+      const el = document.activeElement;
+      const container = el.closest<HTMLElement>('.sheet-body, .add-scroll');
+      if (container) {
+        const cr = container.getBoundingClientRect();
+        const er = el.getBoundingClientRect();
+        if (cr.height > 0) {
+          const pad = 16;
+          if (er.bottom > cr.bottom - pad) container.scrollTop += er.bottom - (cr.bottom - pad);
+          else if (er.top < cr.top + pad) container.scrollTop -= cr.top + pad - er.top;
+        }
+      }
+    }
   };
   const schedule = () => { if (!raf) raf = requestAnimationFrame(update); };
   vv?.addEventListener('resize', schedule);
   vv?.addEventListener('scroll', schedule);
-  // 失焦後鍵盤還在收起中，稍等再量；聚焦時 iOS 會非同步捲動 visualViewport（offsetTop），補量兩次避免破洞
+  // 失焦後鍵盤還在收起中，稍等再量；聚焦時 iOS 會非同步捲動 visualViewport（offsetTop），補量三次避免破洞或工具列展開遮擋
   const onFocusIn = () => {
     schedule();
     clearFocusTimers();
-    focusTimers.push(window.setTimeout(schedule, 100), window.setTimeout(schedule, 300));
+    focusTimers.push(window.setTimeout(schedule, 100), window.setTimeout(schedule, 300), window.setTimeout(schedule, 500));
   };
   const onFocusOut = () => {
     clearFocusTimers();

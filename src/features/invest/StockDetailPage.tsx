@@ -6,23 +6,24 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
-import type { StockTrade } from '@/db/types';
-import { addWatch, removeWatch } from '@/db/repo/invest';
+import type { Dividend, StockTrade } from '@/db/types';
+import { addWatch, deleteDividend, deleteTrade, removeWatch, restoreTrade } from '@/db/repo/invest';
 import { MARKET_STATE_LABEL, marketState } from '@/domain/invest/market-hours';
 import { formatMoney } from '@/domain/money';
 import { usePortfolio, fmtShares } from '@/services/portfolio';
 import { describeQuoteErrors, fetchHistory, refreshQuotes, setManualPrice } from '@/services/quotes/registry';
 import type { Bar, HistoryRange } from '@/services/quotes/providers';
 import { useSettings } from '@/stores/settings';
-import { useUI } from '@/stores/ui';
+import { ask, snackUndo, useUI } from '@/stores/ui';
 import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
 import { Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
+import { SwipeRow } from '@/ui/SwipeRow';
 import { chartTheme } from '../reports/chart-theme';
 import { MARKET_LABEL } from './StockSearch';
 import { TradeSheet } from './TradeSheet';
 import { DividendSheet } from './DividendsPage';
-import { pct, StaleBadge } from './InvestTab';
+import { fmtXirr, pct, StaleBadge } from './InvestTab';
 import { useScreenDetail } from '@/stores/screenContext';
 
 const EChart = lazy(() => import('../reports/EChart'));
@@ -43,6 +44,7 @@ export default function StockDetailPage() {
   const [hist, setHist] = useState<{ bars: Bar[]; source: string; offline: boolean } | null>(null);
   const [trade, setTrade] = useState<{ t?: StockTrade; type?: StockTrade['type'] } | null>(null);
   const [divOpen, setDivOpen] = useState(false);
+  const [editDiv, setEditDiv] = useState<Dividend | undefined>();
   const [manual, setManual] = useState(false);
   const [mp, setMp] = useState('');
   const [busy, setBusy] = useState(false);
@@ -132,7 +134,7 @@ export default function StockDetailPage() {
             <div className="stat"><div className="k">今日</div><div className="v num"><Amount minor={h.val?.todayChangeMinor ?? 0} currency={cur} tone="auto" opts={{ compact: true }} /></div></div>
             <div className="stat"><div className="k">已實現</div><div className="v num"><Amount minor={h.pos.realizedMinor} currency={cur} tone="auto" opts={{ compact: true }} /></div></div>
             <div className="stat"><div className="k">累計股利</div><div className="v num"><Amount minor={h.dividendsBaseMinor} currency={base} tone="none" opts={{ compact: true }} /></div></div>
-            <div className="stat"><div className="k">XIRR</div><div className="v num">{h.xirr === null ? '—' : pct(h.xirr * 100)}</div></div>
+            <div className="stat"><div className="k">XIRR</div><div className="v num">{fmtXirr(h.xirr)}</div></div>
           </div>
           {h.sellNowNetMinor !== undefined && (
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12, fontSize: '0.9rem' }}>
@@ -156,21 +158,24 @@ export default function StockDetailPage() {
       <div className="btn-row" style={{ marginBottom: 12 }}>
         <button className="btn small" style={{ flex: 1 }} onClick={() => setTrade({ type: 'buy' })}>買進</button>
         <button className="btn small tinted" style={{ flex: 1 }} onClick={() => setTrade({ type: 'sell' })}>賣出</button>
-        <button className="btn small tinted" style={{ flex: 1 }} onClick={() => setDivOpen(true)}>股利</button>
+        <button className="btn small tinted" style={{ flex: 1 }} onClick={() => { setEditDiv(undefined); setDivOpen(true); }}>股利</button>
       </div>
 
       <div className="section-title">交易紀錄</div>
       {!trades?.length ? <EmptyState emoji="🧾" title="尚無交易" /> : (
         <div className="list">
-          {trades.sort((a, b) => (a.date < b.date ? 1 : -1)).map((tr) => (
-            <button key={tr.id} className="row" onClick={() => setTrade({ t: tr })}>
-              <span className="chip" style={{ ['--c' as string]: tr.type === 'buy' ? 'var(--c-pos)' : tr.type === 'sell' ? 'var(--c-neg)' : 'var(--accent)' }}>{TYPE_LABEL[tr.type]}</span>
-              <div className="row-main">
-                <div className="row-title num">{tr.type === 'split' ? `1 拆 ${tr.sharesDec}` : `${Number(tr.sharesDec).toLocaleString('zh-TW')} 股${tr.type === 'buy' || tr.type === 'sell' ? ` @ ${tr.priceDec}` : ''}`}</div>
-                <div className="row-sub">{tr.date}{tr.isDCA ? ' · 定期定額' : ''}{tr.feeMinor ? ` · 費 ${formatMoney(tr.feeMinor, cur)}` : ''}{tr.taxMinor ? ` · 稅 ${formatMoney(tr.taxMinor, cur)}` : ''}</div>
+          {[...trades].sort((a, b) => (a.date < b.date ? 1 : -1)).map((tr) => (
+            <SwipeRow key={tr.id} flat onTap={() => setTrade({ t: tr })} onEdit={() => setTrade({ t: tr })}
+              onDelete={() => void deleteTrade(tr.id).then(() => snackUndo('已刪除交易', () => restoreTrade(tr.id))).catch((e: Error) => useUI.getState().showSnack({ text: `刪除失敗：${e.message}` }))}>
+              <div className="row">
+                <span className="chip" style={{ ['--c' as string]: tr.type === 'buy' ? 'var(--c-pos)' : tr.type === 'sell' ? 'var(--c-neg)' : 'var(--accent)' }}>{TYPE_LABEL[tr.type]}</span>
+                <div className="row-main">
+                  <div className="row-title num">{tr.type === 'split' ? `1 拆 ${tr.sharesDec}` : `${Number(tr.sharesDec).toLocaleString('zh-TW')} 股${tr.type === 'buy' || tr.type === 'sell' ? ` @ ${tr.priceDec}` : ''}`}</div>
+                  <div className="row-sub">{tr.date}{tr.isDCA ? ' · 定期定額' : ''}{tr.feeMinor ? ` · 費 ${formatMoney(tr.feeMinor, cur)}` : ''}{tr.taxMinor ? ` · 稅 ${formatMoney(tr.taxMinor, cur)}` : ''}</div>
+                </div>
+                {h?.pos.realized.find((r) => r.tradeId === tr.id) && <Amount minor={h.pos.realized.find((r) => r.tradeId === tr.id)!.pnlMinor} currency={cur} tone="auto" opts={{ sign: 'always' }} className="num" />}
               </div>
-              {h?.pos.realized.find((r) => r.tradeId === tr.id) && <Amount minor={h.pos.realized.find((r) => r.tradeId === tr.id)!.pnlMinor} currency={cur} tone="auto" opts={{ sign: 'always' }} className="num" />}
-            </button>
+            </SwipeRow>
           ))}
         </div>
       )}
@@ -178,21 +183,29 @@ export default function StockDetailPage() {
         <>
           <div className="section-title">股利</div>
           <div className="list">
-            {dividends.sort((a, b) => (a.payDate < b.payDate ? 1 : -1)).map((d) => (
-              <div key={d.id} className="row">
-                <div className="row-main">
-                  <div className="row-title">{d.kind === 'cash' ? `現金股利 ${d.perShareDec} 元／股` : `股票股利 ${d.perShareDec} 股／股`}</div>
-                  <div className="row-sub">除息 {d.exDate} · 發放 {d.payDate}{d.status === 'announced' ? ' · 尚未發放' : ''}</div>
+            {[...dividends].sort((a, b) => (a.payDate < b.payDate ? 1 : -1)).map((d) => (
+              <SwipeRow key={d.id} flat onTap={() => { setEditDiv(d); setDivOpen(true); }} onEdit={() => { setEditDiv(d); setDivOpen(true); }}
+                onDelete={async () => {
+                  if (await ask('刪除這筆股利？相關的入帳帳目或配股也會移除。')) {
+                    await deleteDividend(d.id);
+                    useUI.getState().showSnack({ text: '已刪除股利' });
+                  }
+                }}>
+                <div className="row">
+                  <div className="row-main">
+                    <div className="row-title">{d.kind === 'cash' ? `現金股利 ${d.perShareDec} 元／股` : `股票股利 ${d.perShareDec} 股／股`}</div>
+                    <div className="row-sub">除息 {d.exDate} · 發放 {d.payDate}{d.status === 'announced' ? ' · 尚未發放' : ''}</div>
+                  </div>
+                  {d.kind === 'cash' && <Amount minor={d.netMinor} currency={d.currency} tone="pos" className="num" />}
                 </div>
-                {d.kind === 'cash' && <Amount minor={d.netMinor} currency={d.currency} tone="pos" className="num" />}
-              </div>
+              </SwipeRow>
             ))}
           </div>
         </>
       )}
 
-      <TradeSheet open={!!trade} onClose={() => setTrade(null)} stockId={stock.id} trade={trade?.t} initialType={trade?.type ?? 'buy'} />
-      <DividendSheet open={divOpen} onClose={() => setDivOpen(false)} stockId={stock.id} />
+      <TradeSheet open={!!trade} onClose={() => setTrade(null)} stockId={stock.id} initialStock={stock} trade={trade?.t} initialType={trade?.type ?? 'buy'} />
+      <DividendSheet open={divOpen} onClose={() => { setDivOpen(false); setEditDiv(undefined); }} stockId={stock.id} dividend={editDiv} />
       <Sheet open={manual} onClose={() => setManual(false)} title="手動輸入現價">
         <p className="muted" style={{ marginTop: 0 }}>當所有資料源都無法取得報價時使用。下次自動更新成功後會被覆蓋。</p>
         <input className="input num" inputMode="decimal" value={mp} onChange={(e) => setMp(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="現價" autoFocus />

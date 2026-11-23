@@ -9,7 +9,9 @@ import { Icon } from '@/ui/Icon';
 
 export const MARKET_LABEL: Record<string, string> = { TWSE: '上市', TPEX: '上櫃', EMERGING: '興櫃', US: '美股', HK: '港股' };
 
-export function StockSearch({ onPick, autoFocus = true }: { onPick: (s: Stock) => void; autoFocus?: boolean }) {
+const defaultAutoFocus = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches ? false : true;
+
+export function StockSearch({ onPick, autoFocus = defaultAutoFocus }: { onPick: (s: Stock) => void; autoFocus?: boolean }) {
   const [q, setQ] = useState('');
   const dq = useDeferredValue(q);
   const [results, setResults] = useState<StockMeta[]>([]);
@@ -33,7 +35,7 @@ export function StockSearch({ onPick, autoFocus = true }: { onPick: (s: Stock) =
     <div>
       <div style={{ position: 'relative' }}>
         <input className="input" autoFocus={autoFocus} value={q} onChange={(e) => setQ(e.target.value)} placeholder="代號或名稱，例如 2330、0050、AAPL"
-          aria-label="搜尋股票" style={{ paddingLeft: 38 }} enterKeyHint="search" />
+          aria-label="搜尋股票" style={{ paddingLeft: 38 }} enterKeyHint="search" autoComplete="off" autoCorrect="off" spellCheck={false} />
         <span className="faint" style={{ position: 'absolute', left: 11, top: 12 }}><Icon name="search" size={20} /></span>
       </div>
       {loading && <p className="muted" style={{ fontSize: '0.8rem' }}>搜尋中…（第一次會下載台股名單）</p>}
@@ -59,8 +61,8 @@ export function StockSearch({ onPick, autoFocus = true }: { onPick: (s: Stock) =
               {Object.entries(MARKET_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
-          <div className="field"><span className="label">代號</span><input value={m.symbol} onChange={(e) => setM({ ...m, symbol: e.target.value.toUpperCase().trim() })} /></div>
-          <div className="field"><span className="label">名稱</span><input value={m.name} onChange={(e) => setM({ ...m, name: e.target.value })} /></div>
+          <div className="field"><span className="label">代號</span><input autoComplete="off" autoCorrect="off" spellCheck={false} value={m.symbol} onChange={(e) => setM({ ...m, symbol: e.target.value.toUpperCase().trim() })} /></div>
+          <div className="field"><span className="label">名稱</span><input autoComplete="off" autoCorrect="off" spellCheck={false} value={m.name} onChange={(e) => setM({ ...m, name: e.target.value })} /></div>
           <div className="field"><span className="label">類型</span>
             <select value={m.assetType} onChange={(e) => setM({ ...m, assetType: e.target.value as StockMeta['assetType'] })}>
               <option value="stock">股票</option><option value="etf">ETF</option><option value="bond_etf">債券 ETF</option>

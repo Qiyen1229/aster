@@ -1,5 +1,5 @@
 {
-  "featureRelease": "4.1.55",
-  "showcaseReviewed": "4.1.55",
-  "headline": "修復日期時間與股票交易儲存，更新重點改為舊到新排序"
+  "featureRelease": "4.1.56",
+  "showcaseReviewed": "4.1.56",
+  "headline": "修復股票刪除連動、超大數字與 XIRR 溢位、iOS 鍵盤跳動與 PWA 更新按鈕"
 }

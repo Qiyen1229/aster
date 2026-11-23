@@ -144,7 +144,7 @@ def _hook_payload(request: Request, body: dict) -> dict:
 def create_app() -> FastAPI:
     s = get_settings()
     app = FastAPI(
-        title="Aster API", version="4.1.55", lifespan=lifespan,
+        title="Aster API", version="4.1.56", lifespan=lifespan,
         docs_url="/api/docs" if s.env != "production" else None, redoc_url=None, openapi_url="/api/openapi.json" if s.env != "production" else None,
     )
 

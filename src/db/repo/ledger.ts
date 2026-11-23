@@ -189,7 +189,7 @@ async function durablesOnTxRestore(txId: string): Promise<void> {
 }
 
 export async function deleteTransactions(ids: string[]): Promise<void> {
-  await db.transaction('rw', db.transactions, db.transfers, db.accounts, db.durables, db.debts, async () => {
+  await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.durables, db.debts, db.stock_trades], async () => {
     const now = Date.now();
     for (const id of ids) {
       const tx = await db.transactions.get(id);
@@ -207,6 +207,20 @@ export async function deleteTransactions(ids: string[]): Promise<void> {
       for (const d of await db.debts.filter((x) => !x.deletedAt && x.settled === 1 && x.settleTransferId === id).toArray()) {
         await db.debts.update(d.id, { settled: 0, settledAt: undefined, settleTransferId: undefined, updatedAt: now });
       }
+      // 若刪除的是股票交易連動的主要帳目，一併軟刪除對應股票交易與手續費帳目
+      if (tx.stockTradeId) {
+        const st = await db.stock_trades.get(tx.stockTradeId);
+        if (st && !st.deletedAt && (!st.transactionId || st.transactionId === tx.id)) {
+          await db.stock_trades.update(st.id, { deletedAt: now, updatedAt: now });
+          if (st.feeTransactionId && st.feeTransactionId !== tx.id) {
+            const feeTx = await db.transactions.get(st.feeTransactionId);
+            if (feeTx && !feeTx.deletedAt) {
+              await db.transactions.update(feeTx.id, { deletedAt: now, updatedAt: now });
+              await bump(feeTx.accountId, -txEffect(feeTx));
+            }
+          }
+        }
+      }
       await db.transactions.update(id, { deletedAt: now, updatedAt: now });
       await bump(tx.accountId, -txEffect(tx));
       await durablesOnTxDelete(id, now);
@@ -220,7 +234,7 @@ export async function listDeletedTransactions(limit = 50): Promise<Transaction[]
 }
 
 export async function restoreTransactions(ids: string[]): Promise<void> {
-  await db.transaction('rw', db.transactions, db.transfers, db.accounts, db.durables, db.debts, async () => {
+  await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.durables, db.debts, db.stock_trades], async () => {
     for (const id of ids) {
       const tx = await db.transactions.get(id);
       if (!tx || !tx.deletedAt) continue;
@@ -231,6 +245,20 @@ export async function restoreTransactions(ids: string[]): Promise<void> {
       if (tx.split) {
         for (const d of await db.debts.bulkGet(tx.split.debtIds)) {
           if (d?.deletedAt === tx.deletedAt) await db.debts.update(d.id, { deletedAt: null, updatedAt: Date.now() });
+        }
+      }
+      if (tx.stockTradeId) {
+        const st = await db.stock_trades.get(tx.stockTradeId);
+        if (st && st.deletedAt) {
+          const ts = Date.now();
+          await db.stock_trades.update(st.id, { deletedAt: null, updatedAt: ts });
+          if (st.feeTransactionId && st.feeTransactionId !== tx.id) {
+            const feeTx = await db.transactions.get(st.feeTransactionId);
+            if (feeTx && feeTx.deletedAt) {
+              await db.transactions.update(feeTx.id, { deletedAt: null, updatedAt: ts });
+              await bump(feeTx.accountId, txEffect(feeTx));
+            }
+          }
         }
       }
       await db.transactions.update(id, { deletedAt: null, updatedAt: Date.now() });

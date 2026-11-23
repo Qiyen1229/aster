@@ -20,26 +20,59 @@ import { useSettings } from '@/stores/settings';
 import { snackUndo, useUI, ask } from '@/stores/ui';
 import { Segmented } from '@/ui/controls';
 import { AccountField, AmountField, DateField, SwitchField, TextField } from '@/ui/form';
+import { Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { MARKET_LABEL, StockSearch } from './StockSearch';
 
 type TType = StockTrade['type'];
 
-export function TradeSheet({ open, onClose, stockId, trade, initialType = 'buy' }: {
-  open: boolean; onClose: () => void; stockId?: string; trade?: StockTrade; initialType?: TType;
+export function TradeSheet({ open, onClose, stockId, initialStock, trade, initialType = 'buy' }: {
+  open: boolean; onClose: () => void; stockId?: string; initialStock?: Stock; trade?: StockTrade; initialType?: TType;
 }) {
+  const [deleting, setDeleting] = useState(false);
+  const handleDeleteTrade = async () => {
+    if (!trade || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteTrade(trade.id);
+      snackUndo('已刪除交易', () => restoreTrade(trade.id));
+      onClose();
+    } catch (e) {
+      useUI.getState().showSnack({ text: `刪除失敗：${(e as Error).message}` });
+    } finally {
+      setDeleting(false);
+    }
+  };
   return (
-    <Sheet open={open} onClose={onClose} title={trade ? '編輯交易' : '新增交易'} full>
-      {open && <TradeForm key={trade?.id ?? stockId ?? 'new'} stockId={trade?.stockId ?? stockId} trade={trade} initialType={initialType} onClose={onClose} />}
+    <Sheet open={open} onClose={onClose} title={trade ? '編輯交易' : '新增交易'} full
+      right={trade ? (
+        <button type="button" className="icon-btn plain danger" aria-label="刪除交易" disabled={deleting} onClick={() => void handleDeleteTrade()}>
+          <Icon name="trash" />
+        </button>
+      ) : undefined}>
+      {open && (
+        <TradeForm
+          key={trade?.id ?? stockId ?? 'new'}
+          stockId={trade?.stockId ?? stockId}
+          initialStock={initialStock}
+          trade={trade}
+          initialType={initialType}
+          deleting={deleting}
+          onDelete={handleDeleteTrade}
+          onClose={onClose}
+        />
+      )}
     </Sheet>
   );
 }
 
-function TradeForm({ stockId, trade, initialType, onClose }: { stockId?: string; trade?: StockTrade; initialType: TType; onClose: () => void }) {
+function TradeForm({ stockId, initialStock, trade, initialType, deleting, onDelete, onClose }: {
+  stockId?: string; initialStock?: Stock; trade?: StockTrade; initialType: TType; deleting: boolean; onDelete: () => Promise<void>; onClose: () => void;
+}) {
   const settings = useSettings();
   const inv = settings.invest;
   const accounts = useAccounts();
-  const [stock, setStock] = useState<Stock | undefined>();
+  const [stock, setStock] = useState<Stock | undefined>(initialStock);
   const stockFromDb = useLiveQuery(() => (stockId ? db.stocks.get(stockId) : Promise.resolve(undefined as Stock | undefined)), [stockId]);
   useEffect(() => { if (stockFromDb) setStock(stockFromDb); }, [stockFromDb]);
   const tradesQ = useLiveQuery(() => (stock ? db.stock_trades.where('stockId').equals(stock.id).toArray() : Promise.resolve([] as StockTrade[])), [stock?.id]);
@@ -54,8 +87,8 @@ function TradeForm({ stockId, trade, initialType, onClose }: { stockId?: string;
   const initLots = trade && isTW && new Decimal(trade.sharesDec).mod(lot).isZero() && trade.type !== 'split';
   const [unit, setUnit] = useState<'lot' | 'share'>(trade ? (initLots ? 'lot' : 'share') : 'lot');
   const [qty, setQty] = useState(trade ? (initLots ? new Decimal(trade.sharesDec).div(lot).toString() : trade.sharesDec) : '');
-  const [fee, setFee] = useState(trade ? fromMinor(trade.feeMinor, 'TWD').toString() : '');
-  const [tax, setTax] = useState(trade ? fromMinor(trade.taxMinor, 'TWD').toString() : '');
+  const [fee, setFee] = useState(trade ? fromMinor(trade.feeMinor, stock?.currency ?? 'TWD').toString() : '');
+  const [tax, setTax] = useState(trade ? fromMinor(trade.taxMinor, stock?.currency ?? 'TWD').toString() : '');
   const [feeEdited, setFeeEdited] = useState(!!trade);
   const [fx, setFx] = useState(trade?.fxRateDec ?? '');
   const [isDCA, setDCA] = useState(trade?.isDCA ?? false);
@@ -114,6 +147,7 @@ function TradeForm({ stockId, trade, initialType, onClose }: { stockId?: string;
     ? total.minus(new Decimal(pos.costMinor).div(Decimal.pow(10, currencyInfo(cur).exp)).mul(Decimal.min(shares, pos.shares)).div(pos.shares)) : null;
 
   if (!stock) {
+    if (stockId || trade?.stockId) return <div style={{ minHeight: 160 }} />;
     return (
       <>
         <p className="muted" style={{ marginTop: 0 }}>先選擇要交易的標的</p>
@@ -209,13 +243,11 @@ function TradeForm({ stockId, trade, initialType, onClose }: { stockId?: string;
           <SwitchField label="現股當沖（證交稅減半）" sub="依當沖降稅規定，證交稅減半為 0.15%" checked={isDayTrade} onChange={setIsDayTrade} />
         </div>
       )}
-      <button className="btn" disabled={busy} onClick={() => void save()}>{busy ? '儲存中…' : '儲存'}</button>
+      <button className="btn" disabled={busy || deleting} onClick={() => void save()}>{busy ? '儲存中…' : '儲存'}</button>
       {trade && (
-        <button className="btn danger" style={{ marginTop: 10 }} onClick={async () => {
-          await deleteTrade(trade.id);
-          snackUndo('已刪除交易', () => restoreTrade(trade.id));
-          onClose();
-        }}>刪除交易</button>
+        <button type="button" className="btn danger" style={{ marginTop: 10 }} disabled={busy || deleting} onClick={() => void onDelete()}>
+          {deleting ? '刪除中…' : '刪除交易'}
+        </button>
       )}
     </>
   );

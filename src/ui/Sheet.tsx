@@ -40,6 +40,11 @@ export function trapTabKey(container: HTMLElement | null, e: KeyboardEvent): voi
   const first = items[0];
   const last = items[items.length - 1];
   const active = document.activeElement as HTMLElement | null;
+  if (active === container) {
+    e.preventDefault();
+    (e.shiftKey ? last : first).focus({ preventScroll: true });
+    return;
+  }
   if (e.shiftKey) {
     if (!active || active === first || !container.contains(active)) {
       e.preventDefault();
@@ -77,7 +82,10 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
   // 拖曳過程中為了跟手把進場動畫設成 none；退出動畫的 class 套上去的同一個畫面，才把動畫還給樣式表（不會有進場動畫閃一格）
   useIsomorphicLayoutEffect(() => {
     if (!closing) return;
-    if (sheetRef.current) sheetRef.current.style.animation = '';
+    if (sheetRef.current) {
+      sheetRef.current.style.animation = '';
+      sheetRef.current.style.willChange = '';
+    }
     if (backdropRef.current) backdropRef.current.style.animation = '';
   }, [closing]);
 
@@ -96,13 +104,16 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
       else trapTabKey(sheetRef.current, e);
     };
     window.addEventListener('keydown', onKey);
-    // 焦點移入抽屜內第一個可操作元件（無則移入容器），關閉時還原原焦點
+    // 焦點移入抽屜內第一個非輸入控制項（觸控裝置或第一個元件為輸入框時改聚焦容器，避免開啟滑入時誤彈系統鍵盤），關閉時還原原焦點
     const focusTimer = window.setTimeout(() => {
       const root = sheetRef.current;
       if (!root) return;
       if (root.contains(document.activeElement)) return;
+      const isCoarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
       const first = root.querySelector<HTMLElement>(FOCUSABLE_SEL);
-      (first ?? root).focus({ preventScroll: true });
+      const isFormControl = first instanceof HTMLInputElement || first instanceof HTMLTextAreaElement || first instanceof HTMLSelectElement;
+      const target = isCoarse || isFormControl || !first ? root : first;
+      target.focus({ preventScroll: true });
     }, 50);
     return () => {
       window.clearTimeout(focusTimer);
@@ -110,7 +121,11 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
       if (i >= 0) stack.splice(i, 1);
       document.body.style.overflow = stack.length ? 'hidden' : prevOverflow;
       window.removeEventListener('keydown', onKey);
-      window.setTimeout(() => prevFocus?.isConnected && prevFocus.focus?.({ preventScroll: true }), 0);
+      const isCoarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
+      const wasInput = prevFocus instanceof HTMLInputElement || prevFocus instanceof HTMLTextAreaElement || prevFocus instanceof HTMLSelectElement;
+      if (!isCoarse && !wasInput) {
+        window.setTimeout(() => prevFocus?.isConnected && prevFocus.focus?.({ preventScroll: true }), 0);
+      }
     };
   }, [mounted]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -234,7 +249,13 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
       <div ref={backdropRef} className={`sheet-backdrop${closing ? ' closing' : ''}`} style={{ zIndex: z }}
         onClick={requestClose} onPointerDown={(e) => e.stopPropagation()} aria-hidden="true" />
       <div ref={sheetRef} className={`sheet${full ? ' full' : ''}${variant ? ` ${variant}` : ''}${closing ? ' closing' : ''}`} style={{ zIndex: z + 1 }}
-        role="dialog" aria-modal="true" tabIndex={-1} aria-label={typeof title === 'string' ? title : undefined}>
+        role="dialog" aria-modal="true" tabIndex={-1} aria-label={typeof title === 'string' ? title : undefined}
+        onAnimationEnd={(e) => {
+          if (e.target === sheetRef.current && !closing && sheetRef.current) {
+            sheetRef.current.style.animation = 'none';
+            sheetRef.current.style.willChange = 'auto';
+          }
+        }}>
         <div className="sheet-grab" onPointerDown={onPointerDown} onPointerMove={onPointerMove}
           onPointerUp={onPointerUp} onPointerCancel={onPointerUp} />
         {(title || left || right) && (

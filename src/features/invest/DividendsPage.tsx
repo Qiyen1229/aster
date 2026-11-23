@@ -19,6 +19,7 @@ import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
 import { AccountField, AmountField, DateField, SelectField, SwitchField } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
+import { SwipeRow } from '@/ui/SwipeRow';
 import { lazy, Suspense } from 'react';
 import { dividendCalendar } from '@/domain/dividend-calendar';
 import { usePortfolio } from '@/services/portfolio';
@@ -130,13 +131,20 @@ export default function DividendsPage() {
             {list.map((d) => {
               const s = stocks?.get(d.stockId);
               return (
-                <button key={d.id} className="row" onClick={() => setEdit(d)}>
-                  <div className="row-main">
-                    <div className="row-title">{s?.name ?? '?'} <span className="muted num">{s?.symbol}</span></div>
-                    <div className="row-sub">{d.kind === 'cash' ? `現金 ${d.perShareDec}／股` : `配股 ${d.perShareDec} 股／股`} · 發放 {d.payDate}{d.status === 'announced' ? ' · 尚未發放' : ''}</div>
+                <SwipeRow key={d.id} flat onTap={() => setEdit(d)} onEdit={() => setEdit(d)} onDelete={async () => {
+                  if (await ask('刪除這筆股利？相關的入帳帳目或配股也會移除。')) {
+                    await deleteDividend(d.id);
+                    useUI.getState().showSnack({ text: '已刪除股利' });
+                  }
+                }}>
+                  <div className="row">
+                    <div className="row-main">
+                      <div className="row-title">{s?.name ?? '?'} <span className="muted num">{s?.symbol}</span></div>
+                      <div className="row-sub">{d.kind === 'cash' ? `現金 ${d.perShareDec}／股` : `配股 ${d.perShareDec} 股／股`} · 發放 {d.payDate}{d.status === 'announced' ? ' · 尚未發放' : ''}</div>
+                    </div>
+                    {d.kind === 'cash' ? <Amount minor={d.netMinor} currency={d.currency} tone={d.status === 'paid' ? 'pos' : 'none'} className="num" /> : <span className="num">+{new Decimal(d.sharesHeldDec).mul(d.perShareDec).floor().toString()} 股</span>}
                   </div>
-                  {d.kind === 'cash' ? <Amount minor={d.netMinor} currency={d.currency} tone={d.status === 'paid' ? 'pos' : 'none'} className="num" /> : <span className="num">+{new Decimal(d.sharesHeldDec).mul(d.perShareDec).floor().toString()} 股</span>}
-                </button>
+                </SwipeRow>
               );
             })}
           </div>

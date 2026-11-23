@@ -84,9 +84,12 @@ export async function updateTrade(id: string, input: TradeInput): Promise<void> 
   const stock = await db.stocks.get(input.stockId);
   if (!stock) throw new Error('標的不存在');
   await db.transaction('rw', tradeTables(), async () => {
-    await deleteTransactions([old.transactionId, old.feeTransactionId].filter(Boolean) as string[]);
+    const oldIds = [old.transactionId, old.feeTransactionId].filter(Boolean) as string[];
+    // 解除被取代舊帳目的 stockTradeId 關聯，避免觸發整筆股票交易刪除或日後誤復原舊金額
+    for (const oid of oldIds) await db.transactions.update(oid, { stockTradeId: undefined });
+    if (oldIds.length) await deleteTransactions(oldIds);
     const links = await ledgerFor({ ...input, id }, stock);
-    await db.stock_trades.put({ ...old, ...input, transactionId: links.transactionId, feeTransactionId: links.feeTransactionId, updatedAt: now() });
+    await db.stock_trades.put({ ...old, ...input, transactionId: links.transactionId, feeTransactionId: links.feeTransactionId, deletedAt: null, updatedAt: now() });
   });
 }
 
@@ -94,8 +97,11 @@ export async function deleteTrade(id: string): Promise<void> {
   const t = await db.stock_trades.get(id);
   if (!t) return;
   await db.transaction('rw', tradeTables(), async () => {
-    await deleteTransactions([t.transactionId, t.feeTransactionId].filter(Boolean) as string[]);
-    await db.stock_trades.update(id, { deletedAt: now() });
+    const activeByIndex = (await db.transactions.where('stockTradeId').equals(id).filter((tx) => !tx.deletedAt).primaryKeys()) as string[];
+    const linkedIds = [...new Set([...([t.transactionId, t.feeTransactionId].filter(Boolean) as string[]), ...activeByIndex])];
+    if (linkedIds.length) await deleteTransactions(linkedIds);
+    const ts = now();
+    await db.stock_trades.update(id, { deletedAt: ts, updatedAt: ts });
   });
 }
 
@@ -103,8 +109,12 @@ export async function restoreTrade(id: string): Promise<void> {
   const t = await db.stock_trades.get(id);
   if (!t) return;
   await db.transaction('rw', tradeTables(), async () => {
-    await restoreTransactions([t.transactionId, t.feeTransactionId].filter(Boolean) as string[]);
-    await db.stock_trades.update(id, { deletedAt: null });
+    const matchingByIndex = t.deletedAt
+      ? ((await db.transactions.where('stockTradeId').equals(id).filter((tx) => tx.deletedAt === t.deletedAt).primaryKeys()) as string[])
+      : [];
+    const linkedIds = [...new Set([...([t.transactionId, t.feeTransactionId].filter(Boolean) as string[]), ...matchingByIndex])];
+    if (linkedIds.length) await restoreTransactions(linkedIds);
+    await db.stock_trades.update(id, { deletedAt: null, updatedAt: now() });
   });
 }
 

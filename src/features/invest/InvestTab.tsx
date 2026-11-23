@@ -14,10 +14,12 @@ import { snapshotSeries } from '@/services/networth';
 import { updateAllQuotes } from '@/services/startup';
 import { describeQuoteErrors } from '@/services/quotes/registry';
 import { useSettings } from '@/stores/settings';
-import { useUI } from '@/stores/ui';
+import { ask, snackUndo, useUI } from '@/stores/ui';
+import { deleteTrade, restoreTrade } from '@/db/repo/invest';
 import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
 import { Icon } from '@/ui/Icon';
 import { PullToRefresh } from '@/ui/PullToRefresh';
+import { SwipeRow } from '@/ui/SwipeRow';
 import { chartTheme } from '../reports/chart-theme';
 import { MARKET_LABEL } from './StockSearch';
 import { TradeSheet } from './TradeSheet';
@@ -25,7 +27,20 @@ import { useScreenDetail } from '@/stores/screenContext';
 
 const EChart = lazy(() => import('../reports/EChart'));
 
-export const pct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+export const pct = (v: number) => {
+  if (!Number.isFinite(v)) return '—';
+  if (v > 9999.99) return '>+9,999%';
+  if (v < -999.99) return '<-999%';
+  return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+};
+
+export const fmtXirr = (x: number | null): string => {
+  if (x === null || !Number.isFinite(x)) return '—';
+  const v = x * 100;
+  if (v > 999.9) return '>+999.9%';
+  if (v < -99.9) return '<-99.9%';
+  return pct(v);
+};
 
 export function StaleBadge({ h }: { h: Pick<Holding, 'price' | 'stale'> }) {
   if (!h.price) return <span className="chip" style={{ ['--c' as string]: 'var(--warning)' }}>無報價</span>;
@@ -92,6 +107,20 @@ export default function InvestTab() {
   if (!pf) return <SkeletonRows n={4} />;
   const ranked = [...pf.holdings].filter((h) => h.val).sort((a, b) => (b.val!.unrealizedPct - a.val!.unrealizedPct));
 
+  const handleDeleteHolding = async (h: Holding) => {
+    const active = h.trades.filter((t) => !t.deletedAt);
+    if (!active.length) return;
+    if (active.length > 1 && !(await ask(`刪除「${h.stock.symbol} ${h.stock.name}」的全部 ${active.length} 筆交易紀錄？`))) return;
+    try {
+      for (const t of active) await deleteTrade(t.id);
+      snackUndo(`已刪除 ${h.stock.name} 交易`, async () => {
+        for (const t of active) await restoreTrade(t.id);
+      });
+    } catch (e) {
+      useUI.getState().showSnack({ text: `刪除失敗：${(e as Error).message}` });
+    }
+  };
+
   return (
     <PullToRefresh onRefresh={refresh}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0 8px', flexWrap: 'wrap' }}>
@@ -123,8 +152,8 @@ export default function InvestTab() {
               <div className="stat"><div className="k">總報酬率</div><div className={`v num ${pf.totalReturnPct >= 0 ? 'pos' : 'neg'}`}>{pct(pf.totalReturnPct)}</div></div>
               <div className="stat"><div className="k">含股利</div><div className={`v num ${pf.totalReturnWithDivPct >= 0 ? 'pos' : 'neg'}`}>{pct(pf.totalReturnWithDivPct)}</div></div>
               <div className="stat"><div className="k">年化 XIRR<ExplainButton title="年化 XIRR（不定期現金流年化報酬率）" formula={'找出一個年利率 r，使\nΣ 現金流ᵢ ÷ (1 + r)^(天數ᵢ ÷ 365) = 0\n（與 Excel 的 XIRR 同定義）'}
-            rows={[{ label: '目前算出的 XIRR', value: pf.xirr === null ? '—（現金流不足）' : pct(pf.xirr * 100), strong: true }, { label: '總報酬率（不計時間）', value: pct(pf.totalReturnPct) }, { label: '含股利總報酬率', value: pct(pf.totalReturnWithDivPct) }]}
-            notes={['買進與手續費當成「投入」（負數），賣出與股利當成「取回」（正數），目前持股的市值視為最後一天賣出的取回。', '總報酬率只看賺了幾 %；XIRR 還考慮「錢放了多久」，所以放越久同樣的獲利年化越低。', '算法：先用牛頓法逼近，不收斂時改用二分法；投入與取回方向不全時顯示「—」。']} /></div><div className={`v num ${(pf.xirr ?? 0) >= 0 ? 'pos' : 'neg'}`}>{pf.xirr === null ? '—' : pct(pf.xirr * 100)}</div></div>
+            rows={[{ label: '目前算出的 XIRR', value: pf.xirr === null ? '—（現金流不足）' : fmtXirr(pf.xirr), strong: true }, { label: '總報酬率（不計時間）', value: pct(pf.totalReturnPct) }, { label: '含股利總報酬率', value: pct(pf.totalReturnWithDivPct) }]}
+            notes={['買進與手續費當成「投入」（負數），賣出與股利當成「取回」（正數），目前持股的市值視為最後一天賣出的取回。', '總報酬率只看賺了幾 %；XIRR 還考慮「錢放了多久」，所以放越久同樣的獲利年化越低。', '算法：先用牛頓法逼近，不收斂時改用二分法；投入與取回方向不全時顯示「—」。']} /></div><div className={`v num ${(pf.xirr ?? 0) >= 0 ? 'pos' : 'neg'}`}>{fmtXirr(pf.xirr)}</div></div>
             </div>
             {pf.fxPnlBase !== 0 && (
               <p className="muted num" style={{ fontSize: '0.8rem', margin: '10px 0 0' }}>
@@ -144,17 +173,19 @@ export default function InvestTab() {
           <div className="section-title">持股（{pf.holdings.length}）</div>
           <div className="list">
             {pf.holdings.map((h) => (
-              <button key={h.stock.id} className="row" onClick={() => navigate(`/invest/stock/${h.stock.id}`)} style={{ alignItems: 'flex-start' }}>
-                <div className="row-main">
-                  <div className="row-title"><b className="num">{h.stock.symbol}</b> {h.stock.name} <StaleBadge h={h} /></div>
-                  <div className="row-sub num">{fmtShares(h.pos.shares)} 股 · 均價 {h.pos.avgCost.toDecimalPlaces(2).toString()} · 現價 {h.price?.priceDec ? Number(h.price.priceDec).toLocaleString('zh-TW', { maximumFractionDigits: 4 }) : '—'}
-                    {h.price && <span className={Number(h.price.changeDec) >= 0 ? 'pos' : 'neg'}> {pct(Number(h.price.changePctDec))}</span>}</div>
+              <SwipeRow key={h.stock.id} flat onTap={() => navigate(`/invest/stock/${h.stock.id}`)} onDelete={() => void handleDeleteHolding(h)}>
+                <div className="row" style={{ alignItems: 'flex-start' }}>
+                  <div className="row-main">
+                    <div className="row-title"><b className="num">{h.stock.symbol}</b> {h.stock.name} <StaleBadge h={h} /></div>
+                    <div className="row-sub num">{fmtShares(h.pos.shares)} 股 · 均價 {h.pos.avgCost.toDecimalPlaces(2).toString()} · 現價 {h.price?.priceDec ? Number(h.price.priceDec).toLocaleString('zh-TW', { maximumFractionDigits: 4 }) : '—'}
+                      {h.price && <span className={Number(h.price.changeDec) >= 0 ? 'pos' : 'neg'}> {pct(Number(h.price.changePctDec))}</span>}</div>
+                  </div>
+                  <div className="row-end" style={{ maxWidth: '48%', overflow: 'hidden' }}>
+                    <div className="num" style={{ fontWeight: 600 }}><Amount minor={h.val?.marketValueMinor ?? h.pos.costMinor} currency={h.stock.currency} tone="none" /></div>
+                    {h.val && <div className="num" style={{ fontSize: '0.8rem' }}><Amount minor={h.val.unrealizedMinor} currency={h.stock.currency} tone="auto" opts={{ sign: 'always', compact: Math.abs(h.val.unrealizedMinor) >= 10_000_000_00 }} /> <span className={h.val.unrealizedMinor >= 0 ? 'pos' : 'neg'}>{pct(h.val.unrealizedPct)}</span></div>}
+                  </div>
                 </div>
-                <div className="row-end">
-                  <div className="num" style={{ fontWeight: 600 }}><Amount minor={h.val?.marketValueMinor ?? h.pos.costMinor} currency={h.stock.currency} tone="none" /></div>
-                  {h.val && <div className="num" style={{ fontSize: '0.8rem' }}><Amount minor={h.val.unrealizedMinor} currency={h.stock.currency} tone="auto" opts={{ sign: 'always' }} /> <span className={h.val.unrealizedMinor >= 0 ? 'pos' : 'neg'}>{pct(h.val.unrealizedPct)}</span></div>}
-                </div>
-              </button>
+              </SwipeRow>
             ))}
           </div>
 
@@ -201,11 +232,13 @@ export default function InvestTab() {
               <div className="section-title">已出清</div>
               <div className="list">
                 {pf.closed.map((h) => (
-                  <button key={h.stock.id} className="row" onClick={() => navigate(`/invest/stock/${h.stock.id}`)}>
-                    <span className="row-main">{h.stock.symbol} {h.stock.name}</span>
-                    <span className="row-sub">已實現</span>
-                    <Amount minor={h.pos.realizedMinor} currency={h.stock.currency} tone="auto" opts={{ sign: 'always' }} className="num" />
-                  </button>
+                  <SwipeRow key={h.stock.id} flat onTap={() => navigate(`/invest/stock/${h.stock.id}`)} onDelete={() => void handleDeleteHolding(h)}>
+                    <div className="row">
+                      <span className="row-main">{h.stock.symbol} {h.stock.name}</span>
+                      <span className="row-sub">已實現</span>
+                      <Amount minor={h.pos.realizedMinor} currency={h.stock.currency} tone="auto" opts={{ sign: 'always' }} className="num" />
+                    </div>
+                  </SwipeRow>
                 ))}
               </div>
             </>

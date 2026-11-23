@@ -851,13 +851,13 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                   <div className="field">
                     <span className="label">匯率</span>
                     <span className="muted num" style={{ fontSize: '0.85rem' }}>1 {rateFrom} =</span>
-                    <input inputMode="decimal" value={fxRate} onChange={(e) => setFxRate(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="匯率" placeholder="取得中…" />
+                    <input inputMode="decimal" autoComplete="off" value={fxRate} onChange={(e) => setFxRate(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="匯率" placeholder="取得中…" />
                     <span className="muted num">{rateTo}</span>
                   </div>
                   {mode === 'transfer' ? (
                     <div className="field">
                       <span className="label">轉入金額</span>
-                      <input inputMode="decimal" value={toAmount !== null ? toAmount : computedToAmount} onChange={(e) => setToAmount(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="轉入金額" />
+                      <input inputMode="decimal" autoComplete="off" value={toAmount !== null ? toAmount : computedToAmount} onChange={(e) => setToAmount(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="轉入金額" />
                       <span className="muted num">{rateTo}</span>
                     </div>
                   ) : value && fxRate && account ? (
@@ -1000,7 +1000,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                   <div className="list" style={{ marginBottom: 8 }}>
                     <div className="field">
                       <span className="label">{mode === 'receivable' ? '誰欠你' : '你欠誰'}</span>
-                      <input value={personName} onChange={(e) => setPersonName(e.target.value)} placeholder="名字" maxLength={30}
+                      <input autoComplete="off" value={personName} onChange={(e) => setPersonName(e.target.value)} placeholder="名字" maxLength={30}
                         aria-label={mode === 'receivable' ? '欠款人' : '債權人'} />
                     </div>
                     <label className="field" style={{ cursor: 'pointer' }}>
@@ -1044,18 +1044,18 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                     </button>
                   </>
                 )}
-                <span className="pill" style={{ position: 'relative' }}>
+                <label className="pill" style={{ position: 'relative' }}>
                   <Icon name="calendar" size={16} /> {dateLabel}
                   <input type="date" className="pill-picker-input" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="日期" />
-                </span>
-                <span className="pill num" style={{ position: 'relative' }}>
+                </label>
+                <label className="pill num" style={{ position: 'relative' }}>
                   <Icon name="clock" size={16} /> {time}
                   <input type="time" className="pill-picker-input" value={time} onChange={(e) => e.target.value && setTime(e.target.value)} aria-label="時間" />
-                </span>
+                </label>
                 {mode === 'transfer' && (
                   <span className="pill">
                     手續費
-                    <input inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value.replace(/[^0-9.]/g, ''))}
+                    <input inputMode="decimal" autoComplete="off" value={fee} onChange={(e) => setFee(e.target.value.replace(/[^0-9.]/g, ''))}
                       placeholder="0" aria-label="轉帳手續費" style={{ width: 56, border: 0, background: 'transparent', outline: 'none' }} />
                   </span>
                 )}
@@ -1070,7 +1070,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
 
               {/* 備註 */}
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input className="input" placeholder={mode === 'transfer' ? '備註（例如：提款）' : loan ? '備註（例如：代墊車資）' : '備註、店家…'} value={note}
+                <input className="input" autoComplete="off" placeholder={mode === 'transfer' ? '備註（例如：提款）' : loan ? '備註（例如：代墊車資）' : '備註、店家…'} value={note}
                   onChange={(e) => setNote(e.target.value)} maxLength={200} aria-label="備註"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {

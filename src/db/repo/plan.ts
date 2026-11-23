@@ -250,7 +250,7 @@ export async function confirmPending(ruleId: string, date: string, amountMinor?:
   const input = templateToInput(r, date);
   if (amountMinor !== undefined) input.amountMinor = amountMinor;
   const amounts = await resolveAmounts(input);
-  await db.transaction('rw', [db.recurring_rules, db.transactions, db.accounts, db.attachments, db.transfers, db.durables, db.debts], async () => {
+  await db.transaction('rw', [db.recurring_rules, db.transactions, db.accounts, db.attachments, db.transfers, db.durables, db.debts, db.stock_trades], async () => {
     const current = await db.recurring_rules.get(ruleId);
     if (!current?.pendingDates.includes(date)) return;
     const existing = await db.transactions.get(input.id!);

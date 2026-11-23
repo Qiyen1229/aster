@@ -3,7 +3,7 @@
  */
 import { LabelHint } from './Hint';
 import { iconEmoji } from './Icon';
-import { useId, type ReactNode } from 'react';
+import { useId, useRef, type ReactNode } from 'react';
 import type { Account, Category, CategoryKind } from '@/db/types';
 import { buildTree } from '@/db/repo/categories';
 import { CURRENCIES, currencyInfo } from '@/domain/money';
@@ -25,7 +25,7 @@ export function TextField({ label, value, onChange, placeholder, maxLength = 60,
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <input id={id} type={type} inputMode={inputMode} value={value} placeholder={placeholder} maxLength={maxLength} onChange={(e) => onChange(e.target.value)} />
+      <input id={id} type={type} inputMode={inputMode} autoComplete="off" value={value} placeholder={placeholder} maxLength={maxLength} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }
@@ -38,7 +38,7 @@ export function AmountField({ label, value, onChange, currency, allowNegative, p
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <input id={id} inputMode="decimal" className="num" value={value} placeholder={placeholder}
+      <input id={id} inputMode="decimal" autoComplete="off" className="num" value={value} placeholder={placeholder}
         onChange={(e) => onChange(e.target.value.replace(allowNegative ? /[^0-9.-]/g : /[^0-9.]/g, ''))} />
       {currency && <span className="muted">{currencyInfo(currency).symbol}</span>}
     </div>
@@ -47,10 +47,15 @@ export function AmountField({ label, value, onChange, currency, allowNegative, p
 
 export function DateField({ label, value, onChange, min, max, type = 'date' }: { label: string; value: string; onChange: (v: string) => void; min?: string; max?: string; type?: 'date' | 'time' | 'month' }) {
   const id = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
   return (
-    <div className="field">
+    <div className="field" onClick={(e) => {
+      if (e.target === inputRef.current) return;
+      try { inputRef.current?.showPicker?.(); } catch { /* ignore */ }
+      inputRef.current?.focus();
+    }}>
       <label htmlFor={id}>{label}</label>
-      <input id={id} type={type} value={value} min={min} max={max} onChange={(e) => onChange(e.target.value)} />
+      <input ref={inputRef} id={id} type={type} value={value} min={min} max={max} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }
