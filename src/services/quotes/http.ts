@@ -38,11 +38,18 @@ export function defaultProxyBase(): string {
   return origin ? `${origin}/proxy` : '/proxy';
 }
 
+/** 舊預設值 '/proxy' 視同未自訂，確保原生殼／跨源模式下改走 VITE_API_URL 並帶入 Bearer */
+export function customProxyUrl(proxyUrl?: string): string {
+  const trimmed = (proxyUrl ?? '').trim();
+  return trimmed && trimmed !== '/proxy' ? trimmed : '';
+}
+
 export function proxied(url: string): { url: string; headers: Record<string, string> } {
   const { proxyUrl, proxyToken } = useSettings.getState().quote;
-  const base = (proxyUrl || defaultProxyBase()).replace(/\/$/, '');
+  const custom = customProxyUrl(proxyUrl);
+  const base = (custom || defaultProxyBase()).replace(/\/$/, '');
   const headers: Record<string, string> = proxyToken ? { 'x-clure-token': proxyToken } : {};
-  if (!proxyUrl && isBearerMode()) {
+  if (!custom && isBearerMode()) {
     const at = getAccessToken();
     if (at) headers.Authorization = `Bearer ${at}`;
   }
@@ -81,7 +88,7 @@ async function getBody<T>(url: string, opts: { direct?: boolean; retries?: numbe
     try {
       await throttle(host);
       const useDirect = direct && attempt === 0;
-      const isBuiltinProxy = !useDirect && !useSettings.getState().quote.proxyUrl;
+      const isBuiltinProxy = !useDirect && !customProxyUrl(useSettings.getState().quote.proxyUrl);
       let target = useDirect ? { url, headers: {} } : proxied(url);
       let res = await fetchWithTimeout(target.url, { headers: target.headers }, timeoutMs);
       if (res.status === 401 && isBuiltinProxy && !reauthed) {

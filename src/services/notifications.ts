@@ -11,6 +11,7 @@ import type { Reminder } from '@/db/types';
 import { useSettings } from '@/stores/settings';
 import { computeBudgets } from '@/db/repo/plan';
 import { creditCardStatement } from '@/db/repo/accounts';
+import { creditAvailability } from '@/domain/creditcard';
 import { addDays, todayKey, weekRange } from '@/domain/period';
 import { formatMoney } from '@/domain/money';
 
@@ -138,9 +139,11 @@ export async function runReminderChecks(now = new Date()) {
     for (const acc of await db.accounts.where('type').equals('credit').toArray()) {
       if (acc.archived || !acc.credit) continue;
       const st = await creditCardStatement(acc);
-      if (!st || st.statementMinor <= 0) continue;
+      if (!st) continue;
+      const due = creditAvailability(acc.credit.limitMinor, acc.balanceMinor, st.unbilledMinor, 0).billedUnpaidMinor;
+      if (due <= 0) continue;
       if (st.cycle.dueDate >= today && st.cycle.dueDate <= addDays(today, cfg.cardDueDays)) {
-        await notify(`💳 ${acc.name} 繳款提醒`, `本期應繳 ${formatMoney(st.statementMinor, acc.currency)}，截止日 ${st.cycle.dueDate}`,
+        await notify(`💳 ${acc.name} 繳款提醒`, `本期應繳 ${formatMoney(due, acc.currency)}，截止日 ${st.cycle.dueDate}`,
           `/accounts/${acc.id}`, 'card_due', `card:${acc.id}:${st.cycle.dueDate}`);
       }
     }

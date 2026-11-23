@@ -23,6 +23,7 @@ import { pad2, todayKey } from '@/domain/period';
 import { getRate } from '@/services/fx';
 import { discardAttachments, saveImageAttachment } from '@/services/attachments';
 import { useAccounts, useCategories, useProjects, useTags } from '@/app/hooks';
+import { lockBodyScroll } from '@/app/viewport';
 import { useSettings } from '@/stores/settings';
 import { askConfirm, snackUndo, useUI, type AddMode } from '@/stores/ui';
 import { confirmDeleteById } from '../ledger/deleteGuard';
@@ -34,7 +35,7 @@ import { AccountPicker, CurrencyPicker, DurablePicker, ProjectPicker, TagPicker 
 import { computeSplit, SplitSheet, type SplitState } from './SplitSheet';
 import { lifeLabel } from '@/domain/durable';
 import { LifeSpanSheet } from '../plan/LifeSpanSheet';
-import { addDebts, addLoan, findOrCreatePerson, removeLoan, settleDebt, unsettleDebt } from '@/db/repo/plan';
+import { addDebts, addLoan, decideWish, findOrCreatePerson, removeLoan, settleDebt, unsettleDebt } from '@/db/repo/plan';
 import { addDurable, durableOfTx, syncTxDurable } from '@/db/repo/durables';
 import { countRuleHit, recentNoteSuggestions, suggestCategory, type CategorySuggestion } from '@/services/autocat';
 import { findPinned, listPinned, pinTransaction, touchPinned, unpin } from '@/db/repo/pinned';
@@ -171,6 +172,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
 
   useEffect(() => {
     if (!mounted || !open) return;
+    const unlockScroll = lockBodyScroll();
     const prevFocus = document.activeElement as HTMLElement | null;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !document.querySelector('.sheet, .dlg-wrap')) {
@@ -181,6 +183,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
     window.addEventListener('keydown', onKeyDown);
     const t = window.setTimeout(() => screenRef.current?.focus({ preventScroll: true }), 300);
     return () => {
+      unlockScroll();
       window.removeEventListener('keydown', onKeyDown);
       window.clearTimeout(t);
       if (prevFocus?.isConnected) prevFocus.focus({ preventScroll: true });
@@ -392,11 +395,25 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
           `${selectedDebt.direction === 'they_owe_me' ? '已收回' : '已還給'} ${who} ${formatMoney(paidAmt, selectedDebt.currency)}${isPartial ? '（部分還款）' : ''}`,
           async () => {
             if (isPartial) {
-              const paid = await db.debts.get(targetId);
-              const orig = await db.debts.get(selectedDebt.id);
-              if (paid?.settleTransferId) await deleteTransactions([paid.settleTransferId]);
-              if (orig && paid) await db.debts.update(orig.id, { amountMinor: orig.amountMinor + paid.amountMinor, updatedAt: Date.now() });
-              await db.debts.delete(targetId);
+              await db.transaction('rw', [db.debts, db.transactions, db.transfers, db.accounts, db.durables, db.stock_trades], async () => {
+                const paid = await db.debts.get(targetId);
+                const orig = await db.debts.get(selectedDebt.id);
+                if (paid?.settleTransferId) await deleteTransactions([paid.settleTransferId]);
+                if (orig && paid) {
+                  const t = Date.now();
+                  await db.debts.update(orig.id, { amountMinor: orig.amountMinor + paid.amountMinor, updatedAt: t });
+                  if (orig.transactionId) {
+                    const parent = await db.transactions.get(orig.transactionId);
+                    if (parent?.split) {
+                      await db.transactions.update(parent.id, {
+                        split: { ...parent.split, debtIds: parent.split.debtIds.filter((id) => id !== targetId) },
+                        updatedAt: t,
+                      });
+                    }
+                  }
+                }
+                await db.debts.delete(targetId);
+              });
             } else {
               await unsettleDebt(targetId);
             }
@@ -491,8 +508,16 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
             });
             durableId = d.id;
           }
+          const wishId = mode === 'expense' ? prefill?.wishId : undefined;
+          if (wishId) await decideWish(wishId, 'bought', tx.id);
           notify = () => snackUndo(mode === 'adjust' ? '已調整餘額' : `已記下 ${formatMoney(tx.amountMinor, tx.currency)}${sp ? `（我的份額 ${formatMoney(sp.myShare, tx.currency)}）` : ''}${durableId ? '，已加入耐用品追蹤' : ''}`,
-            async () => { await deleteTransactions([tx.id]); if (sp) await db.debts.where('transactionId').equals(tx.id).delete(); if (durableId) await db.durables.delete(durableId); });
+            async () => {
+              await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.durables, db.debts, db.stock_trades, db.wishes], async () => {
+                await deleteTransactions([tx.id]);
+                if (durableId) await db.durables.delete(durableId);
+                if (wishId) await db.wishes.update(wishId, { status: 'waiting', decidedAt: undefined, transactionId: undefined, updatedAt: Date.now() });
+              });
+            });
         }
         if (!editing && autoCat?.ruleId && autoCat.categoryId === catId) await countRuleHit(autoCat.ruleId);
       }
@@ -851,13 +876,13 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                   <div className="field">
                     <span className="label">匯率</span>
                     <span className="muted num" style={{ fontSize: '0.85rem' }}>1 {rateFrom} =</span>
-                    <input inputMode="decimal" autoComplete="off" value={fxRate} onChange={(e) => setFxRate(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="匯率" placeholder="取得中…" />
+                    <input inputMode="decimal" autoComplete="off" style={{ minWidth: 0, flex: '1 1 5em' }} value={fxRate} onChange={(e) => setFxRate(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="匯率" placeholder="取得中…" />
                     <span className="muted num">{rateTo}</span>
                   </div>
                   {mode === 'transfer' ? (
                     <div className="field">
                       <span className="label">轉入金額</span>
-                      <input inputMode="decimal" autoComplete="off" value={toAmount !== null ? toAmount : computedToAmount} onChange={(e) => setToAmount(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="轉入金額" />
+                      <input inputMode="decimal" autoComplete="off" style={{ minWidth: 0, flex: '1 1 5em' }} value={toAmount !== null ? toAmount : computedToAmount} onChange={(e) => setToAmount(e.target.value.replace(/[^0-9.]/g, ''))} aria-label="轉入金額" />
                       <span className="muted num">{rateTo}</span>
                     </div>
                   ) : value && fxRate && account ? (
@@ -1362,7 +1387,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       <AccountPicker open={picker === 'account'} onClose={() => setPicker(null)} accounts={accounts} value={accountId}
         title={mode === 'transfer' ? '轉出帳戶' : mode === 'receivable' ? '從哪個帳戶借出' : mode === 'payable' ? '存入哪個帳戶' : '選擇帳戶'} onPick={(id) => { setAccountId(id); if (!editing) setFxRate(''); }} />
       <AccountPicker open={picker === 'toAccount'} onClose={() => setPicker(null)} accounts={accounts} value={toAccountId}
-        title="轉入帳戶" exclude={accountId} onPick={(id) => { setToAccountId(id); setFxRate(''); setToAmount(''); }} />
+        title="轉入帳戶" exclude={accountId} onPick={(id) => { setToAccountId(id); setFxRate(''); setToAmount(null); }} />
       <CurrencyPicker open={picker === 'currency'} onClose={() => setPicker(null)} value={txCurrency} onPick={(c) => { setCurrency(c); setFxRate(''); }} />
       <DurablePicker open={picker === 'durable'} onClose={() => setPicker(null)} value={durableYears} custom={durableCustom}
         onPick={(y) => setDurableYears(y)} onCustom={() => setLifeOpen(true)} />

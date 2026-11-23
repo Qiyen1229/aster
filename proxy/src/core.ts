@@ -119,7 +119,7 @@ function cors(env: ProxyEnv, extra: Record<string, string> = {}): Record<string,
   return {
     'Access-Control-Allow-Origin': env.ALLOW_ORIGIN || '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'x-clure-token, content-type',
+    'Access-Control-Allow-Headers': 'x-clure-token, authorization, content-type',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
     ...extra,

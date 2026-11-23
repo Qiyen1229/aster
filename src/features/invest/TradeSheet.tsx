@@ -96,17 +96,26 @@ function TradeForm({ stockId, initialStock, trade, initialType, deleting, onDele
   const [busy, setBusy] = useState(false);
   const [accountId, setAccountId] = useState(trade?.accountId ?? (inv.defaultBrokerageId || brokerages[0]?.id || ''));
   const brokerage = accounts.map.get(accountId);
+  const cashEligible = useMemo(() => accounts.list.filter((a) => !a.archived && (!a.isLiability || a.type === 'credit')), [accounts.list]);
   const [sync, setSync] = useState(trade?.syncToLedger ?? inv.syncToLedger);
   const [cashAccountId, setCashAccountId] = useState(trade?.cashAccountId ?? brokerage?.brokerage?.settlementAccountId ?? accountId);
   const [note, setNote] = useState(trade?.note ?? '');
 
-  // 帳戶清單載入後補上預設證券戶與扣款帳戶
+  // 帳戶清單載入後補上預設證券戶與扣款帳戶（確保選到合法的非負債交割帳戶）
   useEffect(() => {
-    if (trade || !accounts.list.length) return;
-    const bk = accountId ? accounts.map.get(accountId) : accounts.list.find((a) => a.id === inv.defaultBrokerageId) ?? accounts.list.find((a) => a.type === 'brokerage');
-    if (!accountId && bk) setAccountId(bk.id);
-    if (!cashAccountId || !accounts.map.has(cashAccountId)) setCashAccountId(bk?.brokerage?.settlementAccountId ?? bk?.id ?? accounts.list[0].id);
-  }, [accounts.list.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!accounts.list.length) return;
+    if (!trade) {
+      const bk = accountId ? accounts.map.get(accountId) : accounts.list.find((a) => a.id === inv.defaultBrokerageId) ?? accounts.list.find((a) => a.type === 'brokerage');
+      if (!accountId && bk) setAccountId(bk.id);
+      if (!cashAccountId || !cashEligible.some((a) => a.id === cashAccountId)) {
+        const preferred = bk?.brokerage?.settlementAccountId;
+        const fallback = cashEligible.find((a) => a.id === preferred)?.id ?? cashEligible.find((a) => a.id === bk?.id)?.id ?? cashEligible[0]?.id ?? '';
+        setCashAccountId(fallback);
+      }
+    } else if (sync && (!cashAccountId || !cashEligible.some((a) => a.id === cashAccountId))) {
+      setCashAccountId(cashEligible[0]?.id ?? '');
+    }
+  }, [accounts.list.length, sync]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const effectiveUnit = isTW && type !== 'split' ? unit : 'share';
   const shares = useMemo(() => {
@@ -143,8 +152,36 @@ function TradeForm({ stockId, initialStock, trade, initialType, deleting, onDele
   const gross = price && shares.gt(0) ? tryDec(price).mul(shares) : new Decimal(0);
   const feeD = tryDec(fee, new Decimal(0)), taxD = tryDec(tax, new Decimal(0));
   const total = type === 'buy' ? gross.plus(feeD) : gross.minus(feeD).minus(taxD);
-  const estPnl = type === 'sell' && pos.shares.gt(0) && shares.gt(0)
-    ? total.minus(new Decimal(pos.costMinor).div(Decimal.pow(10, currencyInfo(cur).exp)).mul(Decimal.min(shares, pos.shares)).div(pos.shares)) : null;
+  const exp = currencyInfo(cur).exp;
+  const estPnl = useMemo(() => {
+    if (type !== 'sell' || !pos.shares.gt(0) || !shares.gt(0)) return null;
+    if (inv.costMethod === 'fifo') {
+      const sim = computePosition([
+        ...trades.filter((t) => t.id !== trade?.id),
+        {
+          id: '__est__',
+          stockId: stock?.id ?? '',
+          accountId,
+          type: 'sell',
+          date,
+          ts: Number.MAX_SAFE_INTEGER,
+          sharesDec: shares.toString(),
+          priceDec: tryDec(price).toString(),
+          feeMinor: toMinor(feeD, cur),
+          taxMinor: toMinor(taxD, cur),
+          fxRateDec: '1',
+          isDCA: false,
+          syncToLedger: false,
+          note: '',
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ], 'fifo', exp);
+      const r = sim.realized.find((x) => x.tradeId === '__est__');
+      return r ? new Decimal(r.pnlMinor).div(Decimal.pow(10, exp)) : null;
+    }
+    return total.minus(new Decimal(pos.costMinor).div(Decimal.pow(10, exp)).mul(Decimal.min(shares, pos.shares)).div(pos.shares));
+  }, [type, pos, shares, inv.costMethod, trades, trade?.id, stock?.id, accountId, date, price, feeD, taxD, cur, exp, total]);
 
   if (!stock) {
     if (stockId || trade?.stockId) return <div style={{ minHeight: 160 }} />;
@@ -158,17 +195,21 @@ function TradeForm({ stockId, initialStock, trade, initialType, deleting, onDele
 
   const save = async () => {
     if (busy) return;
+    if (!date) return useUI.getState().showSnack({ text: '請選擇交易日期' });
     if (shares.lte(0)) return useUI.getState().showSnack({ text: type === 'split' ? '請輸入分割倍數' : '請輸入股數' });
     if ((type === 'buy' || type === 'sell') && (!price || tryDec(price).lte(0))) return useUI.getState().showSnack({ text: '請輸入成交價' });
+    const fxVal = cur === settings.baseCurrency ? new Decimal(1) : tryDec(fx || '1', new Decimal(0));
+    if ((type === 'buy' || type === 'sell') && fxVal.lte(0)) return useUI.getState().showSnack({ text: '請輸入有效匯率' });
     if (type === 'sell' && shares.gt(pos.shares)) {
       if (!await ask(`賣出 ${shares} 股超過目前持有的 ${pos.shares} 股，確定要儲存？`)) return;
     }
     if (sync && (type === 'buy' || type === 'sell') && !cashAccountId) return useUI.getState().showSnack({ text: '請選擇扣款／入帳帳戶，或關閉同步記帳' });
     setBusy(true);
     const input = {
-      stockId: stock.id, accountId, type, date, ts: new Date(`${date}T${new Date().toTimeString().slice(0, 8)}`).getTime(),
+      stockId: stock.id, accountId, type, date,
+      ts: trade && trade.date === date ? trade.ts : new Date(`${date}T${new Date().toTimeString().slice(0, 8)}`).getTime(),
       sharesDec: shares.toString(), priceDec: type === 'buy' || type === 'sell' ? tryDec(price).toString() : '0',
-      feeMinor: toMinor(feeD, cur), taxMinor: toMinor(taxD, cur), fxRateDec: cur === settings.baseCurrency ? '1' : fx || '1',
+      feeMinor: toMinor(feeD, cur), taxMinor: toMinor(taxD, cur), fxRateDec: fxVal.toString(),
       isDCA, isDayTrade: type === 'sell' && isDayTrade, syncToLedger: sync && (type === 'buy' || type === 'sell'), cashAccountId: sync ? cashAccountId : undefined, note,
       costMethodSnapshot: inv.costMethod,
     };
@@ -218,7 +259,12 @@ function TradeForm({ stockId, initialStock, trade, initialType, deleting, onDele
           </>
         )}
         {type === 'buy' && <SwitchField label="定期定額" checked={isDCA} onChange={setDCA} />}
-        <AccountField label="證券戶" value={accountId} onChange={(id) => { setAccountId(id); const a = accounts.map.get(id); setCashAccountId(a?.brokerage?.settlementAccountId ?? id); }}
+        <AccountField label="證券戶" value={accountId} onChange={(id) => {
+          setAccountId(id);
+          const a = accounts.map.get(id);
+          const nextCash = a?.brokerage?.settlementAccountId ?? (a && (!a.isLiability || a.type === 'credit') ? a.id : '');
+          setCashAccountId(cashEligible.some((c) => c.id === nextCash) ? nextCash : cashEligible[0]?.id ?? '');
+        }}
           accounts={accounts.list} allowEmpty emptyLabel="（未指定）" filter={(a) => a.type === 'brokerage' || a.id === accountId} />
         <TextField label="備註" value={note} onChange={setNote} />
       </div>

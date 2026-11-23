@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { currencyInfo, formatMoney } from '@/domain/money';
 import { todayKey } from '@/domain/period';
 import { buildCashflow, type CashflowData } from '@/services/cashflow';
-import { chartTheme } from '@/features/reports/chart-theme';
+import { chartTheme, useChartTheme } from '@/features/reports/chart-theme';
 import type { ViewSpec } from '@/domain/agent/plan';
 
 const EChart = lazy(() => import('@/features/reports/EChart'));
@@ -23,7 +23,9 @@ export function CashflowView({ params, refreshKey }: { params: ViewSpec['params'
   }, [days, refreshKey]);
   const base = data?.base ?? 'TWD';
   const money = (v: number) => formatMoney(v, base, { decimals: 0 });
+  const themeKey = useChartTheme();
   const option = useMemo(() => {
+    void themeKey;
     if (!data) return null;
     const t = chartTheme();
     return {
@@ -34,7 +36,7 @@ export function CashflowView({ params, refreshKey }: { params: ViewSpec['params'
       series: [{ type: 'line', data: data.series.map((p) => p.total), symbol: 'none', smooth: 0.2, lineStyle: { width: 2.2, color: t.accent }, areaStyle: { color: t.accent, opacity: 0.12 },
         markLine: { silent: true, symbol: 'none', data: [{ yAxis: 0 }], lineStyle: { color: t.neg, type: 'dashed' }, label: { show: false } } }],
     };
-  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
   if (err) return <p className="muted" style={{ margin: 0 }}>無法計算：{err}</p>;
   if (!data) return <div className="skeleton" style={{ height: 140 }} />;
   if (!data.accounts.length) return <p className="muted" style={{ margin: 0 }}>還沒有現金、銀行或電子支付帳戶，先到「帳戶」新增才能預測。</p>;

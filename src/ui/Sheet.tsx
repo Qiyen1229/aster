@@ -7,6 +7,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { lockBodyScroll } from '@/app/viewport';
 import { Icon } from './Icon';
 
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
@@ -71,10 +72,23 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
   const [depth, setDepth] = useState(0);
 
   useEffect(() => {
-    if (open) { setMounted(true); setClosing(false); }
-    else if (mounted) {
+    if (open) {
+      setMounted(true);
+      setClosing(false);
+      if (sheetRef.current) {
+        sheetRef.current.style.transform = '';
+        sheetRef.current.style.transition = '';
+        sheetRef.current.style.animation = '';
+        sheetRef.current.style.removeProperty('--sink-y');
+      }
+      if (backdropRef.current) {
+        backdropRef.current.style.opacity = '';
+        backdropRef.current.style.transition = '';
+        backdropRef.current.style.animation = '';
+      }
+    } else if (mounted) {
       setClosing(true);
-      const t = setTimeout(() => { setMounted(false); setClosing(false); }, 200);
+      const t = setTimeout(() => { setMounted(false); setClosing(false); }, 230);
       return () => clearTimeout(t);
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -95,9 +109,14 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
     idRef.current = id;
     stack.push(id);
     setDepth(stack.length);
-    const prevOverflow = document.body.style.overflow;
+    const unlockScroll = lockBodyScroll();
     const prevFocus = document.activeElement as HTMLElement | null;
-    document.body.style.overflow = 'hidden';
+    const clearAnimTimer = window.setTimeout(() => {
+      if (sheetRef.current && !closing) {
+        sheetRef.current.style.animation = 'none';
+        sheetRef.current.style.willChange = 'auto';
+      }
+    }, 450);
     const onKey = (e: KeyboardEvent) => {
       if (stack[stack.length - 1] !== id) return;
       if (e.key === 'Escape') requestClose();
@@ -117,9 +136,10 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
     }, 50);
     return () => {
       window.clearTimeout(focusTimer);
+      window.clearTimeout(clearAnimTimer);
       const i = stack.indexOf(id);
       if (i >= 0) stack.splice(i, 1);
-      document.body.style.overflow = stack.length ? 'hidden' : prevOverflow;
+      unlockScroll();
       window.removeEventListener('keydown', onKey);
       const isCoarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
       const wasInput = prevFocus instanceof HTMLInputElement || prevFocus instanceof HTMLTextAreaElement || prevFocus instanceof HTMLSelectElement;
@@ -198,6 +218,7 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
       if (shouldClose && !confirmClose) {
         // 關閉動畫從目前位置接著往下滑出（keyframe 只有 to，起點取當下的 transform）；動畫在套上退出 class 時才還給樣式表
         el.style.transition = 'none';
+        el.style.setProperty('--sink-y', '100%');
         requestCloseRef.current();
         return;
       }
@@ -236,6 +257,12 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
     if (!drag.current || !sheetRef.current) return;
     const { dy } = drag.current;
     drag.current = null;
+    if (dy > 110 && !confirmClose) {
+      sheetRef.current.style.transition = 'none';
+      sheetRef.current.style.setProperty('--sink-y', '100%');
+      requestClose();
+      return;
+    }
     sheetRef.current.style.transition = 'transform 280ms var(--ease)';
     sheetRef.current.style.transform = '';
     if (dy > 110) requestClose();

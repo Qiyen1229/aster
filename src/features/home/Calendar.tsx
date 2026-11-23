@@ -8,6 +8,7 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { addDays, fromDateKey, monthGrid, todayKey, weekRange, type CalendarCell } from '@/domain/period';
 import type { Totals } from '@/domain/ledger';
+import { currencyInfo } from '@/domain/money';
 import type { DayPnlResult, MonthPnlSummary } from '@/domain/invest/pnlCalendar';
 import { formatPnlCompact, formatPnlPct } from '@/domain/invest/pnlCalendar';
 import { haptic } from '@/services/haptics';
@@ -528,7 +529,7 @@ export function Calendar({
                 });
                 return (
                   <span key={c.currency} className={`cal-pnl-glance-badge ${tone}`}>
-                    <span className="cal-pnl-glance-cur">{c.currency === 'TWD' ? 'NT$' : 'US$'}</span>
+                    <span className="cal-pnl-glance-cur">{c.currency === 'TWD' ? 'NT$' : currencyInfo(c.currency).symbol}</span>
                     <span className="cal-pnl-glance-val">{`${sign}${val}`}</span>
                   </span>
                 );

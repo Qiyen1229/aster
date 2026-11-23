@@ -133,7 +133,7 @@ export async function reserveInboxSource(sourceId: string | undefined, shape: st
 
 export async function commitManualEntry(sourceId: string | undefined, save: () => Promise<void>, shape = ['transactions']): Promise<boolean> {
   if (sourceId && !await db.meta.get(`booked:${sourceId}`)) await reserveInboxSource(sourceId, shape);
-  return db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.attachments, db.debts, db.people, db.durables, db.rules, db.meta, db.settings, db.exchange_rates, db.categories, db.stock_trades], async () => {
+  return db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.attachments, db.debts, db.people, db.durables, db.rules, db.meta, db.settings, db.exchange_rates, db.categories, db.stock_trades, db.wishes], async () => {
     const key = sourceId ? `booked:${sourceId}` : undefined;
     const rowId = sourceId ? `${sourceId}-0` : undefined;
     if (key && (await db.meta.get(key) || await db.transactions.get(rowId!) || await db.transfers.get(rowId!) || await db.debts.get(rowId!))) return false;

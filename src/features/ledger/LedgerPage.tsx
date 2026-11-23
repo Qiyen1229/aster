@@ -146,9 +146,9 @@ export default function LedgerPage() {
 
       {unit === 'custom' ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '12px 0' }}>
-          <input type="date" className="input" value={custom.start} max={custom.end} onChange={(e) => setCustom((c) => ({ ...c, start: e.target.value }))} aria-label="開始日期" />
+          <input type="date" className="input" style={{ flex: 1, minWidth: 0 }} value={custom.start} max={custom.end} onChange={(e) => setCustom((c) => ({ ...c, start: e.target.value }))} aria-label="開始日期" />
           <span className="muted">–</span>
-          <input type="date" className="input" value={custom.end} min={custom.start} onChange={(e) => setCustom((c) => ({ ...c, end: e.target.value }))} aria-label="結束日期" />
+          <input type="date" className="input" style={{ flex: 1, minWidth: 0 }} value={custom.end} min={custom.start} onChange={(e) => setCustom((c) => ({ ...c, end: e.target.value }))} aria-label="結束日期" />
         </div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '10px 0' }}>

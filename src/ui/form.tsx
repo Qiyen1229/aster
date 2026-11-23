@@ -51,8 +51,11 @@ export function DateField({ label, value, onChange, min, max, type = 'date' }: {
   return (
     <div className="field" onClick={(e) => {
       if (e.target === inputRef.current) return;
-      try { inputRef.current?.showPicker?.(); } catch { /* ignore */ }
-      inputRef.current?.focus();
+      if (e.target instanceof HTMLElement && e.target.closest('label')) return;
+      const el = inputRef.current;
+      if (!el) return;
+      try { el.showPicker?.(); } catch { /* ignore */ }
+      el.focus();
     }}>
       <label htmlFor={id}>{label}</label>
       <input ref={inputRef} id={id} type={type} value={value} min={min} max={max} onChange={(e) => onChange(e.target.value)} />

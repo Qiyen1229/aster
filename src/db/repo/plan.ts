@@ -128,11 +128,15 @@ export async function saveProject(input: Omit<Project, 'id' | 'createdAt' | 'upd
   return row.id;
 }
 
-/** 刪除專案：帳目保留，只移除專案關聯 */
+/** 刪除專案：帳目與設定保留，只移除專案關聯 */
 export async function deleteProject(id: string) {
-  await db.transaction('rw', db.projects, db.transactions, db.transfers, async () => {
-    await db.transactions.where('projectId').equals(id).modify((t) => { delete t.projectId; });
-    await db.transfers.filter((t) => t.projectId === id).modify((t) => { delete t.projectId; });
+  await db.transaction('rw', [db.projects, db.transactions, db.transfers, db.budgets, db.recurring_rules, db.templates], async () => {
+    const t = now();
+    await db.transactions.where('projectId').equals(id).modify((row) => { delete row.projectId; row.updatedAt = t; });
+    await db.transfers.filter((row) => row.projectId === id).modify((row) => { delete row.projectId; row.updatedAt = t; });
+    await db.budgets.filter((row) => row.projectId === id).modify((row) => { row.projectId = ''; row.updatedAt = t; });
+    await db.recurring_rules.filter((row) => row.template.projectId === id).modify((row) => { delete row.template.projectId; row.updatedAt = t; });
+    await db.templates.filter((row) => row.payload.projectId === id).modify((row) => { delete row.payload.projectId; row.updatedAt = t; });
     await db.projects.delete(id);
   });
 }
@@ -313,9 +317,29 @@ export async function processInstallments(today = todayKey(), installmentId?: st
   return created;
 }
 
-/** 刪除分期：已入帳的帳目保留，未到期的期數取消 */
+/** 刪除分期：已入帳的帳目保留（清除分期關聯），未到期的期數取消 */
 export async function deleteInstallment(id: string) {
-  await db.installments.delete(id);
+  await db.transaction('rw', [db.installments, db.transactions], async () => {
+    const t = now();
+    await db.transactions.where('installmentId').equals(id).modify((row) => {
+      delete row.installmentId;
+      delete row.installmentNo;
+      row.updatedAt = t;
+    });
+    await db.installments.delete(id);
+  });
+}
+
+/** 刪除週期規則：已入帳的帳目保留（清除週期關聯） */
+export async function deleteRecurringRule(id: string) {
+  await db.transaction('rw', [db.recurring_rules, db.transactions], async () => {
+    const t = now();
+    await db.transactions.where('recurringRuleId').equals(id).modify((row) => {
+      delete row.recurringRuleId;
+      row.updatedAt = t;
+    });
+    await db.recurring_rules.delete(id);
+  });
 }
 
 // ───────────── 分帳／代墊 ─────────────
@@ -384,11 +408,13 @@ export async function addLoan(input: LoanInput): Promise<{ debtId: string; txId?
 
 /** 復原 addLoan：刪除欠款與帳目 */
 export async function removeLoan(debtId: string) {
-  const d = await db.debts.get(debtId);
-  if (!d) return;
-  if (d.settleTransferId) await deleteTransactions([d.settleTransferId]);
-  if (d.loanTxId) await deleteTransactions([d.loanTxId]);
-  await db.debts.delete(debtId);
+  await db.transaction('rw', [db.debts, db.transactions, db.transfers, db.accounts, db.durables, db.stock_trades], async () => {
+    const d = await db.debts.get(debtId);
+    if (!d) return;
+    if (d.settleTransferId) await deleteTransactions([d.settleTransferId]);
+    if (d.loanTxId) await deleteTransactions([d.loanTxId]);
+    await db.debts.delete(debtId);
+  });
 }
 
 /**
@@ -402,54 +428,67 @@ export async function settleDebt(
   accountId?: string,
   opts?: { date?: string; ts?: number; note?: string; amountMinor?: number },
 ): Promise<string> {
-  const d = await db.debts.get(id);
-  if (!d || d.settled) return id;
-  const settleMinor = opts?.amountMinor !== undefined && opts.amountMinor > 0 && opts.amountMinor < d.amountMinor
-    ? opts.amountMinor
-    : d.amountMinor;
-  const isPartial = settleMinor < d.amountMinor;
-  let txId: string | undefined;
-  if (accountId) {
-    const person = await db.people.get(d.personId);
-    const theyPay = d.direction === 'they_owe_me';
-    const loan = !!d.loanTxId;
-    const tx = await addTransaction({
-      type: theyPay ? 'income' : 'expense',
-      accountId,
-      categoryId: loan ? (theyPay ? 'sys-debt-in' : 'sys-debt-out') : theyPay ? 'inc-refund' : d.categoryId || 'exp-other_exp',
-      amountMinor: settleMinor, currency: d.currency, date: opts?.date ?? todayKey(), ts: opts?.ts ?? Date.now(),
-      note: opts?.note?.trim() || `${theyPay ? '收回' : '還給'} ${person?.name ?? ''}${d.note ? `：${d.note}` : ''}`,
-      excludeFromStats: theyPay || loan,
-      excludeFromBudget: loan || undefined,
-    });
-    txId = tx.id;
-  }
-  const t = now();
-  if (isPartial) {
-    const paidId = uid();
-    await db.debts.add({
-      ...d,
-      id: paidId,
-      amountMinor: settleMinor,
-      settled: 1,
-      settledAt: t,
-      settleTransferId: txId,
-      createdAt: t,
-      updatedAt: t,
-    });
-    await db.debts.update(id, { amountMinor: d.amountMinor - settleMinor, updatedAt: t });
-    return paidId;
-  }
-  await db.debts.update(id, { settled: 1, settledAt: t, settleTransferId: txId, updatedAt: t });
-  return id;
+  return db.transaction('rw', [db.debts, db.people, db.transactions, db.accounts, db.attachments, db.settings, db.exchange_rates], async () => {
+    const d = await db.debts.get(id);
+    if (!d || d.settled) return id;
+    const settleMinor = opts?.amountMinor !== undefined && opts.amountMinor > 0 && opts.amountMinor < d.amountMinor
+      ? opts.amountMinor
+      : d.amountMinor;
+    const isPartial = settleMinor < d.amountMinor;
+    let txId: string | undefined;
+    if (accountId) {
+      const person = await db.people.get(d.personId);
+      const theyPay = d.direction === 'they_owe_me';
+      const loan = !!d.loanTxId;
+      const tx = await addTransaction({
+        type: theyPay ? 'income' : 'expense',
+        accountId,
+        categoryId: loan ? (theyPay ? 'sys-debt-in' : 'sys-debt-out') : theyPay ? 'inc-refund' : d.categoryId || 'exp-other_exp',
+        amountMinor: settleMinor, currency: d.currency, date: opts?.date ?? todayKey(), ts: opts?.ts ?? Date.now(),
+        note: opts?.note?.trim() || `${theyPay ? '收回' : '還給'} ${person?.name ?? ''}${d.note ? `：${d.note}` : ''}`,
+        excludeFromStats: theyPay || loan,
+        excludeFromBudget: loan || undefined,
+      });
+      txId = tx.id;
+    }
+    const t = now();
+    if (isPartial) {
+      const paidId = uid();
+      await db.debts.add({
+        ...d,
+        id: paidId,
+        amountMinor: settleMinor,
+        settled: 1,
+        settledAt: t,
+        settleTransferId: txId,
+        createdAt: t,
+        updatedAt: t,
+      });
+      await db.debts.update(id, { amountMinor: d.amountMinor - settleMinor, updatedAt: t });
+      if (d.transactionId) {
+        const parent = await db.transactions.get(d.transactionId);
+        if (parent?.split && !parent.split.debtIds.includes(paidId)) {
+          await db.transactions.update(parent.id, {
+            split: { ...parent.split, debtIds: [...parent.split.debtIds, paidId] },
+            updatedAt: t,
+          });
+        }
+      }
+      return paidId;
+    }
+    await db.debts.update(id, { settled: 1, settledAt: t, settleTransferId: txId, updatedAt: t });
+    return id;
+  });
 }
 
 /** 取消結清：若結清時有入帳，一併刪除（軟刪除）該筆帳目，帳戶餘額回復，避免再次結清時重複入帳 */
 export async function unsettleDebt(id: string) {
-  const d = await db.debts.get(id);
-  if (!d) return;
-  if (d.settleTransferId) await deleteTransactions([d.settleTransferId]);
-  await db.debts.update(id, { settled: 0, settledAt: undefined, settleTransferId: undefined, updatedAt: now() });
+  await db.transaction('rw', [db.debts, db.transactions, db.transfers, db.accounts, db.durables, db.stock_trades], async () => {
+    const d = await db.debts.get(id);
+    if (!d) return;
+    if (d.settleTransferId) await deleteTransactions([d.settleTransferId]);
+    await db.debts.update(id, { settled: 0, settledAt: undefined, settleTransferId: undefined, updatedAt: now() });
+  });
 }
 
 // ───────────── 存錢目標 ─────────────

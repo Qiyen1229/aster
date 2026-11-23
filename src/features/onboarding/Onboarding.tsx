@@ -12,6 +12,7 @@ import type { AccountType } from '@/db/types';
 import { CURRENCIES, toMinor } from '@/domain/money';
 import { evaluate } from '@/domain/calc-expr';
 import { useSettings } from '@/stores/settings';
+import { useUI } from '@/stores/ui';
 import { Icon } from '@/ui/Icon';
 import { Segmented } from '@/ui/controls';
 import { ShowcaseCarousel } from './ShowcaseCarousel';
@@ -24,7 +25,7 @@ export default function Onboarding() {
   const isReplay = s.onboarded || params.get('replay') === '1';
   const wasOnboarded = useRef(isReplay);
   const [step, setStep] = useState(0);
-  const [accName, setAccName] = useState('錢包');
+  const [accName, setAccName] = useState(isReplay ? '' : '錢包');
   const [accType, setAccType] = useState<AccountType>('cash');
   const [balance, setBalance] = useState('');
   const [busy, setBusy] = useState(false);
@@ -58,6 +59,8 @@ export default function Onboarding() {
         await saveSetting('gestureTourDone', false);
       }
       navigate('/', { replace: true });
+    } catch (e) {
+      useUI.getState().showSnack({ text: `設定失敗：${(e as Error).message}` });
     } finally {
       finishing.current = false;
       setBusy(false);

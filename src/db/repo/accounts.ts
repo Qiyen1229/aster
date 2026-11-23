@@ -66,6 +66,7 @@ export async function deleteOrArchiveAccount(id: string): Promise<'deleted' | 'a
     (await db.rules.filter((r) => r.accountId === id).count()) +
     (await db.stock_trades.filter((t) => t.accountId === id || t.cashAccountId === id).count()) +
     (await db.dividends.where('accountId').equals(id).count()) +
+    (await db.templates.filter((t) => t.payload.accountId === id).count()) +
     (await db.accounts.filter((a) => a.id !== id && (a.brokerage?.settlementAccountId === id || a.credit?.autoPayAccountId === id || a.loan?.payFromAccountId === id)).count());
   if (used > 0) {
     await db.accounts.update(id, { archived: 1, updatedAt: Date.now() });
@@ -83,26 +84,26 @@ export async function reorderAccounts(idsInOrder: string[]): Promise<void> {
 
 /** 由帳目全量重算餘額（資料健康檢查用），回傳有差異的帳戶 */
 export async function recomputeBalances(apply = true): Promise<{ id: string; name: string; cached: number; actual: number }[]> {
-  const accounts = await db.accounts.toArray();
-  const sums = new Map<string, number>(accounts.map((a) => [a.id, a.initialBalanceMinor]));
-  await db.transactions.each((t) => {
-    if (t.deletedAt) return;
-    sums.set(t.accountId, (sums.get(t.accountId) ?? 0) + txEffect(t));
-  });
-  await db.transfers.each((tr) => {
-    if (tr.deletedAt) return;
-    sums.set(tr.fromAccountId, (sums.get(tr.fromAccountId) ?? 0) - tr.fromAmountMinor);
-    sums.set(tr.toAccountId, (sums.get(tr.toAccountId) ?? 0) + tr.toAmountMinor);
-  });
-  const diffs = accounts
-    .filter((a) => sums.get(a.id) !== a.balanceMinor)
-    .map((a) => ({ id: a.id, name: a.name, cached: a.balanceMinor, actual: sums.get(a.id)! }));
-  if (apply && diffs.length) {
-    await db.transaction('rw', db.accounts, async () => {
-      for (const d of diffs) await db.accounts.update(d.id, { balanceMinor: d.actual });
+  return db.transaction(apply ? 'rw' : 'r', [db.accounts, db.transactions, db.transfers], async () => {
+    const accounts = await db.accounts.toArray();
+    const sums = new Map<string, number>(accounts.map((a) => [a.id, a.initialBalanceMinor]));
+    await db.transactions.each((t) => {
+      if (t.deletedAt) return;
+      sums.set(t.accountId, (sums.get(t.accountId) ?? 0) + txEffect(t));
     });
-  }
-  return diffs;
+    await db.transfers.each((tr) => {
+      if (tr.deletedAt) return;
+      sums.set(tr.fromAccountId, (sums.get(tr.fromAccountId) ?? 0) - tr.fromAmountMinor);
+      sums.set(tr.toAccountId, (sums.get(tr.toAccountId) ?? 0) + tr.toAmountMinor);
+    });
+    const diffs = accounts
+      .filter((a) => sums.get(a.id) !== a.balanceMinor)
+      .map((a) => ({ id: a.id, name: a.name, cached: a.balanceMinor, actual: sums.get(a.id)! }));
+    if (apply && diffs.length) {
+      for (const d of diffs) await db.accounts.update(d.id, { balanceMinor: d.actual });
+    }
+    return diffs;
+  });
 }
 
 /** 信用卡本期應繳：上一個結帳日（含）之前的帳單週期內的淨消費 */
@@ -132,26 +133,28 @@ export async function installmentReserved(accountId: string): Promise<number> {
 export async function recordLoanPayment(loanAccountId: string, fromAccountId: string, date: string, paymentMinor: number): Promise<{ principalMinor: number; interestMinor: number }> {
   const { splitPayment } = await import('@/domain/loan');
   const { addTransfer, addTransaction } = await import('./ledger');
-  const loan = await db.accounts.get(loanAccountId);
-  if (!loan?.loan) throw new Error('不是貸款帳戶');
-  const from = await db.accounts.get(fromAccountId);
-  if (!from) throw new Error('請選擇扣款帳戶');
-  if (from.currency !== loan.currency) throw new Error('扣款帳戶與貸款幣別不同');
-  const part = splitPayment(loan.balanceMinor, loan.loan.aprDec, paymentMinor);
-  const ts = new Date(`${date}T09:00:00`).getTime();
-  if (part.principalMinor > 0) {
-    await addTransfer({ fromAccountId, toAccountId: loanAccountId, fromAmountMinor: part.principalMinor, toAmountMinor: part.principalMinor, feeMinor: 0, date, ts, note: `${loan.name} 還本` });
-  }
-  if (part.interestMinor > 0) {
-    // 房貸利息記在內建的「居住 › 房貸」，其他貸款記在「貸款利息」（第一次使用時建立）
-    const mortgage = loan.loan.kind === 'mortgage' ? await db.categories.get('exp-housing-mortgage') : undefined;
-    let cat = mortgage && !mortgage.archived ? mortgage : await db.categories.get('exp-loan_interest');
-    if (!cat) {
-      const now = Date.now();
-      cat = { id: 'exp-loan_interest', kind: 'expense', parentId: '', name: '貸款利息', icon: '🏦', color: '#64D2FF', sort: 90, archived: 0, createdAt: now, updatedAt: now };
-      await db.categories.put(cat);
+  return db.transaction('rw', [db.accounts, db.categories, db.transactions, db.transfers, db.attachments, db.settings, db.exchange_rates], async () => {
+    const loan = await db.accounts.get(loanAccountId);
+    if (!loan?.loan) throw new Error('不是貸款帳戶');
+    const from = await db.accounts.get(fromAccountId);
+    if (!from) throw new Error('請選擇扣款帳戶');
+    if (from.currency !== loan.currency) throw new Error('扣款帳戶與貸款幣別不同');
+    const part = splitPayment(loan.balanceMinor, loan.loan.aprDec, paymentMinor);
+    const ts = new Date(`${date}T09:00:00`).getTime();
+    if (part.principalMinor > 0) {
+      await addTransfer({ fromAccountId, toAccountId: loanAccountId, fromAmountMinor: part.principalMinor, toAmountMinor: part.principalMinor, feeMinor: 0, date, ts, note: `${loan.name} 還本` });
     }
-    await addTransaction({ type: 'expense', accountId: fromAccountId, categoryId: cat.id, amountMinor: part.interestMinor, currency: from.currency, date, ts, note: `${loan.name} 利息` });
-  }
-  return part;
+    if (part.interestMinor > 0) {
+      // 房貸利息記在內建的「居住 › 房貸」，其他貸款記在「貸款利息」（第一次使用時建立）
+      const mortgage = loan.loan.kind === 'mortgage' ? await db.categories.get('exp-housing-mortgage') : undefined;
+      let cat = mortgage && !mortgage.archived ? mortgage : await db.categories.get('exp-loan_interest');
+      if (!cat) {
+        const now = Date.now();
+        cat = { id: 'exp-loan_interest', kind: 'expense', parentId: '', name: '貸款利息', icon: '🏦', color: '#64D2FF', sort: 90, archived: 0, createdAt: now, updatedAt: now };
+        await db.categories.put(cat);
+      }
+      await addTransaction({ type: 'expense', accountId: fromAccountId, categoryId: cat.id, amountMinor: part.interestMinor, currency: from.currency, date, ts, note: `${loan.name} 利息` });
+    }
+    return part;
+  });
 }

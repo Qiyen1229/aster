@@ -7,6 +7,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { computeBudgets } from '@/db/repo/plan';
 import { listStatTxs } from '@/db/repo/ledger';
 import { totals } from '@/domain/ledger';
+import { currencyInfo } from '@/domain/money';
 import { eachDay, accountingMonth, todayKey } from '@/domain/period';
 import type { MonthPnlSummary } from '@/domain/invest/pnlCalendar';
 import { useSettings } from '@/stores/settings';
@@ -66,7 +67,7 @@ export function HomeHero({ selected, mode = 'ledger', pnlSummary }: Props) {
                 });
                 return (
                   <span key={c.currency} className={`hero-pnl-badge ${tone}`}>
-                    {c.currency === 'TWD' ? 'NT$' : 'US$'}&nbsp;{`${sign}${val}`}
+                    {c.currency === 'TWD' ? 'NT$' : currencyInfo(c.currency).symbol}&nbsp;{`${sign}${val}`}
                   </span>
                 );
               })}

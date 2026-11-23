@@ -37,8 +37,7 @@ export default function WishlistSection() {
   const done = (wishes ?? []).filter((w) => w.status !== 'waiting' && !pendingIds.has(w.id)).sort((a, b) => (b.decidedAt ?? 0) - (a.decidedAt ?? 0));
 
   const buy = (w: Wish) => {
-    void decideWish(w.id, 'bought');
-    openAdd({ mode: 'expense', amount: fromMinor(w.priceMinor, w.currency).toString(), note: w.name, categoryId: w.categoryId });
+    openAdd({ mode: 'expense', amount: fromMinor(w.priceMinor, w.currency).toString(), note: w.name, categoryId: w.categoryId, wishId: w.id });
   };
   const abandon = (w: Wish) => {
     void decideWish(w.id, 'abandoned').then(() => snackUndo(`冷靜期幫你省下 ${fromMinor(w.priceMinor, w.currency).toString()} 元 🎉`, async () => { await db.wishes.update(w.id, { status: 'waiting', decidedAt: undefined }); }));

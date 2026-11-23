@@ -330,7 +330,10 @@ function EntriesBubble({ m }: { m: Extract<Msg, { kind: 'entries' }> }) {
       snackUndo(ruleIds.length ? (now.length ? `已記下 ${now.length} 筆、排程 ${ruleIds.length} 筆` : `已排程 ${ruleIds.length} 筆，到時候通知你`) : `已記下 ${chosen.length} 筆`, async () => {
         if (r.txIds.length) await deleteTransactions(r.txIds);
         if (r.transferIds.length) await deleteTransfers(r.transferIds);
-        if (ruleIds.length) await db.recurring_rules.bulkDelete(ruleIds);
+        if (ruleIds.length) {
+          const { deleteRecurringRule } = await import('@/db/repo/plan');
+          for (const id of ruleIds) await deleteRecurringRule(id);
+        }
         useChat.getState().patch(m.id, { booked: false, scheduled: false } as Partial<Msg>);
       });
     } catch (e) { useUI.getState().showSnack({ text: (e as Error).message }); } finally { setBusy(false); }
@@ -430,6 +433,7 @@ export function ChatPanel({ onLeave, autoFocus }: { onLeave?: () => void; autoFo
   const [ops, setOps] = useState<AgentOpLog[]>([]);
   const [listening, setListening] = useState(false);
   const end = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const aiOn = useSettings((s) => !!s.ai?.enabled);
@@ -439,7 +443,20 @@ export function ChatPanel({ onLeave, autoFocus }: { onLeave?: () => void; autoFo
   const pendingText = useChat((s) => s.pending);
   const chatBusy = useChat((s) => s.busy);
   const recRef = useRef<any>(null);
-  useEffect(() => { if (open) end.current?.scrollIntoView({ block: 'end' }); }, [open, msgs]);
+  const isCoarse = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+  const scrollListBottom = () => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  };
+  useEffect(() => { if (open) scrollListBottom(); }, [open, msgs]);
+  useEffect(() => {
+    if (!open) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const onVv = () => scrollListBottom();
+    vv.addEventListener('resize', onVv);
+    return () => vv.removeEventListener('resize', onVv);
+  }, [open]);
   useEffect(() => {
     return () => {
       const r = recRef.current;
@@ -492,7 +509,7 @@ export function ChatPanel({ onLeave, autoFocus }: { onLeave?: () => void; autoFo
 
   return (
     <div className="chat-wrap">
-      <div className="chat-list" role="log" aria-live="polite">
+      <div ref={listRef} className="chat-list" role="log" aria-live="polite">
         {!msgs.length && (
           <div style={{ margin: 8 }}>
             {chips.length > 0 && <div className="ask-examples" style={{ marginBottom: 6 }}>{chips.slice(0, 3).map((c) => <button key={c.label} className="pill ctx-chip" disabled={busy} onClick={() => pickChip(c)}>{c.label}</button>)}</div>}
@@ -544,8 +561,8 @@ export function ChatPanel({ onLeave, autoFocus }: { onLeave?: () => void; autoFo
         <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { const fs = [...(e.target.files ?? [])]; if (fileRef.current) fileRef.current.value = ''; if (fs.length) void sendImages(fs); }} />
         <button className="icon-btn plain" type="button" aria-label="拍照或選擇收據照片（可一次選多張）" disabled={busy} onClick={() => fileRef.current?.click()}><Icon name="camera" size={20} /></button>
         {SpeechCtor && <button className="icon-btn plain" type="button" aria-label="語音輸入" aria-pressed={listening} disabled={busy} onClick={listen}
-          style={listening ? { background: 'var(--danger)', color: '#fff' } : undefined}><Icon name="mic" size={20} /></button>}
-        <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} maxLength={300} enterKeyHint="send" aria-label="輸入訊息" placeholder="記帳、查帳、問或整理帳本" autoFocus={autoFocus} />
+          style={listening ? { background: 'var(--danger)', color: 'var(--on-danger, #fff)' } : undefined}><Icon name="mic" size={20} /></button>}
+        <input ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} maxLength={300} enterKeyHint="send" aria-label="輸入訊息" placeholder="記帳、查帳、問或整理帳本" autoFocus={autoFocus && !isCoarse} />
         <button className="btn small" type="submit" disabled={busy || !q.trim()}>送出</button>
       </form>
     </div>

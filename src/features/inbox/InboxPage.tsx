@@ -252,7 +252,9 @@ export default function InboxPage() {
                             <button className="pill accent-pill" onClick={() => void merge(e)}>合併（不重複記）</button>
                             <button className="pill" disabled={busy} onClick={() => void book([e])}>仍要記帳</button>
                             <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
+                            <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
                             <button className="pill" onClick={() => edit(e)}>編輯</button>
+                            <button className="pill" onClick={() => void skip(e)}>略過</button>
                           </>
                         ) : (
                           <>

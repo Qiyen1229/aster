@@ -8,7 +8,7 @@ import { api, ApiError } from '@/services/api';
 import { useAuth } from '@/stores/auth';
 import { useUI, ask, askInput } from '@/stores/ui';
 import { EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
-import { SwitchField } from '@/ui/form';
+import { DateField, SwitchField } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { exportErrorLogsToFile } from '@/services/errorLog';
@@ -486,8 +486,8 @@ function Audit() {
             <option value="all">全部</option><option value="ok">成功</option><option value="fail">失敗</option>
           </select>
         </div>
-        <div className="field"><span className="label">開始日期</span><input type="date" value={from} max={to || undefined} onChange={(e) => { setFrom(e.target.value); reset(); }} /></div>
-        <div className="field"><span className="label">結束日期</span><input type="date" value={to} min={from || undefined} onChange={(e) => { setTo(e.target.value); reset(); }} /></div>
+        <DateField label="開始日期" value={from} max={to || undefined} onChange={(v) => { setFrom(v); reset(); }} />
+        <DateField label="結束日期" value={to} min={from || undefined} onChange={(v) => { setTo(v); reset(); }} />
       </div>
       {error ? <EmptyState emoji="⚠️" title="無法載入" text={error} /> : !data && !items.length ? <SkeletonRows /> : items.length === 0 ? <EmptyState emoji="📜" title="沒有符合的紀錄" /> : (
         <>

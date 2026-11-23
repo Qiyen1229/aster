@@ -12,7 +12,7 @@ import type { FireSettings } from '@/db/repo/settings';
 import { useSettings } from '@/stores/settings';
 import { EmptyState, SkeletonRows } from '@/ui/controls';
 import { Icon } from '@/ui/Icon';
-import { chartTheme } from './chart-theme';
+import { chartTheme, useChartTheme } from './chart-theme';
 
 const EChart = lazy(() => import('./EChart'));
 
@@ -65,7 +65,9 @@ export default function FirePage() {
 
   const money = (v: number) => formatMoney(toMinor(Math.round(v), base), base, { decimals: 0 });
   const pAt = (a: number) => (result ? result.fiProbability[Math.max(0, Math.min(result.ages.length - 1, a - age))] : 0);
+  const themeKey = useChartTheme();
   const option = useMemo(() => {
+    void themeKey;
     if (!result) return null;
     const t = chartTheme();
     const step = Math.max(1, Math.round(result.ages.length / 12));
@@ -82,7 +84,7 @@ export default function FirePage() {
         { name: '自由門檻', type: 'line', data: result.target, symbol: 'none', lineStyle: { type: 'dashed', color: t.text2 } },
       ],
     };
-  }, [result]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [result, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <main className="page">

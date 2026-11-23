@@ -354,9 +354,9 @@ export default function App() {
       <ScreenContextHost />
       <ActionSheetHost />
       <SnackbarHost />
-      <UpdatePrompt />
       <WhatsNewHost />
       </>)}
+      <UpdatePrompt locked={locked} />
       <PrivacyShield />
       <LockScreen />
     </div>

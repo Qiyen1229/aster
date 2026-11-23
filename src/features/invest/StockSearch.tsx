@@ -21,7 +21,7 @@ export function StockSearch({ onPick, autoFocus = defaultAutoFocus }: { onPick: 
 
   useEffect(() => {
     let alive = true;
-    if (!dq.trim()) { setResults([]); return; }
+    if (!dq.trim()) { setResults([]); setLoading(false); return; }
     setLoading(true);
     const t = setTimeout(() => {
       searchStocks(dq).then((r) => { if (alive) setResults(r); }).catch(() => undefined).finally(() => alive && setLoading(false));

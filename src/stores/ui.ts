@@ -31,6 +31,8 @@ export interface AddPrefill {
   inboxId?: string;
   /** 收件匣的卡片名稱：儲存後記住「這張卡 → 這個帳戶」 */
   inboxCard?: string;
+  /** 從心願清單「買了」帶入：實際記帳成功後才標為 bought */
+  wishId?: string;
 }
 
 export interface SnackItem {

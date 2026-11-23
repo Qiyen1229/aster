@@ -79,10 +79,10 @@ export function RuleEditorSheet({ draft, onChange, onClose, onSaved }: {
               options={(Object.keys(RULE_MATCH_LABEL) as RuleDraft['match'][]).map((k) => ({ value: k, label: RULE_MATCH_LABEL[k] }))} />
             <div className="field">
               <span className="label">金額範圍</span>
-              <input inputMode="decimal" placeholder="最低" style={{ width: 84, textAlign: 'right' }} value={draft.minAmount ?? ''}
+              <input inputMode="decimal" placeholder="最低" style={{ width: 84, minWidth: 0, flex: '0 1 84px', textAlign: 'right' }} value={draft.minAmount ?? ''}
                 onChange={(e) => { const n = Number(e.target.value); onChange({ ...draft, minAmount: e.target.value.trim() && Number.isFinite(n) ? n : undefined }); }} />
               <span className="muted">～</span>
-              <input inputMode="decimal" placeholder="最高" style={{ width: 84, textAlign: 'right' }} value={draft.maxAmount ?? ''}
+              <input inputMode="decimal" placeholder="最高" style={{ width: 84, minWidth: 0, flex: '0 1 84px', textAlign: 'right' }} value={draft.maxAmount ?? ''}
                 onChange={(e) => { const n = Number(e.target.value); onChange({ ...draft, maxAmount: e.target.value.trim() && Number.isFinite(n) ? n : undefined }); }} />
             </div>
           </div>

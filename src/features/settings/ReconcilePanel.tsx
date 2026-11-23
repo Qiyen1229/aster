@@ -57,7 +57,7 @@ export function ReconcilePanel({ csvRows, aiEntries, printedTotal, defaultAccoun
   useEffect(reload, [accountId, rows]);  
 
   const report = useMemo(() => (ledger && acc ? reconcile(rows, ledger, acc.currency) : null), [rows, ledger, acc]);
-  useEffect(() => { if (report?.missing.length) void suggestForMissing(report.missing).then(setSug); }, [report?.missing.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (report?.missing.length) void suggestForMissing(report.missing).then(setSug); }, [report?.missing]);
 
   if (!acc || !report) return <p className="muted" style={{ margin: 16 }}>比對中…</p>;
   const cur = acc.currency;
@@ -81,10 +81,15 @@ export function ReconcilePanel({ csvRows, aiEntries, printedTotal, defaultAccoun
 
   const apply = async () => {
     if (busy || nothingToDo) return;
+    const resolvedMissing = missingSel.map((row) => ({ row, categoryId: catPick[row.id] ?? sug.get(row.id) ?? '' }));
+    if (resolvedMissing.some((m) => !m.categoryId)) {
+      useUI.getState().showSnack({ text: '請為勾選的漏記項目選擇分類' });
+      return;
+    }
     setBusy(true);
     try {
       const ids = await applyFixes(acc, {
-        missing: missingSel.map((row) => ({ row, categoryId: catPick[row.id] ?? sug.get(row.id) ?? '' })).filter((m) => m.categoryId),
+        missing: resolvedMissing,
         variances: varSel, adjustTo: adjustTarget,
       });
       setApplied(ids.length); setActual('');

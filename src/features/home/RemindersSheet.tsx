@@ -41,9 +41,9 @@ export function RemindersSheet({ open, onClose }: { open: boolean; onClose: () =
   return (
     <Sheet open={open} onClose={() => { void markAllRead(); onClose(); }} title="提醒"
       right={(
-        <span style={{ display: 'flex', gap: 4 }}>
-          {list.length > 0 && <button className="accent" style={{ minHeight: 44 }} onClick={() => void clearAllReminders()}>清除通知</button>}
-          <button className={`accent recheck ${check.phase}`} style={{ minHeight: 44 }} disabled={check.phase === 'busy'} aria-live="polite" onClick={() => void recheck()}>
+        <span style={{ display: 'flex', gap: 6, flexWrap: 'nowrap' }}>
+          {list.length > 0 && <button className="accent" style={{ minHeight: 44, fontSize: '0.85rem', whiteSpace: 'nowrap' }} onClick={() => void clearAllReminders()}>清除</button>}
+          <button className={`accent recheck ${check.phase}`} style={{ minHeight: 44, fontSize: '0.85rem', whiteSpace: 'nowrap' }} disabled={check.phase === 'busy'} aria-live="polite" onClick={() => void recheck()}>
             {check.phase === 'idle' ? <Icon name="repeat" /> : check.phase === 'busy' ? <Icon name="repeat" className="spin" /> : <Icon name="check" className="recheck-ok" />}
             {check.phase === 'idle' ? '重新檢查' : check.phase === 'busy' ? '檢查中…' : check.found ? `新增 ${check.found} 則` : '沒有新提醒'}
           </button>

@@ -159,7 +159,10 @@ export async function saveDividend(input: DividendInput, id?: string): Promise<s
 async function removeDividendLinks(id: string) {
   const d = await db.dividends.get(id);
   if (!d) return;
-  if (d.transactionId) await deleteTransactions([d.transactionId]);
+  if (d.transactionId) {
+    await deleteTransactions([d.transactionId]);
+    await db.transactions.update(d.transactionId, { dividendId: undefined, updatedAt: now() });
+  }
   if (d.stockTradeId) await db.stock_trades.delete(d.stockTradeId);
 }
 
@@ -206,21 +209,25 @@ export async function checkPriceAlerts(): Promise<{ id: string; title: string; b
     let changed = false;
     const alerts = w.alerts.map((a) => {
       if (!a.enabled) return a;
-      const p = new Decimal(price.priceDec);
-      const hit = a.op === '>=' ? p.gte(a.priceDec) : p.lte(a.priceDec);
-      const was = a.triggered ?? !!a.lastTriggeredAt;
-      if (hit && !was) {
-        changed = true;
-        const at = Date.now();
-        hits.push({
-          id: `price:${w.id}:${a.op}:${a.priceDec}:${at}`,
-          title: `${stock.name} ${a.op === '>=' ? '站上' : '跌破'} ${a.priceDec}`,
-          body: `現價 ${price.priceDec}（${Number(price.changePctDec) >= 0 ? '+' : ''}${Number(price.changePctDec).toFixed(2)}%）`,
-          url: `/invest/stock/${stock.id}`,
-        });
-        return { ...a, triggered: true, lastTriggeredAt: at };
+      try {
+        const p = new Decimal(price.priceDec);
+        const hit = a.op === '>=' ? p.gte(a.priceDec) : p.lte(a.priceDec);
+        const was = a.triggered ?? !!a.lastTriggeredAt;
+        if (hit && !was) {
+          changed = true;
+          const at = Date.now();
+          hits.push({
+            id: `price:${w.id}:${a.op}:${a.priceDec}:${at}`,
+            title: `${stock.name} ${a.op === '>=' ? '站上' : '跌破'} ${a.priceDec}`,
+            body: `現價 ${price.priceDec}（${Number(price.changePctDec) >= 0 ? '+' : ''}${Number(price.changePctDec).toFixed(2)}%）`,
+            url: `/invest/stock/${stock.id}`,
+          });
+          return { ...a, triggered: true, lastTriggeredAt: at };
+        }
+        if (!hit && was) { changed = true; return { ...a, triggered: false }; } // 回到條件之外：重新武裝
+      } catch {
+        return a;
       }
-      if (!hit && was) { changed = true; return { ...a, triggered: false }; } // 回到條件之外：重新武裝
       return a;
     });
     if (changed) await db.watchlist.update(w.id, { alerts, updatedAt: now() });

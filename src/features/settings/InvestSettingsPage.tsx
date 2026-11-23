@@ -6,8 +6,9 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { providerById } from '@/services/quotes/providers';
 import { diagnoseSources, type SourceCheck } from '@/services/quotes/registry';
-import { defaultProxyBase, proxied } from '@/services/quotes/http';
+import { customProxyUrl, defaultProxyBase, proxied } from '@/services/quotes/http';
 import { AUTH_ENABLED, useAuth } from '@/stores/auth';
+import { getAccessToken, isBearerMode } from '@/services/api';
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
 import { EmptyState, Segmented, Switch } from '@/ui/controls';
@@ -64,8 +65,14 @@ export default function InvestSettingsPage() {
   const test = async () => {
     setTesting(true);
     try {
-      const base = (q.proxyUrl || defaultProxyBase()).replace(/\/$/, '');
-      const h = await fetch(`${base}/health`, { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
+      const custom = customProxyUrl(q.proxyUrl);
+      const base = (custom || defaultProxyBase()).replace(/\/$/, '');
+      const healthHeaders: Record<string, string> = q.proxyToken ? { 'x-clure-token': q.proxyToken } : {};
+      if (!custom && isBearerMode()) {
+        const at = getAccessToken();
+        if (at) healthHeaders.Authorization = `Bearer ${at}`;
+      }
+      const h = await fetch(`${base}/health`, { headers: healthHeaders, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
       if (!h.ok) throw new Error(`health HTTP ${h.status}`);
       const { url, headers } = proxied('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
       const r = await fetch(url, { headers, cache: 'no-store', signal: AbortSignal.timeout(15_000) });
@@ -95,7 +102,7 @@ export default function InvestSettingsPage() {
 
       <div className="section-title">CORS 代理</div>
       <div className="list">
-        {text('代理網址', q.proxyUrl, (v) => setQ({ proxyUrl: v }), { placeholder: '/proxy 或 https://xxx.workers.dev' })}
+        {text('代理網址', q.proxyUrl === '/proxy' ? '' : q.proxyUrl, (v) => setQ({ proxyUrl: v === '/proxy' ? '' : v }), { placeholder: '留空使用內建代理（或填 https://xxx.workers.dev）' })}
         {text('代理權杖', q.proxyToken, (v) => setQ({ proxyToken: v }), { placeholder: '未設定可留空', type: 'password' })}
         <button className="row accent" onClick={() => void test()} disabled={testing}>{testing ? '測試中…' : '測試連線'}</button>
       </div>

@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
 import type { RecurrenceRule, RecurringRule } from '@/db/types';
-import { confirmPending, saveRecurring, skipPending } from '@/db/repo/plan';
+import { confirmPending, deleteRecurringRule, saveRecurring, skipPending } from '@/db/repo/plan';
 import { describeRule, timesPerYear } from '@/domain/recurrence';
 import { convertMinor, fromMinor, toMinor } from '@/domain/money';
 import { evaluate } from '@/domain/calc-expr';
@@ -96,7 +96,7 @@ export default function RecurringSection() {
             const soon = r.active && r.nextDue <= todayKey().slice(0, 8) + '31' && r.nextDue >= todayKey();
             return (
               <SwipeRow key={r.id} flat collapse onTap={() => setEdit(r)}
-                onDelete={() => requestDelete(r.id, r.name, () => db.recurring_rules.delete(r.id))}>
+                onDelete={() => requestDelete(r.id, r.name, () => deleteRecurringRule(r.id))}>
                 <div className="row with-icon" style={{ opacity: r.active ? 1 : 0.5 }}>
                   <span className="cat-icon sm" style={{ ['--c' as string]: c?.color }} aria-hidden="true"><CatIcon icon={r.kind === 'subscription' ? 'tv' : c?.icon ?? 'repeat'} size={16} /></span>
                   <div className="row-main">
@@ -250,7 +250,7 @@ function RecurringForm({ rule, subscription, onClose }: { rule?: RecurringRule; 
           <button className="btn secondary" onClick={async () => { await db.recurring_rules.update(rule.id, { active: rule.active ? 0 : 1 }); onClose(); }}>{rule.active ? '停用' : '啟用'}</button>
           <button className="btn danger" onClick={async () => {
             if (!await ask(`刪除「${rule.name}」？已入帳的帳目會保留。`)) return;
-            await db.recurring_rules.delete(rule.id);
+            await deleteRecurringRule(rule.id);
             onClose();
           }}>刪除</button>
         </div>

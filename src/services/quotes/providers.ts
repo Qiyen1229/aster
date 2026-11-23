@@ -206,7 +206,9 @@ const finmind: QuoteProvider = {
     const days = { '1d': 5, '1w': 10, '1m': 35, '3m': 100, '1y': 370, all: 3650 }[range];
     const token = keys().finmind ? `&token=${encodeURIComponent(keys().finmind)}` : '';
     const j = await getJson(`https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPrice&data_id=${r.symbol}&start_date=${ymd(new Date(Date.now() - days * 86400000))}${token}`);
-    return (j.data ?? []).map((x: any) => ({ t: Date.parse(x.date), date: x.date, close: x.close }));
+    return (j.data ?? [])
+      .filter((x: any) => typeof x?.close === 'number' && Number.isFinite(x.close) && typeof x?.date === 'string')
+      .map((x: any) => ({ t: Date.parse(x.date), date: x.date, close: x.close }));
   },
 };
 

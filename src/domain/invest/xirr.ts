@@ -26,8 +26,9 @@ export function xirr(cashflows: CashFlow[], guess = 0.1): number | null {
   const cf = cashflows.filter((c) => c.amount !== 0);
   if (cf.length < 2 || !cf.some((c) => c.amount > 0) || !cf.some((c) => c.amount < 0)) return null;
   const t0 = Math.min(...cf.map((c) => Date.parse(c.date)));
+  if (!Number.isFinite(t0)) return null;
   const flows = cf.map((c) => ({ t: (Date.parse(c.date) - t0) / DAY / 365, a: c.amount }));
-  if (flows.every((f) => f.t === 0)) return null;
+  if (flows.some((f) => !Number.isFinite(f.t)) || flows.every((f) => f.t === 0)) return null;
 
   let r = guess;
   for (let i = 0; i < 100; i++) {

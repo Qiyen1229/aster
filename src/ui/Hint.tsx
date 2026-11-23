@@ -6,6 +6,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { lockBodyScroll } from '@/app/viewport';
 import { Icon } from './Icon';
 
 interface InfoModalProps {
@@ -18,8 +19,7 @@ export function InfoModal({ title, content, onClose }: InfoModalProps) {
   const btnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const unlockScroll = lockBodyScroll();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -29,7 +29,7 @@ export function InfoModal({ title, content, onClose }: InfoModalProps) {
     window.addEventListener('keydown', onKey, true);
     btnRef.current?.focus();
     return () => {
-      document.body.style.overflow = prevOverflow;
+      unlockScroll();
       window.removeEventListener('keydown', onKey, true);
     };
   }, [onClose]);

@@ -64,7 +64,7 @@ export default function DebtSection() {
         {adding && <DebtForm onClose={() => setAdding(false)} />}
       </Sheet>
       <Sheet open={!!person} onClose={() => setPerson(null)} title={person ? pmap.get(person)?.name : ''}>
-        {person && <PersonDebts personId={person} debts={(debts ?? []).filter((d) => d.personId === person)} />}
+        {person && <PersonDebts personId={person} debts={(debts ?? []).filter((d) => !d.deletedAt && d.personId === person)} />}
       </Sheet>
     </>
   );
@@ -150,7 +150,14 @@ function PersonDebts({ personId, debts }: { personId: string; debts: Debt[] }) {
       <button className="btn secondary small" onClick={() => setShowSettled((s) => !s)}>{showSettled ? '隱藏已結清' : '顯示已結清'}</button>
       <button className="btn danger small" style={{ marginLeft: 8 }} onClick={async () => {
         if (!await ask('刪除此人的所有已結清紀錄？')) return;
-        await db.debts.where('personId').equals(personId).filter((d) => !!d.settled).delete();
+        const t = Date.now();
+        await db.transaction('rw', [db.debts], async () => {
+          const settled = await db.debts.where('personId').equals(personId).filter((d) => !!d.settled && !d.deletedAt).toArray();
+          const hardIds = settled.filter((d) => !d.transactionId).map((d) => d.id);
+          const softIds = settled.filter((d) => !!d.transactionId).map((d) => d.id);
+          if (hardIds.length) await db.debts.bulkDelete(hardIds);
+          for (const id of softIds) await db.debts.update(id, { deletedAt: t, updatedAt: t });
+        });
       }}>清除已結清</button>
     </>
   );

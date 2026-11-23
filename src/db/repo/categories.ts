@@ -71,15 +71,26 @@ export async function reorderCategories(idsInOrder: string[]): Promise<void> {
 
 /** 沒被使用才刪除，否則封存（避免歷史帳目失去分類） */
 export async function deleteOrArchiveCategory(id: string): Promise<'deleted' | 'archived'> {
-  const children = await db.categories.where('parentId').equals(id).toArray();
-  const ids = [id, ...children.map((c) => c.id)];
-  const used = await db.transactions.where('categoryId').anyOf(ids).count();
-  if (used > 0) {
-    await db.categories.where('id').anyOf(ids).modify({ archived: 1, updatedAt: Date.now() });
-    return 'archived';
-  }
-  await db.categories.bulkDelete(ids);
-  return 'deleted';
+  return db.transaction('rw', [db.categories, db.transactions, db.budgets, db.rules, db.recurring_rules, db.installments, db.templates, db.wishes, db.debts], async () => {
+    const children = await db.categories.where('parentId').equals(id).toArray();
+    const ids = [id, ...children.map((c) => c.id)];
+    const idSet = new Set(ids);
+    const used =
+      (await db.transactions.where('categoryId').anyOf(ids).count()) +
+      (await db.budgets.filter((b) => idSet.has(b.categoryId)).count()) +
+      (await db.rules.filter((r) => idSet.has(r.categoryId)).count()) +
+      (await db.recurring_rules.filter((r) => !!r.template.categoryId && idSet.has(r.template.categoryId)).count()) +
+      (await db.installments.filter((i) => idSet.has(i.categoryId)).count()) +
+      (await db.templates.filter((t) => !!t.payload.categoryId && idSet.has(t.payload.categoryId)).count()) +
+      (await db.wishes.filter((w) => !!w.categoryId && idSet.has(w.categoryId)).count()) +
+      (await db.debts.filter((d) => !!d.categoryId && idSet.has(d.categoryId)).count());
+    if (used > 0) {
+      await db.categories.where('id').anyOf(ids).modify({ archived: 1, updatedAt: Date.now() });
+      return 'archived';
+    }
+    await db.categories.bulkDelete(ids);
+    return 'deleted';
+  });
 }
 
 export interface CategoryTree {

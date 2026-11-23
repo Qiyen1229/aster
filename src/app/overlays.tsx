@@ -154,8 +154,8 @@ export function InputHost() {
   );
 }
 
-/** Service Worker 更新提示：「有新版本，點擊更新」 */
-export function UpdatePrompt() {
+/** Service Worker 更新提示：「有新版本，點擊更新」（鎖定中維持掛載以保留 SW 註冊，僅隱藏橫幅） */
+export function UpdatePrompt({ locked = false }: { locked?: boolean }) {
   const [updateFn, setUpdateFn] = useState<null | ((reload?: boolean) => Promise<void>)>(null);
   const [updating, setUpdating] = useState(false);
   const [dismissed, setDismissed] = useState(false);
@@ -231,7 +231,7 @@ export function UpdatePrompt() {
     useUI.getState().showSnack({ text: '已可離線使用 ✓' });
   }, [offlineReady]);
 
-  if (!updateFn || dismissed) return null;
+  if (locked || !updateFn || dismissed) return null;
   return (
     <div className="banner" role="alert">
       <span>有新版本，點擊更新（更新後會跳出這次新增的功能說明）</span>

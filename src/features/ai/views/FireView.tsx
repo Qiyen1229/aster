@@ -10,7 +10,7 @@ import { simulateFire } from '@/domain/fire';
 import { currencyInfo, formatMoney, fromMinor, toMinor } from '@/domain/money';
 import { loadFireBasis } from '@/services/fireBasis';
 import { useSettings } from '@/stores/settings';
-import { chartTheme } from '@/features/reports/chart-theme';
+import { chartTheme, useChartTheme } from '@/features/reports/chart-theme';
 import type { ViewSpec } from '@/domain/agent/plan';
 
 const EChart = lazy(() => import('@/features/reports/EChart'));
@@ -38,7 +38,9 @@ export function FireView({ params, refreshKey }: { params: ViewSpec['params']; r
     });
   }, [data, expense, saving, age, start, retireAge, fire]);
   const money = (v: number) => formatMoney(toMinor(Math.round(v), base), base, { decimals: 0 });
+  const themeKey = useChartTheme();
   const option = useMemo(() => {
+    void themeKey;
     if (!result) return null;
     const t = chartTheme();
     return {
@@ -53,7 +55,7 @@ export function FireView({ params, refreshKey }: { params: ViewSpec['params']; r
         { name: '自由門檻', type: 'line', data: result.target, symbol: 'none', lineStyle: { type: 'dashed', color: t.text2 } },
       ],
     };
-  }, [result]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [result, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!data) return <div className="skeleton" style={{ height: 140 }} />;
   if (!result) return <p className="muted" style={{ margin: 0 }}>要先設定出生年與年支出（近 12 個月沒有支出紀錄時請到財務自由頁手動輸入）。<button className="attn-link" onClick={() => navigate('/reports/fire')}>前往 →</button></p>;

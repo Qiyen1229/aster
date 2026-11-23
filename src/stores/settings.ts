@@ -32,6 +32,17 @@ export const useSettings = create<SettingsState>((set) => ({
 const media = typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 media?.addEventListener('change', () => applyTheme(useSettings.getState()));
 
+const THEME_CACHE_KEY = 'aster.themeCache';
+
+export function readCachedTheme(): Partial<Pick<Settings, 'theme' | 'accent' | 'upColor' | 'themePalette' | 'travelModeProjectId'>> | null {
+  try {
+    const raw = localStorage.getItem(THEME_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Partial<Settings>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function applyTheme(s: Partial<Pick<Settings, 'theme' | 'accent' | 'upColor' | 'themePalette' | 'travelModeProjectId'>>) {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
@@ -45,6 +56,15 @@ export function applyTheme(s: Partial<Pick<Settings, 'theme' | 'accent' | 'upCol
   } else {
     delete root.dataset.mode;
   }
+  try {
+    localStorage.setItem(THEME_CACHE_KEY, JSON.stringify({
+      theme: s.theme ?? DEFAULT_SETTINGS.theme,
+      themePalette: normalizeThemePalette(s.themePalette),
+      accent: s.accent ?? DEFAULT_SETTINGS.accent,
+      upColor: s.upColor ?? DEFAULT_SETTINGS.upColor,
+      travelModeProjectId: s.travelModeProjectId ?? null,
+    }));
+  } catch { /* 忽略 */ }
   const metaColor = getComputedStyle(root).getPropertyValue('--bg').trim();
   document.querySelectorAll('meta[name="theme-color"]').forEach((m) => {
     m.setAttribute('content', metaColor);

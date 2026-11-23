@@ -9,7 +9,7 @@
  * 只在 localStorage 保存「上次登入者的 id／名稱／角色」以支援離線開啟，不保存任何權杖或記帳資料。
  */
 import { create } from 'zustand';
-import { api, ApiError, setUnauthorizedHandler } from '@/services/api';
+import { api, ApiError, clearAuthTokens, setUnauthorizedHandler } from '@/services/api';
 
 export interface AuthUser {
   id: number;
@@ -74,7 +74,10 @@ export const useAuth = create<AuthState>((set, get) => ({
       } else if (e instanceof ApiError && (e.status === 502 || e.status === 503 || e.status === 504)) {
         const cached = cachedSession();
         set(cached ? { status: 'offline', user: cached } : { status: 'unreachable', user: null });
-      } else {
+        } else {
+        saveSession(null);
+        clearAuthTokens();
+        void import('@/services/sync').then((m) => m.stopSync()).catch(() => undefined);
         set({ status: 'anon', user: null });
       }
     }
@@ -113,11 +116,13 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 }));
 
-// 任何 API 在刷新權杖後仍為 401：視為登出
+// 任何 API 在刷新權杖後仍為 401：視為登出（含離線重連時權杖過期）
 setUnauthorizedHandler(() => {
   const s = useAuth.getState();
-  if (s.status === 'authed') {
+  if (s.status === 'authed' || s.status === 'offline') {
     saveSession(null);
+    clearAuthTokens();
+    void import('@/services/sync').then((m) => m.stopSync()).catch(() => undefined);
     location.replace('/login?expired=1');
   }
 });

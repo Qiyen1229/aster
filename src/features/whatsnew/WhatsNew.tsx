@@ -169,10 +169,27 @@ export function WhatsNewHost() {
     }
   };
 
-  // 鍵盤左右箭頭換頁
+  const close = useCallback(() => {
+    setOpen(false);
+    useWhatsNewStore.getState().close();
+    try { localStorage.setItem(KEY, __APP_VERSION__); } catch { /* 忽略 */ }
+  }, []);
+
+  // 鍵盤 Esc 關閉、左右箭頭換頁與 Tab 焦點鎖定
   useEffect(() => {
-    if (!open || n <= 1) return;
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { close(); return; }
+      if (e.key === 'Tab' && wrapRef.current) {
+        const list = [...wrapRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+        if (list.length) {
+          const first = list[0], last = list[list.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+        return;
+      }
+      if (n <= 1) return;
       if (e.key === 'ArrowRight') {
         goToPage(page + 1);
       } else if (e.key === 'ArrowLeft') {
@@ -181,13 +198,7 @@ export function WhatsNewHost() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, n, page, goToPage]);
-
-  const close = () => {
-    setOpen(false);
-    useWhatsNewStore.getState().close();
-    try { localStorage.setItem(KEY, __APP_VERSION__); } catch { /* 忽略 */ }
-  };
+  }, [open, n, page, goToPage, close]);
 
   if (!state || !open || n === 0) return null;
 

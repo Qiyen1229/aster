@@ -91,7 +91,7 @@ export default function AccountsPage() {
           <section className="card glass" style={{ marginTop: 16 }} aria-label="淨資產">
             <div className="muted" style={{ fontSize: '0.8rem' }}>淨資產（{base}）</div>
             <div className="hero-num num"><Amount minor={worth.net} currency={base} tone="none" animate /></div>
-            <div style={{ display: 'flex', gap: 16, marginTop: 8, fontSize: '0.85rem' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginTop: 8, fontSize: '0.85rem' }}>
               <span className="muted">資產 <Amount minor={worth.assets} currency={base} tone="pos" /></span>
               <span className="muted">負債 <Amount minor={worth.liabilities} currency={base} tone="neg" /></span>
               {worth.invest > 0 && <span className="muted">投資 <Amount minor={worth.invest} currency={base} tone="none" /></span>}

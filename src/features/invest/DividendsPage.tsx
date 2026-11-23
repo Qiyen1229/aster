@@ -9,7 +9,7 @@ import { db } from '@/db/schema';
 import type { Dividend, StockTrade } from '@/db/types';
 import { deleteDividend, nhiSupplement, saveDividend } from '@/db/repo/invest';
 import { computePosition } from '@/domain/invest/position';
-import { convertMinor, currencyInfo, formatMoney, fromMinor, toMinor } from '@/domain/money';
+import { convertMinor, currencyInfo, formatMoney, fromMinor, safeToMinor, toMinor } from '@/domain/money';
 import { todayKey } from '@/domain/period';
 import { resolveRate } from '@/services/fx';
 import { useAccounts } from '@/app/hooks';
@@ -23,7 +23,7 @@ import { SwipeRow } from '@/ui/SwipeRow';
 import { lazy, Suspense } from 'react';
 import { dividendCalendar } from '@/domain/dividend-calendar';
 import { usePortfolio } from '@/services/portfolio';
-import { chartTheme } from '../reports/chart-theme';
+import { chartTheme, useChartTheme } from '../reports/chart-theme';
 
 const EChart = lazy(() => import('../reports/EChart'));
 
@@ -37,12 +37,17 @@ function DividendCalendar({ base }: { base: string }) {
   const stocks = useLiveQuery(async () => new Map((await db.stocks.toArray()).map((s) => [s.id, s])), []);
   const rates = useLiveQuery(async () => new Map((await db.exchange_rates.toArray()).map((r) => [`${r.base}>${r.quote}`, r])), []);
   const pf = usePortfolio();
+  useChartTheme();
   const t = chartTheme();
 
   const cal = useMemo(() => {
     if (!divs || !pf || !rates) return null;
     const holdings = new Map(pf.holdings.map((h) => [h.stock.id, { sharesDec: h.pos.shares.toString(), currency: h.stock.currency, exp: currencyInfo(h.stock.currency).exp }]));
-    const toBase = (v: number, cur: string) => (cur === base ? v : convertMinor(v, cur, base, resolveRate(rates, cur, base) ?? 1));
+    const toBase = (v: number, cur: string) => {
+      if (cur === base) return v;
+      const r = resolveRate(rates, cur, base);
+      return r ? convertMinor(v, cur, base, r) : 0;
+    };
     return dividendCalendar({ year, today: todayKey(), dividends: divs, holdings, toBase });
   }, [divs, pf, rates, year, base]);
 
@@ -69,9 +74,9 @@ function DividendCalendar({ base }: { base: string }) {
         <button className="icon-btn plain" aria-label="下一年" onClick={() => { setYear(year + 1); setMonth(null); }}><Icon name="chevronR" /></button>
       </div>
       <div className="stat-grid" style={{ margin: '8px 0' }}>
-        <div className="stat"><div className="k">已領</div><div className="v num"><Amount minor={cal.paidMinor} currency={base} tone="pos" /></div></div>
-        <div className="stat"><div className="k">預估待領</div><div className="v num"><Amount minor={cal.projectedMinor} currency={base} tone="none" /></div></div>
-        <div className="stat"><div className="k">全年／月均</div><div className="v num"><Amount minor={Math.round(total / 12)} currency={base} tone="none" opts={{ decimals: 0 }} /></div></div>
+        <div className="stat"><div className="k">已領</div><div className="v num"><Amount minor={cal.paidMinor} currency={base} tone="pos" opts={{ compact: Math.abs(cal.paidMinor) >= 10_000_000_00 }} /></div></div>
+        <div className="stat"><div className="k">預估待領</div><div className="v num"><Amount minor={cal.projectedMinor} currency={base} tone="none" opts={{ compact: Math.abs(cal.projectedMinor) >= 10_000_000_00 }} /></div></div>
+        <div className="stat"><div className="k">全年／月均</div><div className="v num"><Amount minor={Math.round(total / 12)} currency={base} tone="none" opts={{ decimals: 0, compact: Math.abs(Math.round(total / 12)) >= 10_000_000_00 }} /></div></div>
       </div>
       <Suspense fallback={<div className="skeleton" style={{ height: 200 }} />}>
         <EChart option={option} height={200} ariaLabel={`${year} 年每月股利長條圖`} onClick={(p) => setMonth(p.dataIndex + 1)} />
@@ -99,11 +104,15 @@ export default function DividendsPage() {
   const divs = useLiveQuery(() => db.dividends.toArray(), []);
   const stocks = useLiveQuery(async () => new Map((await db.stocks.toArray()).map((s) => [s.id, s])), []);
   const rates = useLiveQuery(async () => new Map((await db.exchange_rates.toArray()).map((r) => [`${r.base}>${r.quote}`, r])), []);
-  const toBase = (d: Dividend) => (d.currency === base ? d.netMinor : convertMinor(d.netMinor, d.currency, base, (rates && resolveRate(rates, d.currency, base)) ?? 1));
+  const toBase = (d: Dividend) => {
+    if (d.currency === base) return d.netMinor;
+    const r = rates && resolveRate(rates, d.currency, base);
+    return r ? convertMinor(d.netMinor, d.currency, base, r) : 0;
+  };
 
   const byYear = useMemo(() => {
     const m = new Map<string, Dividend[]>();
-    for (const d of (divs ?? []).sort((a, b) => (a.payDate < b.payDate ? 1 : -1))) {
+    for (const d of [...(divs ?? [])].sort((a, b) => b.payDate.localeCompare(a.payDate) || b.createdAt - a.createdAt)) {
       const y = d.payDate.slice(0, 4);
       m.set(y, [...(m.get(y) ?? []), d]);
     }
@@ -170,7 +179,8 @@ function DividendForm({ stockId: initialStock, dividend, onClose }: { stockId?: 
   const [stockId, setStockId] = useState(initialStock ?? '');
   const stock = stocks.find((s) => s.id === stockId);
   const cur = stock?.currency ?? 'TWD';
-  const trades = useLiveQuery(() => (stockId ? db.stock_trades.where('stockId').equals(stockId).toArray() : Promise.resolve([] as StockTrade[])), [stockId]) ?? [];
+  const tradesRaw = useLiveQuery(() => (stockId ? db.stock_trades.where('stockId').equals(stockId).toArray() : Promise.resolve([] as StockTrade[])), [stockId]);
+  const trades = useMemo(() => tradesRaw ?? [], [tradesRaw]);
   const [kind, setKind] = useState<Dividend['kind']>(dividend?.kind ?? 'cash');
   const [exDate, setExDate] = useState(dividend?.exDate ?? todayKey());
   const [payDate, setPayDate] = useState(dividend?.payDate ?? todayKey());
@@ -181,15 +191,31 @@ function DividendForm({ stockId: initialStock, dividend, onClose }: { stockId?: 
   const [fee, setFee] = useState(dividend ? fromMinor(dividend.feeMinor, dividend.currency).toString() : cur === 'TWD' ? '10' : '0');
   const [accountId, setAccountId] = useState(dividend?.accountId ?? accounts.list.find((a) => a.type === 'brokerage')?.brokerage?.settlementAccountId ?? accounts.list.find((a) => a.type === 'brokerage')?.id ?? accounts.list[0]?.id ?? '');
   const [status, setStatus] = useState<Dividend['status']>(dividend?.status ?? 'paid');
-  const [sync, setSync] = useState(true);
+  const [sync, setSync] = useState(dividend ? !!dividend.transactionId : true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (dividend || !accounts.list.length) return;
+    if (!accountId || !accounts.map.has(accountId)) {
+      setAccountId(accounts.list.find((a) => a.type === 'brokerage')?.brokerage?.settlementAccountId ?? accounts.list.find((a) => a.type === 'brokerage')?.id ?? accounts.list[0].id);
+    }
+  }, [accounts.list.length, dividend]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 切換標的時重設預設匯費／預扣稅
+  useEffect(() => {
+    if (dividend) return;
+    setFee(cur === 'TWD' ? '10' : '0');
+    if (cur !== 'USD') setWithholding('');
+  }, [stockId, cur, dividend]);
 
   // 除息日前一天的持股數自動帶入
   useEffect(() => {
-    if (dividend || !trades.length) return;
+    if (dividend) return;
+    if (!trades.length) { setShares(''); return; }
     const before = trades.filter((t) => t.date < exDate);
     const p = computePosition(before, settings.invest.costMethod, currencyInfo(cur).exp);
     setShares(p.shares.toString());
-  }, [trades.length, exDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [stockId, trades, exDate, cur, dividend, settings.invest.costMethod]);
 
   const gross = useMemo(() => {
     try { return kind === 'cash' && perShare && shares ? toMinor(new Decimal(perShare).mul(shares), cur) : 0; } catch { return 0; }
@@ -200,21 +226,41 @@ function DividendForm({ stockId: initialStock, dividend, onClose }: { stockId?: 
     if (dividend || kind !== 'cash') return;
     if (cur === 'USD') setWithholding(fromMinor(Math.floor(gross * 0.3), cur).toString());
     setNhi(fromMinor(nhiSupplement(gross, cur), cur).toString());
-  }, [gross]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gross, cur, kind, dividend]);
 
-  const m = (v: string) => (v ? toMinor(new Decimal(v || 0), cur) : 0);
+  const m = (v: string) => (v ? safeToMinor(v, cur) : 0);
   const net = Math.max(0, gross - m(withholding) - m(nhi) - m(fee));
+  const stockDivShares = useMemo(() => {
+    if (kind !== 'stock' || !shares || !perShare) return null;
+    try { return new Decimal(shares).mul(perShare).floor().toString(); } catch { return null; }
+  }, [kind, shares, perShare]);
 
   const save = async () => {
+    if (busy) return;
     if (!stock) return useUI.getState().showSnack({ text: '請選擇標的' });
-    if (!perShare || !shares) return useUI.getState().showSnack({ text: '請輸入每股股利與持股數' });
-    await saveDividend({
-      stockId: stock.id, accountId, kind, exDate, payDate, perShareDec: new Decimal(perShare).toString(), sharesHeldDec: new Decimal(shares).toString(),
-      grossMinor: gross, withholdingTaxMinor: m(withholding), nhiSupplementMinor: m(nhi), feeMinor: m(fee), netMinor: kind === 'cash' ? net : 0,
-      currency: cur, status, syncToLedger: sync,
-    }, dividend?.id);
-    useUI.getState().showSnack({ text: kind === 'cash' && status === 'paid' && sync ? '已記錄並入帳' : '已記錄' });
-    onClose();
+    if (!exDate || !payDate) return useUI.getState().showSnack({ text: '請選擇日期' });
+    let perShareDec: Decimal, sharesDec: Decimal;
+    try {
+      perShareDec = new Decimal(perShare);
+      sharesDec = new Decimal(shares);
+      if (perShareDec.lte(0) || sharesDec.lte(0)) throw new Error('非正數');
+    } catch {
+      return useUI.getState().showSnack({ text: '請輸入有效的每股股利與持股數' });
+    }
+    setBusy(true);
+    try {
+      await saveDividend({
+        stockId: stock.id, accountId, kind, exDate, payDate, perShareDec: perShareDec.toString(), sharesHeldDec: sharesDec.toString(),
+        grossMinor: gross, withholdingTaxMinor: m(withholding), nhiSupplementMinor: m(nhi), feeMinor: m(fee), netMinor: kind === 'cash' ? net : 0,
+        currency: cur, status, syncToLedger: sync,
+      }, dividend?.id);
+      useUI.getState().showSnack({ text: kind === 'cash' && status === 'paid' && sync ? '已記錄並入帳' : '已記錄' });
+      onClose();
+    } catch (e) {
+      useUI.getState().showSnack({ text: `儲存失敗：${(e as Error).message}` });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -239,10 +285,10 @@ function DividendForm({ stockId: initialStock, dividend, onClose }: { stockId?: 
         {kind === 'cash' && <AccountField label="入帳帳戶" value={accountId} onChange={setAccountId} accounts={accounts.list} />}
         {kind === 'cash' && <SwitchField label="自動入帳（產生收入帳目）" checked={sync} onChange={setSync} />}
       </div>
-      {kind === 'stock' && shares && perShare && (
-        <p className="muted">將配發 {new Decimal(shares || 0).mul(perShare || 0).floor().toString()} 股（不足一股的部分通常以現金發放）。</p>
+      {stockDivShares !== null && (
+        <p className="muted">將配發 {stockDivShares} 股（不足一股的部分通常以現金發放）。</p>
       )}
-      <button className="btn" onClick={() => void save()}>儲存</button>
+      <button className="btn" disabled={busy} onClick={() => void save()}>{busy ? '儲存中…' : '儲存'}</button>
       {dividend && (
         <button className="btn danger" style={{ marginTop: 10 }} onClick={async () => { if (await ask('刪除這筆股利？相關的入帳帳目或配股也會移除。')) { await deleteDividend(dividend.id); onClose(); } }}>刪除</button>
       )}

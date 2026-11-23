@@ -153,7 +153,7 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
             <li><kbd className="kbd">N</kbd><span>隨時新增一筆記帳</span></li>
             <li><kbd className="kbd">/</kbd><span>快速搜尋全部帳目</span></li>
             <li><kbd className="kbd">1</kbd> – <kbd className="kbd">5</kbd><span>切換首頁、帳戶、專案、報表、設定</span></li>
-            <li><Icon name="ai" size={16} /><span>左側邊欄底部一鍵喚出語音記帳與 Cilo 助手</span></li>
+            <li><span style={{ display: 'inline-grid', placeItems: 'center', width: 22, height: 22, borderRadius: 6, background: '#17181c', border: '1px solid var(--sep)', flexShrink: 0 }}><Icon name="ai" size={14} /></span><span>左側邊欄底部一鍵喚出語音記帳與 Cilo 助手</span></li>
           </ul>
           <div className="tour-actions">
             <button type="button" className="btn" onClick={finish}>開始使用</button>

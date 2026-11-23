@@ -238,11 +238,17 @@ function validateRelations(data: BackupRows, includePhotos = 'attachments' in da
     accountId: 'accounts', fromAccountId: 'accounts', toAccountId: 'accounts', cashAccountId: 'accounts', feeAccountId: 'accounts',
     categoryId: 'categories', projectId: 'projects', personId: 'people', stockId: 'stocks', budgetId: 'budgets',
     transactionId: 'transactions', feeTransactionId: 'transactions', loanTxId: 'transactions', txId: 'transactions', saleTxId: 'transactions',
-    transferId: 'transfers', settleTransferId: 'transfers', recurringRuleId: 'recurring_rules', installmentId: 'installments',
+    transferId: 'transfers', recurringRuleId: 'recurring_rules', installmentId: 'installments',
     stockTradeId: 'stock_trades', dividendId: 'dividends', autoPayAccountId: 'accounts', settlementAccountId: 'accounts', payFromAccountId: 'accounts',
   };
   const relationFields = (row: Record<string, unknown>, where: string) => {
     for (const [field, table] of Object.entries(refs)) ref(row[field], table, where);
+    if (row.settleTransferId) {
+      const sid = row.settleTransferId;
+      if (typeof sid !== 'string' || (!ids.get('transactions')?.has(sid) && !ids.get('transfers')?.has(sid))) {
+        badBackup(`${where} 缺少關聯transactions`);
+      }
+    }
     for (const [field, table] of [['tagIds', 'tags'], ['linkedAccountIds', 'accounts'], ['debtIds', 'debts']]) {
       for (const id of (row[field] as string[] | undefined) ?? []) ref(id, table, where, true);
     }
@@ -332,7 +338,7 @@ export async function restoreBackup(file: File, mode: 'replace' | 'merge', passp
     const candidate: BackupRows = {};
     for (const name of names) {
       const table = db.table(name);
-      const existing = mode === 'replace' && name in json.data ? [] : await table.toArray() as Record<string, unknown>[];
+      const existing = mode === 'replace' && (name in json.data || name === 'attachments') ? [] : await table.toArray() as Record<string, unknown>[];
       const kp = table.schema.primKey.keyPath;
       const keyOf = (row: Record<string, unknown>) => JSON.stringify(Array.isArray(kp) ? kp.map((k) => row[k]) : row[kp as string]);
       const combined = new Map(existing.map((r) => [keyOf(r), r]));
@@ -343,7 +349,7 @@ export async function restoreBackup(file: File, mode: 'replace' | 'merge', passp
     for (const name of names) {
       const list = json.data[name];
       const table = db.table(name);
-      if (mode === 'replace' && name in json.data) await table.clear();
+      if (mode === 'replace' && (name in json.data || name === 'attachments')) await table.clear();
       if (!list?.length) continue;
       const fixed = name === 'attachments'
         ? list.map((a) => ({ ...a, blob: b64ToBlob(a.blob as string, a.mime as string), thumb: b64ToBlob(a.thumb as string, 'image/jpeg') }))

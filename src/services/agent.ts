@@ -13,7 +13,7 @@
 import Dexie from 'dexie';
 import { db, uid } from '@/db/schema';
 import { bookDrafts, inboxDraftShape, reserveInboxSource } from './quickentry';
-import { addDebts, addInstallment, addLoan, addWish, confirmPending, decideWish, deleteBudget, extendWish, findOrCreatePerson, removeLoan, saveBudget, saveGoal, saveProject, saveRecurring, settleDebt, skipPending, unsettleDebt } from '@/db/repo/plan';
+import { addDebts, addInstallment, addLoan, addWish, confirmPending, decideWish, deleteBudget, deleteInstallment, deleteRecurringRule, extendWish, findOrCreatePerson, removeLoan, saveBudget, saveGoal, saveProject, saveRecurring, settleDebt, skipPending, unsettleDebt } from '@/db/repo/plan';
 import { addTransaction, addTransfer, deleteTransactions, deleteTransfers, restoreTransactions, restoreTransfers, updateTransaction, type TxInput } from '@/db/repo/ledger';
 import { addTrade, addWatch, deleteDividend, deleteTrade, saveDividend, updateAlerts } from '@/db/repo/invest';
 import { addDurable, addUse, sellDurable } from '@/db/repo/durables';
@@ -63,7 +63,7 @@ export interface AgentOpLog {
 
 /** 執行與還原都會動到的資料表（同一個 Dexie 交易） */
 const txTables = () => [db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.budgets, db.budget_periods, db.recurring_rules, db.goals, db.rules,
-  db.debts, db.people, db.stocks, db.stock_trades, db.settings, db.meta, db.categories, db.projects, db.tags, db.wishes, db.installments, db.dividends, db.watchlist, db.exchange_rates];
+  db.debts, db.people, db.stocks, db.stock_trades, db.settings, db.meta, db.categories, db.projects, db.tags, db.wishes, db.installments, db.dividends, db.watchlist, db.exchange_rates, db.templates];
 
 const settingsRevision = () => {
   const s = useSettings.getState();
@@ -435,7 +435,7 @@ async function executePlan(steps: ResolvedStep[], summary: string, idempotencyKe
         if (!before) throw new Error('這筆週期帳目已不存在');
         if (o.action === 'delete') {
           log.changes.push({ table: 'recurring_rules', id: before.id, before: { ...before }, stamp: 0, undo: 'rec_delete' });
-          await db.recurring_rules.delete(before.id);
+          await deleteRecurringRule(before.id);
         } else if (o.action === 'confirm') {
           if (!o.date) throw new Error('沒有指定要確認的期數');
           log.changes.push({ table: 'recurring_rules', id: before.id, before: { ...before }, stamp: 0, undo: 'rec_confirm', arg: o.date });
@@ -642,8 +642,19 @@ export async function undoOp(id: string): Promise<UndoResult> {
       } else if (c.undo === 'txdel') { await markTx(c.id); await restoreTransactions([c.id]); }
       else if (c.before === undefined) {
         if (c.table === 'budgets') await deleteBudget(c.id);
+        else if (c.table === 'installments') await deleteInstallment(c.id);
         else if (c.table === 'accounts') await deleteOrArchiveAccount(c.id);
-        else await db.table(c.table).delete(c.id);
+        else if (c.table === 'debts') {
+          const d = await db.debts.get(c.id);
+          if (d?.transactionId) {
+            const parent = await db.transactions.get(d.transactionId);
+            if (parent?.split) {
+              const rest = parent.split.debtIds.filter((x) => x !== c.id);
+              await db.transactions.update(parent.id, { split: rest.length ? { ...parent.split, debtIds: rest } : undefined, updatedAt: Date.now() });
+            }
+          }
+          await db.debts.delete(c.id);
+        } else await db.table(c.table).delete(c.id);
       } else if (c.table === 'transactions') {
         await db.transactions.update(c.id, { ...c.before, updatedAt: Date.now() });
       } else {

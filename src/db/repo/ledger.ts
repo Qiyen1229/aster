@@ -249,7 +249,7 @@ export async function restoreTransactions(ids: string[]): Promise<void> {
       }
       if (tx.stockTradeId) {
         const st = await db.stock_trades.get(tx.stockTradeId);
-        if (st && st.deletedAt) {
+        if (st && st.deletedAt && (!st.transactionId || st.transactionId === tx.id)) {
           const ts = Date.now();
           await db.stock_trades.update(st.id, { deletedAt: null, updatedAt: ts });
           if (st.feeTransactionId && st.feeTransactionId !== tx.id) {
@@ -392,21 +392,22 @@ async function deleteTransfersInner(ids: string[], now: number): Promise<void> {
     const tr = await db.transfers.get(id);
     if (!tr || tr.deletedAt) continue;
     await revertTransfer(tr);
-    await db.transfers.update(id, { deletedAt: now });
-    if (tr.feeTransactionId) await db.transactions.update(tr.feeTransactionId, { deletedAt: now });
+    await db.transfers.update(id, { deletedAt: now, updatedAt: now });
+    if (tr.feeTransactionId) await db.transactions.update(tr.feeTransactionId, { deletedAt: now, updatedAt: now });
   }
 }
 
 async function restoreTransfersInner(ids: string[]): Promise<void> {
+  const now = Date.now();
   for (const id of ids) {
     const tr = await db.transfers.get(id);
     if (!tr || !tr.deletedAt) continue;
     for (const [acc, delta] of transferEffects(tr)) await bump(acc, delta);
-    await db.transfers.update(id, { deletedAt: null });
+    await db.transfers.update(id, { deletedAt: null, updatedAt: now });
     if (tr.feeTransactionId) {
       const fee = await db.transactions.get(tr.feeTransactionId);
-      if (fee) {
-        await db.transactions.update(fee.id, { deletedAt: null });
+      if (fee && fee.deletedAt) {
+        await db.transactions.update(fee.id, { deletedAt: null, updatedAt: now });
         await bump(fee.accountId, txEffect(fee));
       }
     }

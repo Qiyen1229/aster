@@ -25,7 +25,7 @@ import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
 import { CatIcon, Icon, iconEmoji } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { LedgerRow } from '../ledger/LedgerRow';
-import { chartTheme } from './chart-theme';
+import { chartTheme, useChartTheme } from './chart-theme';
 import { SankeyCard } from './SankeyCard';
 
 const EChart = lazy(() => import('./EChart'));
@@ -124,6 +124,7 @@ export default function ReportsPage() {
   useScreenDetail(a ? `報表：${label}，支出 ${formatMoney(a.expense, base, { decimals: 0 })}、收入 ${formatMoney(a.income, base, { decimals: 0 })}` : null);
   const fcount = filter.accountIds.length + filter.projectIds.length + filter.tagIds.length + filter.currencies.length;
   const fmt = (v: number) => formatMoney(v, base, { compact: true });
+  const themeKey = useChartTheme();
   const t = chartTheme();
 
   // ── 環形圖（可下鑽） ──
@@ -142,7 +143,7 @@ export default function ReportsPage() {
         }],
       },
     };
-  }, [a, drill, cats.map, base]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [a, drill, cats.map, base, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openCategory = (catId: string, isMain: boolean) => {
     if (!data) return;
@@ -178,7 +179,7 @@ export default function ReportsPage() {
         ],
       },
     };
-  }, [a, unit, range.start, range.end, base]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [a, unit, range.start, range.end, base, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const year12 = useMemo(() => {
     if (!at) return null;
@@ -199,7 +200,7 @@ export default function ReportsPage() {
         ],
       },
     };
-  }, [at, range.end, base]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [at, range.end, base, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const nwOption = useMemo(() => nw && nw.length > 1 ? {
     grid: { left: 8, right: 8, top: 16, bottom: 4, containLabel: true },
@@ -210,7 +211,7 @@ export default function ReportsPage() {
       { name: '淨資產', type: 'line', smooth: true, data: nw.map((p) => p.netWorth), symbol: 'none', lineStyle: { width: 2.5, color: t.accent }, areaStyle: { color: t.accent, opacity: 0.12 } },
       { name: '投資市值', type: 'line', smooth: true, data: nw.map((p) => p.invest), symbol: 'none', lineStyle: { width: 1.5, color: t.pos, type: 'dashed' } },
     ],
-  } : null, [nw, base]); // eslint-disable-line react-hooks/exhaustive-deps
+  } : null, [nw, base, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const Change = ({ cur, prevV, invert }: { cur: number; prevV: number; invert?: boolean }) => {
     const c = pctChange(cur, prevV);
@@ -344,9 +345,9 @@ export default function ReportsPage() {
       <Segmented value={unit} onChange={(u) => { setUnit(u); setDrill(null); }} options={[{ value: 'month', label: '月' }, { value: 'year', label: '年' }, { value: 'custom', label: '自訂' }]} ariaLabel="期間" />
       {unit === 'custom' ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '12px 0' }}>
-          <input type="date" className="input" value={custom.start} max={custom.end} onChange={(e) => setCustom((c) => ({ ...c, start: e.target.value }))} aria-label="開始" />
+          <input type="date" className="input" style={{ flex: 1, minWidth: 0 }} value={custom.start} max={custom.end} onChange={(e) => setCustom((c) => ({ ...c, start: e.target.value }))} aria-label="開始" />
           <span className="muted">–</span>
-          <input type="date" className="input" value={custom.end} min={custom.start} onChange={(e) => setCustom((c) => ({ ...c, end: e.target.value }))} aria-label="結束" />
+          <input type="date" className="input" style={{ flex: 1, minWidth: 0 }} value={custom.end} min={custom.start} onChange={(e) => setCustom((c) => ({ ...c, end: e.target.value }))} aria-label="結束" />
         </div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '8px 0' }}>

@@ -10,7 +10,7 @@ import { todayKey } from '@/domain/period';
 import { buildCashflow, type CashflowData } from '@/services/cashflow';
 import { Segmented, SkeletonRows, Switch } from '@/ui/controls';
 import { CatIcon, Icon } from '@/ui/Icon';
-import { chartTheme } from './chart-theme';
+import { chartTheme, useChartTheme } from './chart-theme';
 
 const EChart = lazy(() => import('./EChart'));
 const KIND_ICON = { recurring: '🔁', card: '💳', installment: '🧾', loan: '🏦' } as const;
@@ -32,8 +32,10 @@ export default function CashflowPage() {
   const base = data?.base ?? 'TWD';
   const money = (v: number) => formatMoney(v, base, { decimals: 0 });
   const accName = useMemo(() => new Map(data?.accounts.map((a) => [a.id, a]) ?? []), [data]);
+  const themeKey = useChartTheme();
 
   const option = useMemo(() => {
+    void themeKey;
     if (!data) return null;
     const t = chartTheme();
     const step = Math.max(1, Math.round(data.series.length / 6));
@@ -49,7 +51,7 @@ export default function CashflowPage() {
         markLine: { silent: true, symbol: 'none', data: [{ yAxis: 0 }], lineStyle: { color: t.neg, type: 'dashed' }, label: { show: false } },
       }],
     };
-  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [data, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const upcoming = data?.events.slice(0, 40) ?? [];
   const assumed = data?.events.some((e) => e.assumed);

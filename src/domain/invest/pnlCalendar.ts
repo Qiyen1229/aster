@@ -10,6 +10,7 @@
 import Decimal from 'decimal.js';
 import type { PriceCache, PriceHistory, Stock, StockTrade } from '@/db/types';
 import { currencyInfo } from '@/domain/money';
+import { exchangeDate } from './market-hours';
 import type { CostMethod } from './position';
 
 export interface DayCurrencyPnl {
@@ -245,7 +246,7 @@ export function computePnlCalendar(params: ComputePnlCalendarParams): {
         let pctChange: number | undefined;
 
         if (d === today) {
-          if (cache) {
+          if (cache && cache.marketTime > 0 && exchangeDate(stock.market, new Date(cache.marketTime)) === today) {
             closePriceDec = cache.priceDec;
             prevClosePriceDec = cache.prevCloseDec || cache.priceDec;
             if (cache.changeDec) {
@@ -283,14 +284,16 @@ export function computePnlCalendar(params: ComputePnlCalendarParams): {
           unreal1 = heldUnchanged.mul(deltaDec).mul(unit);
         }
 
-        // 2. 當日新買入的股票：買進股數 × (收盤價 − 買入均價) − 買進手續費
+        // 2. 當日新買入「仍留倉未賣出」的股票：未賣出股數 × (收盤價 − 買入均價) − 按比例分攤買進手續費
+        const unsoldBuys = Decimal.max(0, heldEndShares.minus(heldUnchanged));
         let unreal2 = new Decimal(0);
-        if (buyShares.gt(0)) {
+        if (buyShares.gt(0) && unsoldBuys.gt(0)) {
+          const buyFeePortion = buyFees.mul(unsoldBuys).div(buyShares);
           if (closePriceDec) {
             const avgBuyPrice = buyCostTotal.div(buyShares).div(unit);
-            unreal2 = buyShares.mul(new Decimal(closePriceDec).minus(avgBuyPrice)).mul(unit).minus(buyFees);
+            unreal2 = unsoldBuys.mul(new Decimal(closePriceDec).minus(avgBuyPrice)).mul(unit).minus(buyFeePortion);
           } else {
-            unreal2 = buyFees.negated();
+            unreal2 = buyFeePortion.negated();
           }
         }
 
@@ -361,13 +364,18 @@ export function computePnlCalendar(params: ComputePnlCalendarParams): {
       const exp = currencyInfo(cur).exp;
       const unit = Decimal.pow(10, exp);
 
-      // 計算基準市值（昨日收盤市值或買進成本）
+      // 計算基準市值（期末持股市值或當日交易金額，避免清倉時 heldShares=0 導致分母退化成 1）
       const basePrice = sc.prevClosePriceDec || sc.closePriceDec;
-      const baseVal = new Decimal(sc.heldShares).mul(basePrice || 1).mul(unit).toNumber();
+      const endVal = basePrice ? new Decimal(sc.heldShares).mul(basePrice).mul(unit).toNumber() : 0;
+      const tradeVal = sc.trades.reduce((sum, tr) => {
+        const gross = new Decimal(tr.priceDec || 0).mul(tr.sharesDec || 0).mul(unit).toNumber();
+        return sum + (Number.isFinite(gross) ? gross : 0);
+      }, 0);
+      const baseVal = Math.max(endVal, tradeVal);
 
       curMap.set(cur, {
         pnlMinor: prev.pnlMinor + sc.pnlMinor,
-        baseValueMinor: prev.baseValueMinor + Math.max(1, baseVal),
+        baseValueMinor: prev.baseValueMinor + baseVal,
       });
 
       totalTradesCount += sc.trades.length;
@@ -484,7 +492,7 @@ export function formatPnlCompact(pnl: DayCurrencyPnl, showPrefix = false): strin
     }
   }
 
-  const prefix = showPrefix ? (pnl.currency === 'TWD' ? 'NT$' : 'US$') : '$';
+  const prefix = showPrefix ? (pnl.currency === 'TWD' ? 'NT$' : currencyInfo(pnl.currency).symbol) : '$';
   return `${prefix}${sign}${valStr}`;
 }
 
@@ -492,6 +500,7 @@ export function formatPnlCompact(pnl: DayCurrencyPnl, showPrefix = false): strin
  * 格式化報酬率 %
  */
 export function formatPnlPct(pct: number): string {
-  const sign = pct > 0 ? '+' : '';
-  return `${sign}${pct.toFixed(1)}%`;
+  const clamped = Math.max(-999.9, Math.min(999.9, Number.isFinite(pct) ? pct : 0));
+  const sign = clamped > 0 ? '+' : '';
+  return `${sign}${clamped.toFixed(1)}%`;
 }

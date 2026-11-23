@@ -51,7 +51,9 @@ export default function HealthPage() {
           <p className="muted" style={{ fontSize: '0.85rem' }}>{i.detail}</p>
           <button className="btn small" disabled={!!busy} onClick={async () => {
             setBusy(i.id);
-            try { useUI.getState().showSnack({ text: await i.fix() }); await check(); } finally { setBusy(''); }
+            try { useUI.getState().showSnack({ text: await i.fix() }); await check(); }
+            catch (e) { useUI.getState().showSnack({ text: `修復失敗：${(e as Error).message}` }); }
+            finally { setBusy(''); }
           }}>{busy === i.id ? '修復中…' : '修復'}</button>
         </div>
       ))}
@@ -65,7 +67,8 @@ export default function HealthPage() {
                 await restoreTransactions(deleted.map((d) => d.id));
                 useUI.getState().showSnack({ text: `已還原 ${deleted.length} 筆帳目` });
                 await check();
-              } finally { setBusy(''); }
+              } catch (e) { useUI.getState().showSnack({ text: `復原失敗：${(e as Error).message}` }); }
+              finally { setBusy(''); }
             }}>全部復原</button>
           </div>
           <div className="list">
@@ -81,7 +84,8 @@ export default function HealthPage() {
                     await restoreTransactions([t.id]);
                     useUI.getState().showSnack({ text: '已復原帳目' });
                     await check();
-                  } finally { setBusy(''); }
+                  } catch (e) { useUI.getState().showSnack({ text: `復原失敗：${(e as Error).message}` }); }
+                  finally { setBusy(''); }
                 }}>復原</button>
               </div>
             ))}

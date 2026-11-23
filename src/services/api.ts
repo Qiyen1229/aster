@@ -190,7 +190,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}, retry = tr
     clearTimeout(timer);
   }
   if (bearer && path === '/auth/logout') clearAuthTokens();
-  if (res.status === 401 && retry && !NO_AUTO_REFRESH.includes(path)) {
+  if (res.status === 401 && retry && !NO_AUTO_REFRESH.includes(path) && res.headers.get('X-Totp-Required') !== '1') {
     const ref = await refreshOnce();
     if (ref === 'ok') return api<T>(path, opts, false);
     if (ref === 'transient') throw new ApiError(0, '無法連線到伺服器，請檢查網路');

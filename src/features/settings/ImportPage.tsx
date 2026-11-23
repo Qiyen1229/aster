@@ -124,7 +124,7 @@ export default function ImportPage() {
   return (
     <main className="page">
       <header className="topbar">
-        <button className="icon-btn" aria-label="返回" onClick={() => { if (step === 2 && mode === 'reconcile' && recon?.ai) { setStep(0); setRecon(null); setMode('import'); } else if (step) setStep(step - 1); else navigate(-1); }}><Icon name="chevronL" /></button>
+        <button className="icon-btn" aria-label="返回" onClick={() => { if (step === 2 && mode === 'reconcile' && recon?.ai) { setStep(0); setRecon(null); setMode(reconOnly ? 'reconcile' : 'import'); } else if (step) setStep(step - 1); else navigate(-1); }}><Icon name="chevronL" /></button>
         <h1>{mode === 'reconcile' ? '帳單對帳' : '匯入 CSV'}</h1>
         <div style={{ width: 44 }} />
       </header>

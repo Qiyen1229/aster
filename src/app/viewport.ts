@@ -47,6 +47,24 @@ export function setFontSizePreference(pref: FontSizePref | undefined): void {
 /** 小於這個高度的差異視為網址列伸縮，不是鍵盤 */
 const KEYBOARD_MIN_PX = 120;
 
+let scrollLockCount = 0;
+let savedBodyOverflow = '';
+
+/** 參考計數式鎖定 body 捲動，避免多層 Sheet／InfoModal／AddSheet 卸載順序不同造成捲動鎖死 */
+export function lockBodyScroll(): () => void {
+  if (typeof document === 'undefined') return () => {};
+  if (scrollLockCount === 0) savedBodyOverflow = document.body.style.overflow;
+  scrollLockCount++;
+  document.body.style.overflow = 'hidden';
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    scrollLockCount = Math.max(0, scrollLockCount - 1);
+    if (scrollLockCount === 0) document.body.style.overflow = savedBodyOverflow;
+  };
+}
+
 export function clampRootFontSize(): void {
   const root = document.documentElement;
   if (fontPref !== 'system') { root.style.fontSize = `${fontPref}px`; return; }
@@ -61,20 +79,39 @@ export function installViewportTracking(): () => void {
   const vv = window.visualViewport;
   const root = document.documentElement;
   let raf = 0;
+  let scrolledFor: Element | null = null;
+  let wasKbOpen = false;
+  let baseInnerHeight = window.innerHeight;
+  let lastLandscape = window.innerWidth > window.innerHeight;
   const focusTimers: number[] = [];
   const clearFocusTimers = () => { while (focusTimers.length) clearTimeout(focusTimers.pop()); };
   const update = () => {
     raf = 0;
     if (!vv) return;
-    const kbHeight = Math.max(0, Math.round(window.innerHeight - vv.height));
-    const open = kbHeight > KEYBOARD_MIN_PX && isTextInput(document.activeElement);
+    const isLandscape = window.innerWidth > window.innerHeight;
+    if (isLandscape !== lastLandscape) {
+      lastLandscape = isLandscape;
+      baseInnerHeight = window.innerHeight;
+    } else if (!wasKbOpen) {
+      baseInnerHeight = Math.max(baseInnerHeight, window.innerHeight);
+    }
+    const kbHeight = Math.max(0, Math.round(window.innerHeight - vv.height), Math.round(baseInnerHeight - vv.height));
+    const activeIsText = isTextInput(document.activeElement);
+    // 失焦收鍵盤期間若鍵盤仍在下滑（kbHeight > 120），維持 .kb-open 避免抽屜閃落到底並重播進場動畫
+    const open = kbHeight > KEYBOARD_MIN_PX && (activeIsText || wasKbOpen);
     const kbBottom = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
     const vvt = Math.max(0, Math.round(vv.offsetTop));
     root.style.setProperty('--kb', open ? `${kbBottom}px` : '0px');
     root.style.setProperty('--vvh', `${Math.round(vv.height)}px`);
     root.style.setProperty('--vvt', open ? `${vvt}px` : '0px');
     root.classList.toggle('kb-open', open);
-    if (open && document.activeElement instanceof HTMLElement) {
+    if (wasKbOpen && !open && vv.offsetTop > 0) {
+      window.scrollTo(0, 0);
+    }
+    wasKbOpen = open;
+    if (!open) {
+      scrolledFor = null;
+    } else if (activeIsText && document.activeElement instanceof HTMLElement && document.activeElement !== scrolledFor) {
       const el = document.activeElement;
       const container = el.closest<HTMLElement>('.sheet-body, .add-scroll');
       if (container) {
@@ -84,7 +121,10 @@ export function installViewportTracking(): () => void {
           const pad = 16;
           if (er.bottom > cr.bottom - pad) container.scrollTop += er.bottom - (cr.bottom - pad);
           else if (er.top < cr.top + pad) container.scrollTop -= cr.top + pad - er.top;
+          scrolledFor = el;
         }
+      } else {
+        scrolledFor = el;
       }
     }
   };
@@ -92,14 +132,16 @@ export function installViewportTracking(): () => void {
   vv?.addEventListener('resize', schedule);
   vv?.addEventListener('scroll', schedule);
   // 失焦後鍵盤還在收起中，稍等再量；聚焦時 iOS 會非同步捲動 visualViewport（offsetTop），補量三次避免破洞或工具列展開遮擋
-  const onFocusIn = () => {
+  const onFocusIn = (e: FocusEvent) => {
+    if (e.target !== scrolledFor) scrolledFor = null;
     schedule();
     clearFocusTimers();
     focusTimers.push(window.setTimeout(schedule, 100), window.setTimeout(schedule, 300), window.setTimeout(schedule, 500));
   };
   const onFocusOut = () => {
+    scrolledFor = null;
     clearFocusTimers();
-    focusTimers.push(window.setTimeout(schedule, 50), window.setTimeout(schedule, 200));
+    focusTimers.push(window.setTimeout(schedule, 50), window.setTimeout(schedule, 200), window.setTimeout(schedule, 380));
   };
   window.addEventListener('focusin', onFocusIn);
   window.addEventListener('focusout', onFocusOut);
@@ -141,6 +183,8 @@ export function installViewportTracking(): () => void {
 function isTextInput(el: Element | null): boolean {
   if (!el) return false;
   if (el instanceof HTMLTextAreaElement || (el as HTMLElement).isContentEditable) return true;
-  if (el instanceof HTMLInputElement) return !['checkbox', 'radio', 'button', 'submit', 'range', 'file', 'color'].includes(el.type);
-  return el instanceof HTMLSelectElement;
+  if (el instanceof HTMLInputElement) {
+    return !['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'file', 'color', 'date', 'time', 'month', 'datetime-local', 'week', 'hidden'].includes(el.type);
+  }
+  return false;
 }

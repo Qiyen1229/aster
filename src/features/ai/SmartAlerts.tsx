@@ -26,7 +26,7 @@ export function SmartAlerts({ aiStatus }: { aiStatus?: AiStatus | null }) {
           className="row-icon"
           style={{
             background: '#30D158',
-            color: '#fff',
+            color: '#0b1c10',
             width: 40,
             height: 40,
             borderRadius: 12,
@@ -78,7 +78,7 @@ export function SmartAlerts({ aiStatus }: { aiStatus?: AiStatus | null }) {
               className="row-icon"
               style={{
                 background: '#FF9F0A',
-                color: '#fff',
+                color: '#261600',
                 width: 32,
                 height: 32,
                 borderRadius: 8,
@@ -139,6 +139,7 @@ export function SmartAlerts({ aiStatus }: { aiStatus?: AiStatus | null }) {
                   style={{
                     background: '#17181c',
                     color: '#fff',
+                    border: '1px solid var(--sep)',
                     width: 32,
                     height: 32,
                     borderRadius: 8,

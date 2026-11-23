@@ -215,7 +215,7 @@ export const DEFAULT_SETTINGS: Settings = {
   homeWidgets: ['today', 'budget', 'networth'], // 4.1.1 起首頁的快覽（今日可用、預算、淨資產）預設回來；設定 → 首頁快覽可增減、排序
   homeAiChat: true,
   quote: {
-    proxyUrl: '/proxy',
+    proxyUrl: '',
     proxyToken: '',
     refreshSec: 60,
     twOrder: ['twse-mis', 'twse-openapi', 'finmind', 'yahoo'],

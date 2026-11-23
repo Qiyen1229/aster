@@ -4,7 +4,7 @@
  * `clure.lock.fails`）重置不了，讀取時取兩邊較大的次數與較晚的等待時間。
  */
 import { db } from '@/db/schema';
-import { api } from '@/services/api';
+import { api, clearAuthTokens } from '@/services/api';
 
 export const WIPE_AT = 10;
 const LS_KEY = 'clure.lock.fails';
@@ -40,13 +40,19 @@ export async function writeFails(fails: number, until: number): Promise<void> {
   } catch { /* 資料庫暫時不能寫：退回只靠 localStorage */ }
 }
 
-/** 登出（盡力通知伺服器撤銷這台裝置）並刪除這台裝置的本機資料庫，然後回到登入頁。伺服器上的同步資料不受影響。 */
-export async function wipeLocalData(): Promise<void> {
-  try { await api('/auth/logout', { method: 'POST', timeoutMs: 5_000 }); } catch { /* 沒網路也照清 */ }
-  try { await db.delete(); } catch { /* 刪不掉就關閉連線後再試一次 */ db.close(); try { await db.delete(); } catch { /* 忽略 */ } }
+/** 登出（盡力通知伺服器撤銷這台裝置）並刪除這台裝置的本機資料庫，然後回到指定頁。伺服器上的同步資料不受影響。 */
+export async function wipeLocalData(opts: { logout?: boolean; redirect?: string } = {}): Promise<void> {
+  const { logout = true, redirect = '/login' } = opts;
+  await import('@/services/sync').then((m) => m.stopSync()).catch(() => undefined);
+  if (logout) {
+    try { await api('/auth/logout', { method: 'POST', timeoutMs: 5_000 }); } catch { /* 沒網路也照清 */ }
+  }
+  clearAuthTokens();
+  db.close();
+  try { await db.delete(); } catch { /* 忽略 */ }
   try {
     for (const k of Object.keys(localStorage)) if (k.startsWith('clure.') || k.startsWith('aster.')) localStorage.removeItem(k);
     sessionStorage.clear();
   } catch { /* 忽略 */ }
-  location.replace('/login');
+  location.replace(redirect);
 }

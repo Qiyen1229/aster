@@ -14,6 +14,7 @@ import { db } from '@/db/schema';
 import { listLedger, listStatTxs } from '@/db/repo/ledger';
 import { addDays, fromDateKey, monthGrid, toDateKey, todayKey } from '@/domain/period';
 import { totals, totalsByDay } from '@/domain/ledger';
+import { currencyInfo } from '@/domain/money';
 import { computePnlCalendar, type DayPnlResult, type MonthPnlSummary } from '@/domain/invest/pnlCalendar';
 import { useAccounts, useCategories, useTags, useMediaQuery } from '@/app/hooks';
 import { useSettings } from '@/stores/settings';
@@ -122,6 +123,23 @@ export default function HomePage() {
       });
     }
   };
+  const ptrTimers = useRef<number[]>([]);
+  useEffect(() => () => {
+    if (ptrRef.current?.rafId) cancelAnimationFrame(ptrRef.current.rafId);
+    while (ptrTimers.current.length) clearTimeout(ptrTimers.current.pop());
+  }, []);
+  const onTouchCancel = () => {
+    const st = ptrRef.current;
+    ptrRef.current = null;
+    if (st?.rafId) cancelAnimationFrame(st.rafId);
+    setArmed(false);
+    const el = indicatorRef.current;
+    if (el) {
+      el.style.transition = 'transform 240ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
+      el.style.transform = 'translate3d(0, -60px, 0)';
+      el.style.opacity = '0';
+    }
+  };
   const onTouchEnd = () => {
     const st = ptrRef.current;
     ptrRef.current = null;
@@ -138,17 +156,17 @@ export default function HomePage() {
       }
       void Promise.allSettled([syncNow(), refreshRates(baseCurrency), import('@/services/inbox').then((m) => m.refreshInbox())]).finally(() => {
         haptic('success');
-        window.setTimeout(() => {
+        ptrTimers.current.push(window.setTimeout(() => {
           if (indicatorRef.current) {
             indicatorRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
             indicatorRef.current.style.transform = 'translate3d(0, -60px, 0)';
             indicatorRef.current.style.opacity = '0';
           }
-          window.setTimeout(() => {
+          ptrTimers.current.push(window.setTimeout(() => {
             setRefreshing(false);
             setArmed(false);
-          }, 240);
-        }, 320);
+          }, 240));
+        }, 320));
       });
     } else {
       setArmed(false);
@@ -302,7 +320,7 @@ export default function HomePage() {
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchEnd}
+      onTouchCancel={onTouchCancel}
     >
       {/* 下拉刷新指示器（浮動膠囊，零佈局重繪硬體加速） */}
       <div
@@ -444,10 +462,11 @@ export default function HomePage() {
                 const val = (Math.abs(c.pnlMinor) / 100).toLocaleString('en-US', {
                   maximumFractionDigits: c.currency === 'TWD' ? 0 : 2,
                 });
-                const pctStr = `${c.pnlPct >= 0 ? '+' : ''}${c.pnlPct.toFixed(1)}%`;
+                const clampedPct = Math.max(-999.9, Math.min(999.9, Number.isFinite(c.pnlPct) ? c.pnlPct : 0));
+                const pctStr = `${clampedPct >= 0 ? '+' : ''}${clampedPct.toFixed(1)}%`;
                 return (
                   <span key={c.currency} className={`pnl-head-pill ${tone}`}>
-                    {c.currency === 'TWD' ? 'NT$' : 'US$'}&nbsp;{`${sign}${val}`}
+                    {c.currency === 'TWD' ? 'NT$' : currencyInfo(c.currency).symbol}&nbsp;{`${sign}${val}`}
                     <span className="pnl-head-pct">({pctStr})</span>
                   </span>
                 );
@@ -550,7 +569,7 @@ export default function HomePage() {
                     </div>
                     <div className="stock-card-right num">
                       <div className={`stock-card-pnl ${tone}`}>
-                        {s.currency === 'TWD' ? 'NT$' : 'US$'}&nbsp;{`${sign}${val}`}
+                        {s.currency === 'TWD' ? 'NT$' : currencyInfo(s.currency).symbol}&nbsp;{`${sign}${val}`}
                       </div>
                       {s.realizedMinor !== 0 && s.unrealizedChangeMinor !== 0 ? (
                         <div className="stock-card-pnl-sub">

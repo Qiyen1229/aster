@@ -92,8 +92,8 @@ export default defineConfig({
         scope: '/',
         display: 'standalone',
         orientation: 'portrait',
-        theme_color: '#000000',
-        background_color: '#000000',
+        theme_color: '#0b0c0f',
+        background_color: '#0b0c0f',
         categories: ['finance', 'productivity'],
         icons: [
           { src: `/icons/icon-192.png?v=${pkg.version}`, sizes: '192x192', type: 'image/png', purpose: 'any' },

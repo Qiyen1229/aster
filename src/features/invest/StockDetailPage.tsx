@@ -3,6 +3,7 @@
  * 「若今天賣出」扣除費稅後淨損益、成本／現價殖利率、交易與股利紀錄、手動輸入現價、加入觀察清單。
  */
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import Decimal from 'decimal.js';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
@@ -19,7 +20,7 @@ import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
 import { Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { SwipeRow } from '@/ui/SwipeRow';
-import { chartTheme } from '../reports/chart-theme';
+import { chartTheme, useChartTheme } from '../reports/chart-theme';
 import { MARKET_LABEL } from './StockSearch';
 import { TradeSheet } from './TradeSheet';
 import { DividendSheet } from './DividendsPage';
@@ -48,6 +49,7 @@ export default function StockDetailPage() {
   const [manual, setManual] = useState(false);
   const [mp, setMp] = useState('');
   const [busy, setBusy] = useState(false);
+  const themeKey = useChartTheme();
   const t = chartTheme();
 
   useEffect(() => {
@@ -59,21 +61,22 @@ export default function StockDetailPage() {
   }, [stock?.id, range]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const chartOption = useMemo(() => {
-    if (!hist?.bars.length) return null;
-    const up = hist.bars[hist.bars.length - 1].close >= hist.bars[0].close;
+    const bars = (hist?.bars ?? []).filter((b) => Number.isFinite(b.close));
+    if (!bars.length) return null;
+    const up = bars[bars.length - 1].close >= bars[0].close;
     const color = up ? t.pos : t.neg;
     const avg = h && h.pos.shares.gt(0) ? h.pos.avgCost.toNumber() : null;
     return {
       grid: { left: 4, right: 4, top: 12, bottom: 4, containLabel: true },
       tooltip: { trigger: 'axis' },
-      xAxis: { type: 'category', boundaryGap: false, data: hist.bars.map((b) => (range === '1d' ? new Date(b.t).toTimeString().slice(0, 5) : b.date.slice(2).replace(/-/g, '/'))), axisLabel: { color: t.text3 }, axisLine: { lineStyle: { color: t.sep } } },
+      xAxis: { type: 'category', boundaryGap: false, data: bars.map((b) => (range === '1d' ? new Date(b.t).toTimeString().slice(0, 5) : b.date.slice(2).replace(/-/g, '/'))), axisLabel: { color: t.text3 }, axisLine: { lineStyle: { color: t.sep } } },
       yAxis: { type: 'value', scale: true, splitLine: { lineStyle: { color: t.sep, type: 'dashed' } }, axisLabel: { color: t.text3 } },
       series: [{
-        type: 'line', smooth: true, symbol: 'none', data: hist.bars.map((b) => +b.close.toFixed(4)), lineStyle: { color, width: 2 }, areaStyle: { color, opacity: 0.1 },
+        type: 'line', smooth: true, symbol: 'none', data: bars.map((b) => +b.close.toFixed(4)), lineStyle: { color, width: 2 }, areaStyle: { color, opacity: 0.1 },
         markLine: avg ? { symbol: 'none', label: { formatter: `均價 ${avg.toFixed(2)}`, color: t.text2, position: 'insideEndTop' }, lineStyle: { color: t.text3, type: 'dashed' }, data: [{ yAxis: avg }] } : undefined,
       }],
     };
-  }, [hist, h, range]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hist, h, range, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 讓 AI 對話知道你正在看哪一檔（在這裡說「買 1 張這檔」就會對到它）；只有代號、名稱與持有股數
   useScreenDetail(stock ? `個股頁：${stock.symbol} ${stock.name}（${stock.market}）${h && h.pos.shares.gt(0) ? `，目前持有 ${h.pos.shares.toString()} 股` : '，目前沒有持股'}` : null);
@@ -129,7 +132,7 @@ export default function StockDetailPage() {
             <div className="stat"><div className="k">持有股數</div><div className="v num">{fmtShares(h.pos.shares)}</div></div>
             <div className="stat"><div className="k">平均成本</div><div className="v num">{h.pos.avgCost.toDecimalPlaces(4).toString()}</div></div>
             <div className="stat"><div className="k">總成本</div><div className="v num"><Amount minor={h.pos.costMinor} currency={cur} tone="none" opts={{ compact: true }} /></div></div>
-            <div className="stat"><div className="k">市值</div><div className="v num"><Amount minor={h.val?.marketValueMinor ?? 0} currency={cur} tone="none" opts={{ compact: true }} /></div></div>
+            <div className="stat"><div className="k">市值</div><div className="v num"><Amount minor={h.val?.marketValueMinor ?? h.pos.costMinor} currency={cur} tone="none" opts={{ compact: true }} /></div></div>
             <div className="stat"><div className="k">未實現</div><div className="v num"><Amount minor={h.val?.unrealizedMinor ?? 0} currency={cur} tone="auto" opts={{ compact: true }} /></div><div className={`k ${(h.val?.unrealizedPct ?? 0) >= 0 ? 'pos' : 'neg'}`}>{pct(h.val?.unrealizedPct ?? 0)}</div></div>
             <div className="stat"><div className="k">今日</div><div className="v num"><Amount minor={h.val?.todayChangeMinor ?? 0} currency={cur} tone="auto" opts={{ compact: true }} /></div></div>
             <div className="stat"><div className="k">已實現</div><div className="v num"><Amount minor={h.pos.realizedMinor} currency={cur} tone="auto" opts={{ compact: true }} /></div></div>
@@ -164,13 +167,13 @@ export default function StockDetailPage() {
       <div className="section-title">交易紀錄</div>
       {!trades?.length ? <EmptyState emoji="🧾" title="尚無交易" /> : (
         <div className="list">
-          {[...trades].sort((a, b) => (a.date < b.date ? 1 : -1)).map((tr) => (
+          {[...trades].sort((a, b) => b.date.localeCompare(a.date) || b.ts - a.ts).map((tr) => (
             <SwipeRow key={tr.id} flat onTap={() => setTrade({ t: tr })} onEdit={() => setTrade({ t: tr })}
               onDelete={() => void deleteTrade(tr.id).then(() => snackUndo('已刪除交易', () => restoreTrade(tr.id))).catch((e: Error) => useUI.getState().showSnack({ text: `刪除失敗：${e.message}` }))}>
               <div className="row">
                 <span className="chip" style={{ ['--c' as string]: tr.type === 'buy' ? 'var(--c-pos)' : tr.type === 'sell' ? 'var(--c-neg)' : 'var(--accent)' }}>{TYPE_LABEL[tr.type]}</span>
                 <div className="row-main">
-                  <div className="row-title num">{tr.type === 'split' ? `1 拆 ${tr.sharesDec}` : `${Number(tr.sharesDec).toLocaleString('zh-TW')} 股${tr.type === 'buy' || tr.type === 'sell' ? ` @ ${tr.priceDec}` : ''}`}</div>
+                  <div className="row-title num">{tr.type === 'split' ? `1 拆 ${tr.sharesDec}` : `${fmtShares(new Decimal(tr.sharesDec))} 股${tr.type === 'buy' || tr.type === 'sell' ? ` @ ${tr.priceDec}` : ''}`}</div>
                   <div className="row-sub">{tr.date}{tr.isDCA ? ' · 定期定額' : ''}{tr.feeMinor ? ` · 費 ${formatMoney(tr.feeMinor, cur)}` : ''}{tr.taxMinor ? ` · 稅 ${formatMoney(tr.taxMinor, cur)}` : ''}</div>
                 </div>
                 {h?.pos.realized.find((r) => r.tradeId === tr.id) && <Amount minor={h.pos.realized.find((r) => r.tradeId === tr.id)!.pnlMinor} currency={cur} tone="auto" opts={{ sign: 'always' }} className="num" />}
@@ -183,7 +186,7 @@ export default function StockDetailPage() {
         <>
           <div className="section-title">股利</div>
           <div className="list">
-            {[...dividends].sort((a, b) => (a.payDate < b.payDate ? 1 : -1)).map((d) => (
+            {[...dividends].sort((a, b) => b.payDate.localeCompare(a.payDate) || b.createdAt - a.createdAt).map((d) => (
               <SwipeRow key={d.id} flat onTap={() => { setEditDiv(d); setDivOpen(true); }} onEdit={() => { setEditDiv(d); setDivOpen(true); }}
                 onDelete={async () => {
                   if (await ask('刪除這筆股利？相關的入帳帳目或配股也會移除。')) {

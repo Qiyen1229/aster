@@ -10,6 +10,7 @@ import { checkNotificationSupport, isIOS, notificationSupport, notify, requestPe
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
 import { Switch } from '@/ui/controls';
+import { DateField } from '@/ui/form';
 import { NotifTabs } from './NotifTabs';
 import { Icon } from '@/ui/Icon';
 import type { NotifySettings } from '@/db/repo/settings';
@@ -112,7 +113,7 @@ export default function NotificationsPage() {
       <div className="section-title">提醒項目</div>
       <div className="list">
         {row('每日記帳提醒', 'daily', '設定時間後若當天沒有記帳')}
-        {n.daily && <div className="field"><span className="label">提醒時間</span><input type="time" value={n.dailyTime} onChange={(e) => set({ dailyTime: e.target.value || '21:00' })} /></div>}
+        {n.daily && <DateField label="提醒時間" type="time" value={n.dailyTime} onChange={(v) => set({ dailyTime: v || '21:00' })} />}
         {row('信用卡繳款提醒', 'cardDue')}
         {n.cardDue && <div className="field"><span className="label">提前天數</span><select value={n.cardDueDays} onChange={(e) => set({ cardDueDays: Number(e.target.value) })}>{[1, 2, 3, 5, 7].map((d) => <option key={d} value={d}>{d} 天</option>)}</select></div>}
         {row('預算警示', 'budget')}

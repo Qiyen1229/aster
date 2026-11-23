@@ -10,7 +10,7 @@ import { useSettings } from '@/stores/settings';
 import { Segmented } from '@/ui/controls';
 import { CatIcon, Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
-import { chartTheme } from './chart-theme';
+import { chartTheme, useChartTheme } from './chart-theme';
 
 const EChart = lazy(() => import('./EChart'));
 
@@ -23,7 +23,7 @@ export function SankeyCard({ txs, cats, accounts, base, onOpenCategory }: {
 }) {
   const stored = useSettings((s) => s.sankeyEssential);
   const set = useSettings((s) => s.set);
-  const themeKey = useSettings((s) => `${s.theme}-${s.accent}`); // 換主題時重新取色
+  const themeKey = useChartTheme(); // 換主題／調色盤／系統深淺色時重新取色
   const [depth, setDepth] = useState<'main' | 'sub'>('main');
   const [adjust, setAdjust] = useState(false);
   const essential = useMemo(() => new Set(stored ?? DEFAULT_ESSENTIAL_MAIN_IDS), [stored]);

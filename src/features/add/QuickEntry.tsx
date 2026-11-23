@@ -123,7 +123,7 @@ export function QuickEntry({ initialText, sourceId, accMap, catMap, onApply, onB
         <div className="quick-actions">
           {SR && (
             <button className="icon-btn" onClick={listen} aria-label="用說的" aria-pressed={listening}
-              style={listening ? { background: 'var(--danger)', color: '#fff' } : undefined}><Icon name="mic" /></button>
+              style={listening ? { background: 'var(--danger)', color: 'var(--on-danger, #fff)' } : undefined}><Icon name="mic" /></button>
           )}
           <button className="btn small" disabled={busy || !text.trim()} onClick={() => void run()}>{busy ? '解析中…' : '帶入'}</button>
         </div>

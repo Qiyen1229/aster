@@ -110,7 +110,7 @@ export function ShortcutWizard({ preparing, onAdd, hasLink }: { preparing: boole
                 <li>打開「捷徑」App，找到剛加入的「<b>{s.name}</b>」進入編輯。</li>
                 <li>將最上方觸發區塊的「<b>自動化操作</b>」切換為開啟（建議關閉下方的「<b>通知</b>」避免每次跳提示）。</li>
                 <li>若要增減監聽的銀行 App 或 LINE，點 App 列表右側「<b>＋</b>」即可調整。</li>
-                <li style={{ listStyle: 'none', margin: '8px 0 4px -1.2rem', fontWeight: 600, color: 'var(--muted)' }}>
+                <li style={{ listStyle: 'none', margin: '8px 0 4px -1.2rem', fontWeight: 600, color: 'var(--text-2)' }}>
                   備用方式（若捷徑上方未出現觸發區塊，手動建立步驟）：
                 </li>
                 <li>打開「捷徑」App ➔ 下方「自動化」➔ 點「＋」➔ 選「<b>收到通知</b>」（或「交易」）。</li>

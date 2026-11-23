@@ -126,11 +126,59 @@ export async function runHealthCheck(): Promise<HealthIssue[]> {
     id: 'purge_deleted', title: `已刪除超過 ${PURGE_DAYS} 天的資料`, count: n,
     detail: '刪除後 30 天內仍可「復原」，之後可永久清除以節省空間。',
     fix: async () => {
-      await db.transactions.bulkDelete(oldTx);
-      await db.transfers.bulkDelete(oldTr);
-      await db.stock_trades.bulkDelete(oldTrade);
-      await db.durables.bulkDelete(oldDur);
-      await db.attachments.where('transactionId').anyOf(oldTx as string[]).delete();
+      const txSet = new Set(oldTx as string[]);
+      const trSet = new Set(oldTr as string[]);
+      const tradeSet = new Set(oldTrade as string[]);
+      const now = Date.now();
+      await db.transaction('rw', [db.transactions, db.transfers, db.stock_trades, db.durables, db.attachments, db.installments, db.debts, db.wishes, db.dividends], async () => {
+        if (txSet.size) {
+          await db.durables.filter((d) => (!!d.txId && txSet.has(d.txId)) || (!!d.saleTxId && txSet.has(d.saleTxId))).modify((d) => {
+            if (d.txId && txSet.has(d.txId)) delete d.txId;
+            if (d.saleTxId && txSet.has(d.saleTxId)) { delete d.saleTxId; delete d.undoSale; }
+            d.updatedAt = now;
+          });
+          await db.installments.filter((inst) => inst.schedule.some((s) => !!s.transactionId && txSet.has(s.transactionId))).modify((inst) => {
+            inst.schedule = inst.schedule.map((s) => (s.transactionId && txSet.has(s.transactionId) ? { ...s, transactionId: undefined } : s));
+            inst.updatedAt = now;
+          });
+          await db.debts.filter((d) => (!!d.loanTxId && txSet.has(d.loanTxId)) || (!!d.settleTransferId && txSet.has(d.settleTransferId))).modify((d) => {
+            if (d.loanTxId && txSet.has(d.loanTxId)) delete d.loanTxId;
+            if (d.settleTransferId && txSet.has(d.settleTransferId)) delete d.settleTransferId;
+            d.updatedAt = now;
+          });
+          await db.wishes.filter((w) => !!w.transactionId && txSet.has(w.transactionId)).modify((w) => {
+            delete w.transactionId;
+            w.updatedAt = now;
+          });
+          await db.transfers.filter((tr) => !!tr.feeTransactionId && txSet.has(tr.feeTransactionId)).modify((tr) => {
+            delete tr.feeTransactionId;
+            tr.updatedAt = now;
+          });
+        }
+        if (txSet.size || tradeSet.size) {
+          await db.dividends.filter((d) => (!!d.transactionId && txSet.has(d.transactionId)) || (!!d.stockTradeId && tradeSet.has(d.stockTradeId))).modify((d) => {
+            if (d.transactionId && txSet.has(d.transactionId)) delete d.transactionId;
+            if (d.stockTradeId && tradeSet.has(d.stockTradeId)) delete d.stockTradeId;
+            d.updatedAt = now;
+          });
+          await db.stock_trades.filter((st) => (!!st.transactionId && txSet.has(st.transactionId)) || (!!st.feeTransactionId && txSet.has(st.feeTransactionId))).modify((st) => {
+            if (st.transactionId && txSet.has(st.transactionId)) delete st.transactionId;
+            if (st.feeTransactionId && txSet.has(st.feeTransactionId)) delete st.feeTransactionId;
+            st.updatedAt = now;
+          });
+        }
+        if (trSet.size) {
+          await db.debts.filter((d) => !!d.settleTransferId && trSet.has(d.settleTransferId)).modify((d) => {
+            delete d.settleTransferId;
+            d.updatedAt = now;
+          });
+        }
+        await db.transactions.bulkDelete(oldTx);
+        await db.transfers.bulkDelete(oldTr);
+        await db.stock_trades.bulkDelete(oldTrade);
+        await db.durables.bulkDelete(oldDur);
+        await db.attachments.where('transactionId').anyOf(oldTx as string[]).delete();
+      });
       return `已永久清除 ${n} 筆`;
     },
   });

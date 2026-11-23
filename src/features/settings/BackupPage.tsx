@@ -14,6 +14,7 @@ import { accountingMonth, todayKey } from '@/domain/period';
 import { useSettings } from '@/stores/settings';
 import { useUI, ask } from '@/stores/ui';
 import { Segmented, Switch } from '@/ui/controls';
+import { DateField } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
 
 export default function BackupPage() {
@@ -159,8 +160,8 @@ export default function BackupPage() {
 
       <div className="section-title">匯出表格</div>
       <div className="list">
-        <div className="field"><span className="label">開始</span><input type="date" value={range.start} max={range.end} onChange={(e) => setRange((r) => ({ ...r, start: e.target.value }))} /></div>
-        <div className="field"><span className="label">結束</span><input type="date" value={range.end} min={range.start} onChange={(e) => setRange((r) => ({ ...r, end: e.target.value }))} /></div>
+        <DateField label="開始" value={range.start} max={range.end} onChange={(v) => setRange((r) => ({ ...r, start: v }))} />
+        <DateField label="結束" value={range.end} min={range.start} onChange={(v) => setRange((r) => ({ ...r, end: v }))} />
         <button className="row accent" disabled={!!busy} onClick={() => void run('csv', () => exportCSV(range, `aster-${range.start}_${range.end}`))}>匯出 CSV</button>
         <button className="row accent" disabled={!!busy} onClick={() => void run('xlsx', () => exportXLSX(range, `aster-${range.start}_${range.end}`))}>匯出 Excel（.xlsx，含帳戶、投資、股利）</button>
         <button className="row accent" onClick={() => navigate(`/reports/print?start=${m.start}&end=${m.end}`)}>本月 PDF 報表（列印／儲存為 PDF）</button>

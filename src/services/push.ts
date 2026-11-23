@@ -10,6 +10,7 @@ import { Capacitor } from '@capacitor/core';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { db } from '@/db/schema';
 import { creditCardStatement } from '@/db/repo/accounts';
+import { creditAvailability } from '@/domain/creditcard';
 import { addDays, toDateKey, todayKey, weekRange } from '@/domain/period';
 import { formatMoney } from '@/domain/money';
 import { AUTH_ENABLED } from '@/stores/auth';
@@ -154,11 +155,13 @@ export async function upcomingPushItems(days = 14, now = Date.now()): Promise<Pu
     for (const acc of await db.accounts.where('type').equals('credit').toArray()) {
       if (acc.archived || !acc.credit) continue;
       const st = await creditCardStatement(acc);
-      if (!st || st.statementMinor <= 0) continue;
+      if (!st) continue;
+      const due = creditAvailability(acc.credit.limitMinor, acc.balanceMinor, st.unbilledMinor, 0).billedUnpaidMinor;
+      if (due <= 0) continue;
       const d = addDays(st.cycle.dueDate, -cfg.cardDueDays);
       add({
         id: `card:${acc.id}:${st.cycle.dueDate}`, at: at(d < today ? today : d, '09:00'), title: priv ? '💳 信用卡繳款提醒' : `💳 ${acc.name} 繳款提醒`,
-        body: priv ? `繳款截止日 ${st.cycle.dueDate}` : `本期應繳 ${formatMoney(st.statementMinor, acc.currency)}，截止日 ${st.cycle.dueDate}`, url: `/accounts/${acc.id}`,
+        body: priv ? `繳款截止日 ${st.cycle.dueDate}` : `本期應繳 ${formatMoney(due, acc.currency)}，截止日 ${st.cycle.dueDate}`, url: `/accounts/${acc.id}`,
       });
     }
   }

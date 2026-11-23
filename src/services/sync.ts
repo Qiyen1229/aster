@@ -273,16 +273,16 @@ async function fullResync(): Promise<void> {
     cursor = res.cursor;
     if (!res.has_more) break;
   }
-  const pending = new Set((await db.sync_outbox.toArray()).map((e) => e.id));
   for (const name of SYNCED_TABLES) {
     const table = db.table(name);
-    const keys = await table.toCollection().primaryKeys();
-    const gone = keys.filter((k) => {
-      if (name === 'settings' && DEVICE_ONLY_SETTINGS.has(String(k))) return false;
-      return !seen.get(name)?.has(JSON.stringify(k)) && !pending.has(outboxId(name, k));
-    });
-    if (!gone.length) continue;
-    await db.transaction('rw', table, async (tx) => {
+    await db.transaction('rw', table, db.sync_outbox, async (tx) => {
+      const pending = new Set((await db.sync_outbox.toArray()).map((e) => e.id));
+      const keys = await table.toCollection().primaryKeys();
+      const gone = keys.filter((k) => {
+        if (name === 'settings' && DEVICE_ONLY_SETTINGS.has(String(k))) return false;
+        return !seen.get(name)?.has(JSON.stringify(k)) && !pending.has(outboxId(name, k));
+      });
+      if (!gone.length) return;
       markRemote(tx);
       await table.bulkDelete(gone as string[]);
     });

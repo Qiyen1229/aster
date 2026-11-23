@@ -42,8 +42,14 @@ export default function TagsPage() {
                 onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== t.name) void db.tags.update(t.id, { name: v, updatedAt: Date.now() }); }} />
               <button className="icon-btn plain" aria-label={`刪除 ${t.name}`} onClick={async () => {
                 if (!await ask(`刪除標籤「${t.name}」？帳目本身不會被刪除。`)) return;
-                await db.transaction('rw', db.tags, db.transactions, async () => {
-                  await db.transactions.where('tagIds').equals(t.id).modify((tx) => { tx.tagIds = tx.tagIds.filter((x) => x !== t.id); });
+                await db.transaction('rw', [db.tags, db.transactions, db.transfers, db.rules, db.templates, db.recurring_rules, db.saved_filters], async () => {
+                  const now = Date.now();
+                  await db.transactions.where('tagIds').equals(t.id).modify((tx) => { tx.tagIds = tx.tagIds.filter((x) => x !== t.id); tx.updatedAt = now; });
+                  await db.transfers.filter((tr) => tr.tagIds.includes(t.id)).modify((tr) => { tr.tagIds = tr.tagIds.filter((x) => x !== t.id); tr.updatedAt = now; });
+                  await db.rules.filter((r) => !!r.tagIds?.includes(t.id)).modify((r) => { r.tagIds = r.tagIds?.filter((x) => x !== t.id); r.updatedAt = now; });
+                  await db.templates.filter((tpl) => !!tpl.payload.tagIds?.includes(t.id)).modify((tpl) => { tpl.payload.tagIds = tpl.payload.tagIds?.filter((x) => x !== t.id); tpl.updatedAt = now; });
+                  await db.recurring_rules.filter((rr) => !!rr.template.tagIds?.includes(t.id)).modify((rr) => { rr.template.tagIds = rr.template.tagIds?.filter((x) => x !== t.id); rr.updatedAt = now; });
+                  await db.saved_filters.filter((sf) => !!sf.filter.tagIds?.includes(t.id)).modify((sf) => { sf.filter.tagIds = sf.filter.tagIds?.filter((x) => x !== t.id); sf.updatedAt = now; });
                   await db.tags.delete(t.id);
                 });
               }}><Icon name="trash" size={18} /></button>

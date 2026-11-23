@@ -20,7 +20,7 @@ import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
 import { Icon } from '@/ui/Icon';
 import { PullToRefresh } from '@/ui/PullToRefresh';
 import { SwipeRow } from '@/ui/SwipeRow';
-import { chartTheme } from '../reports/chart-theme';
+import { chartTheme, useChartTheme } from '../reports/chart-theme';
 import { MARKET_LABEL } from './StockSearch';
 import { TradeSheet } from './TradeSheet';
 import { useScreenDetail } from '@/stores/screenContext';
@@ -58,6 +58,7 @@ export default function InvestTab() {
   const [alloc, setAlloc] = useState<'stock' | 'industry' | 'market' | 'currency'>('stock');
   const [range, setRange] = useState<30 | 90 | 365 | 3650>(90);
   const snaps = useLiveQuery(() => snapshotSeries(range), [range, pf?.lastUpdated]);
+  const themeKey = useChartTheme();
   const t = chartTheme();
   // 讓 AI 對話知道你正在看投資頁（只有檔數、市值與損益合計，沒有股數與成本）
   useScreenDetail(pf && pf.holdings.length ? `投資：${pf.holdings.length} 檔持股，總市值 ${formatMoney(pf.marketValueBase, base, { decimals: 0 })}，未實現損益 ${formatMoney(pf.unrealizedBase, base, { decimals: 0 })}` : null);
@@ -86,7 +87,7 @@ export default function InvestTab() {
       legend: { type: 'scroll', bottom: 0, textStyle: { color: t.text2 }, itemWidth: 10, itemHeight: 10 },
       series: [{ type: 'pie', radius: ['45%', '72%'], center: ['50%', '44%'], label: { show: false }, itemStyle: { borderRadius: 6, borderColor: t.surface, borderWidth: 2 }, data }],
     };
-  }, [pf, alloc, base]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pf, alloc, base, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const curveOption = useMemo(() => {
     if (!snaps || snaps.length < 2) return null;
@@ -102,7 +103,7 @@ export default function InvestTab() {
         { name: '未實現損益', type: 'line', smooth: true, symbol: 'none', data: snaps.map((s) => s.unrealizedPnlMinor), lineStyle: { color: t.pos, width: 1.5 } },
       ],
     };
-  }, [snaps, base]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [snaps, base, themeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!pf) return <SkeletonRows n={4} />;
   const ranked = [...pf.holdings].filter((h) => h.val).sort((a, b) => (b.val!.unrealizedPct - a.val!.unrealizedPct));
@@ -181,7 +182,7 @@ export default function InvestTab() {
                       {h.price && <span className={Number(h.price.changeDec) >= 0 ? 'pos' : 'neg'}> {pct(Number(h.price.changePctDec))}</span>}</div>
                   </div>
                   <div className="row-end" style={{ maxWidth: '48%', overflow: 'hidden' }}>
-                    <div className="num" style={{ fontWeight: 600 }}><Amount minor={h.val?.marketValueMinor ?? h.pos.costMinor} currency={h.stock.currency} tone="none" /></div>
+                    <div className="num" style={{ fontWeight: 600 }}><Amount minor={h.val?.marketValueMinor ?? h.pos.costMinor} currency={h.stock.currency} tone="none" opts={{ compact: Math.abs(h.val?.marketValueMinor ?? h.pos.costMinor) >= 10_000_000_00 }} /></div>
                     {h.val && <div className="num" style={{ fontSize: '0.8rem' }}><Amount minor={h.val.unrealizedMinor} currency={h.stock.currency} tone="auto" opts={{ sign: 'always', compact: Math.abs(h.val.unrealizedMinor) >= 10_000_000_00 }} /> <span className={h.val.unrealizedMinor >= 0 ? 'pos' : 'neg'}>{pct(h.val.unrealizedPct)}</span></div>}
                   </div>
                 </div>
@@ -236,7 +237,7 @@ export default function InvestTab() {
                     <div className="row">
                       <span className="row-main">{h.stock.symbol} {h.stock.name}</span>
                       <span className="row-sub">已實現</span>
-                      <Amount minor={h.pos.realizedMinor} currency={h.stock.currency} tone="auto" opts={{ sign: 'always' }} className="num" />
+                      <Amount minor={h.pos.realizedMinor} currency={h.stock.currency} tone="auto" opts={{ sign: 'always', compact: Math.abs(h.pos.realizedMinor) >= 10_000_000_00 }} className="num" />
                     </div>
                   </SwipeRow>
                 ))}

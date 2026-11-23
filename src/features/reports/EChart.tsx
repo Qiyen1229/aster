@@ -8,8 +8,7 @@ import { BarChart, LineChart, PieChart, SankeyChart } from 'echarts/charts';
 import { GridComponent, LegendComponent, MarkLineComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsCoreOption } from 'echarts/core';
-import { useSettings } from '@/stores/settings';
-import { chartTheme } from './chart-theme';
+import { chartTheme, useChartTheme } from './chart-theme';
 export { chartTheme };
 
 echarts.use([BarChart, LineChart, PieChart, SankeyChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
@@ -21,7 +20,7 @@ export function EChart({ option, height = 240, onClick, ariaLabel }: {
 }) {
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | null>(null);
-  const theme = useSettings((s) => `${s.theme}-${s.accent}-${s.upColor}`);
+  const theme = useChartTheme();
   const clickRef = useRef(onClick);
   clickRef.current = onClick;
 
@@ -37,13 +36,17 @@ export function EChart({ option, height = 240, onClick, ariaLabel }: {
 
   useEffect(() => {
     const t = chartTheme();
+    const rawTip = (option as { tooltip?: unknown }).tooltip;
+    const mergedTip = rawTip && typeof rawTip === 'object' && !Array.isArray(rawTip)
+      ? { backgroundColor: t.surface, borderColor: t.sep, textStyle: { color: t.text }, confine: true, ...rawTip }
+      : { backgroundColor: t.surface, borderColor: t.sep, textStyle: { color: t.text }, confine: true };
     chart.current?.setOption({
       animation: !reduced(),
       animationDuration: 700,
       animationEasing: 'cubicOut',
       textStyle: { fontFamily: t.font, color: t.text2 },
-      tooltip: { backgroundColor: t.surface, borderColor: t.sep, textStyle: { color: t.text }, confine: true },
       ...option,
+      tooltip: mergedTip,
     }, true);
   }, [option, theme]);
 

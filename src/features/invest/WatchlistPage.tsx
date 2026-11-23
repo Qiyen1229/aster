@@ -21,7 +21,8 @@ export default function WatchlistPage() {
   const navigate = useNavigate();
   const items = useLiveQuery(async () => {
     const list = await db.watchlist.orderBy('sort').toArray();
-    return Promise.all(list.map(async (w) => ({ w, stock: await db.stocks.get(w.stockId), price: await db.price_cache.get(w.stockId) })));
+    const rows = await Promise.all(list.map(async (w) => ({ w, stock: await db.stocks.get(w.stockId), price: await db.price_cache.get(w.stockId) })));
+    return rows.filter((r): r is { w: WatchItem; stock: NonNullable<typeof r.stock>; price: typeof r.price } => !!r.stock);
   }, []);
   const [adding, setAdding] = useState(false);
   const [alertFor, setAlertFor] = useState<WatchItem | null>(null);
@@ -37,7 +38,7 @@ export default function WatchlistPage() {
         {!items ? <SkeletonRows /> : items.length === 0 ? (
           <EmptyState emoji="👀" title="觀察清單是空的" text="加入想追蹤但還沒買的股票，設定「站上／跌破」到價提醒。"
             action={<button className="btn small" onClick={() => setAdding(true)}>加入股票</button>} />
-        ) : items.map(({ w, stock, price }) => stock && (
+        ) : items.map(({ w, stock, price }) => (
           <SwipeRow key={w.id} onTap={() => navigate(`/invest/stock/${stock.id}`)} onEdit={() => setAlertFor(w)}
             onDelete={() => void removeWatch(w.id).then(() => useUI.getState().showSnack({ text: `已移除 ${stock.name}` }))}
             onLongPress={() => setAlertFor(w)}>

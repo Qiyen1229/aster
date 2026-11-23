@@ -47,6 +47,7 @@ export default function CategoriesPage() {
   const listRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const dragRef = useRef<DragState | null>(null);
+  const wasDraggingRef = useRef(false);
   dragRef.current = dragState;
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>, mainId: string, index: number) => {
@@ -54,12 +55,31 @@ export default function CategoriesPage() {
     const target = e.target as HTMLElement;
     if (target.closest('.cat-edit-btn') || target.closest('.cat-sub-wrap')) return;
 
+    const cardEl = e.currentTarget;
+    const pointerId = e.pointerId;
     const startX = e.clientX;
     const startY = e.clientY;
+
+    const cleanupPre = () => {
+      window.removeEventListener('pointermove', onPreMove);
+      window.removeEventListener('pointerup', onPreEnd);
+      window.removeEventListener('pointercancel', onPreEnd);
+    };
+    const onPreMove = (ev: PointerEvent) => {
+      if (Math.abs(ev.clientX - startX) > 8 || Math.abs(ev.clientY - startY) > 8) {
+        window.clearTimeout(holdTimer.current);
+        cleanupPre();
+      }
+    };
+    const onPreEnd = () => {
+      window.clearTimeout(holdTimer.current);
+      cleanupPre();
+    };
 
     window.getSelection()?.removeAllRanges();
     window.clearTimeout(holdTimer.current);
     holdTimer.current = window.setTimeout(() => {
+      cleanupPre();
       // 計算所有項目高度
       const heights = orderedList.map((t) => cardRefs.current.get(t.main.id)?.offsetHeight ?? 64);
       const state: DragState = {
@@ -70,21 +90,19 @@ export default function CategoriesPage() {
         currentY: startY,
         itemHeights: heights,
       };
+      wasDraggingRef.current = true;
       setDragState(state);
       haptic('medium');
       try {
-        e.currentTarget.setPointerCapture(e.pointerId);
+        cardEl.setPointerCapture(pointerId);
       } catch {
         /* ignore */
       }
     }, 150);
 
-    const onCancel = (ev: PointerEvent) => {
-      if (Math.abs(ev.clientX - startX) > 8 || Math.abs(ev.clientY - startY) > 8) {
-        window.clearTimeout(holdTimer.current);
-      }
-    };
-    window.addEventListener('pointermove', onCancel, { once: true });
+    window.addEventListener('pointermove', onPreMove);
+    window.addEventListener('pointerup', onPreEnd, { once: true });
+    window.addEventListener('pointercancel', onPreEnd, { once: true });
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -143,6 +161,7 @@ export default function CategoriesPage() {
 
     const { startIndex, overIndex } = ds;
     setDragState(null);
+    window.setTimeout(() => { wasDraggingRef.current = false; }, 0);
 
     if (startIndex !== overIndex) {
       haptic('success');
@@ -152,6 +171,14 @@ export default function CategoriesPage() {
       setOrderedList(next);
       await reorderCategories(next.map((t) => t.main.id));
     }
+  };
+
+  const onPointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    window.clearTimeout(holdTimer.current);
+    if (!dragRef.current) return;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    setDragState(null);
+    window.setTimeout(() => { wasDraggingRef.current = false; }, 0);
   };
 
   return (
@@ -222,14 +249,14 @@ export default function CategoriesPage() {
               onPointerDown={(e) => onPointerDown(e, main.id, index)}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
+              onPointerCancel={onPointerCancel}
             >
               <div className="cat-card-header">
                 <button
                   type="button"
                   className="cat-card-main"
                   onClick={() => {
-                    if (dragState) return;
+                    if (dragRef.current || wasDraggingRef.current) return;
                     setExpanded((e) => (e === main.id ? '' : main.id));
                   }}
                 >

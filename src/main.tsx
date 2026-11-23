@@ -4,7 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import AuthGate from './app/AuthGate';
 import { ConfirmHost, InputHost } from './app/overlays';
 import './theme/app.css';
-import { applyTheme } from './stores/settings';
+import { applyTheme, readCachedTheme } from './stores/settings';
 import { DEFAULT_SETTINGS } from './db/repo/settings';
 import { installViewportTracking } from './app/viewport';
 import { initGlobalErrorLogging } from './services/errorLog';
@@ -12,8 +12,8 @@ import { initGlobalErrorLogging } from './services/errorLog';
 // 啟動全域錯誤捕捉與本機錯誤日誌記錄
 initGlobalErrorLogging();
 
-// 先套用預設主題（跟隨系統），避免登入與資料庫讀取期間閃白
-applyTheme(DEFAULT_SETTINGS);
+// 先套用上次快取的主題（或預設跟隨系統），避免登入與資料庫讀取期間閃一下
+applyTheme(readCachedTheme() ?? DEFAULT_SETTINGS);
 installViewportTracking();
 
 // 監聽 Vite 動態模組載入失敗（伺服器部署新版造成舊版 chunk 雜湊 404 時自動重載）

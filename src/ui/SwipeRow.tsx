@@ -118,7 +118,7 @@ export function SwipeRow({ children, onTap, onEdit, onDelete, onLongPress, disab
       <div ref={ref} className="swipe-content" onPointerDown={down} onPointerMove={move} onPointerUp={up}
         onPointerCancel={() => { if (st.current) clearTimeout(st.current.timer); st.current = null; set(0, true); }}
         onContextMenu={(e) => { if (onLongPress) { e.preventDefault(); onLongPress(); } }}
-        role="button" tabIndex={0}
+        role={onTap ? 'button' : undefined} tabIndex={onTap ? 0 : undefined}
         onKeyDown={(e) => {
           if (e.target !== e.currentTarget) return;
           if (e.key === 'Enter') onTap?.();
