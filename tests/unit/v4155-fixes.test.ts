@@ -154,7 +154,7 @@ describe('v4.1.55 記一筆與表單日期／時間選擇修復', () => {
     document.body.innerHTML = '';
   });
 
-  it('AddSheet 日期與時間 input 使用 .pill-picker-input 且可正常觸發 onChange 變更數值', async () => {
+  it('AddSheet 日期與時間改用自訂選擇器（不使用原生 date/time input）且可正常變更數值', async () => {
     await act(async () => {
       useUI.getState().openAdd();
       root.render(React.createElement(AddSheet));
@@ -162,29 +162,38 @@ describe('v4.1.55 記一筆與表單日期／時間選擇修復', () => {
     await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
 
     const screen = document.body.querySelector<HTMLElement>('.add-screen')!;
-    const dateInput = screen.querySelector<HTMLInputElement>('input[type="date"][aria-label="日期"]')!;
-    const timeInput = screen.querySelector<HTMLInputElement>('input[type="time"][aria-label="時間"]')!;
-    expect(dateInput).not.toBeNull();
-    expect(timeInput).not.toBeNull();
-    expect(dateInput.classList.contains('pill-picker-input')).toBe(true);
-    expect(timeInput.classList.contains('pill-picker-input')).toBe(true);
+    expect(screen.querySelector('input[type="date"]')).toBeNull();
+    expect(screen.querySelector('input[type="time"]')).toBeNull();
 
-    const setReactValue = (el: HTMLInputElement, val: string) => {
-      const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!;
-      desc.set!.call(el, val);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    };
+    const dateBtn = screen.querySelector<HTMLButtonElement>('button.pill[aria-label="日期"]')!;
+    const timeBtn = screen.querySelector<HTMLButtonElement>('button.pill[aria-label="時間"]')!;
+    expect(dateBtn).not.toBeNull();
+    expect(timeBtn).not.toBeNull();
 
+    // 開啟自訂日期選擇器並點選 15 日
+    await act(async () => { dateBtn.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    const day15 = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.dp-cell:not(.out)'))
+      .find((b) => b.textContent?.trim() === '15')!;
+    expect(day15).toBeTruthy();
+    const expectedDate = day15.getAttribute('aria-label')!;
+    await act(async () => { day15.click(); });
+    expect(dateBtn.textContent).toContain(`${Number(expectedDate.slice(5, 7))}/${Number(expectedDate.slice(8, 10))}`);
+
+    // 開啟自訂時間選擇器並選 08:45
+    await act(async () => { timeBtn.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    const hourOpt = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[aria-label="小時"] .tp-opt'))
+      .find((b) => b.textContent?.trim() === '08')!;
+    const minChip = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.tp-quick .dp-chip'))
+      .find((b) => b.textContent?.trim() === ':45')!;
+    const confirmBtn = document.body.querySelector<HTMLButtonElement>('.tp-actions .btn.primary')!;
     await act(async () => {
-      setReactValue(dateInput, '2026-11-15');
-      setReactValue(timeInput, '08:45');
+      hourOpt.click();
+      minChip.click();
     });
-
-    expect(dateInput.value).toBe('2026-11-15');
-    expect(timeInput.value).toBe('08:45');
-    expect(dateInput.closest('.pill')?.textContent).toContain('11/15');
-    expect(timeInput.closest('.pill')?.textContent).toContain('08:45');
+    await act(async () => { confirmBtn.click(); });
+    expect(timeBtn.textContent).toContain('08:45');
   });
 
   it('app.css 不讓 .pill::after 擋住 .pill-picker-input、表單元件允許 user-select: text 且 .field 日期時間不使用 inline-flex', () => {

@@ -388,7 +388,7 @@ describe('v4.1.56 鍵盤偏移、Sheet 焦點保護、聯絡人自動填寫與 C
     expect(document.activeElement).toBe(dateInput);
   });
 
-  it('AddSheet 日期與時間膠囊為 <label class="pill">，備註輸入框具 autoComplete="off"', async () => {
+  it('AddSheet 日期與時間膠囊為自訂選擇器按鈕，備註輸入框具 autoComplete="off"', async () => {
     await db.delete();
     await db.open();
     await db.categories.bulkAdd(buildDefaultCategories());
@@ -401,11 +401,13 @@ describe('v4.1.56 鍵盤偏移、Sheet 焦點保護、聯絡人自動填寫與 C
     await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
 
     const screen = document.body.querySelector<HTMLElement>('.add-screen')!;
-    const dateInput = screen.querySelector<HTMLInputElement>('input[type="date"][aria-label="日期"]')!;
-    const timeInput = screen.querySelector<HTMLInputElement>('input[type="time"][aria-label="時間"]')!;
+    const dateBtn = screen.querySelector<HTMLButtonElement>('button.pill[aria-label="日期"]')!;
+    const timeBtn = screen.querySelector<HTMLButtonElement>('button.pill[aria-label="時間"]')!;
     const noteInput = screen.querySelector<HTMLInputElement>('input[aria-label="備註"]')!;
-    expect(dateInput.closest('label.pill')).not.toBeNull();
-    expect(timeInput.closest('label.pill')).not.toBeNull();
+    expect(dateBtn).not.toBeNull();
+    expect(timeBtn).not.toBeNull();
+    expect(screen.querySelector('input[type="date"]')).toBeNull();
+    expect(screen.querySelector('input[type="time"]')).toBeNull();
     expect(noteInput.getAttribute('autocomplete')).toBe('off');
   });
 

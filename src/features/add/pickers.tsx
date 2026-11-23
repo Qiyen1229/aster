@@ -1,10 +1,13 @@
 /**
  * 記帳面板用的選擇器（皆為巢狀 Bottom Sheet）：帳戶、幣別、標籤、專案。
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { db, uid } from '@/db/schema';
 import type { Account, Project, Tag } from '@/db/types';
 import { CURRENCIES } from '@/domain/money';
+import { addDays, fromDateKey, monthGrid, pad2, todayKey } from '@/domain/period';
+import { haptic } from '@/services/haptics';
+import { useSettings } from '@/stores/settings';
 import { Sheet } from '@/ui/Sheet';
 import { Amount } from '@/ui/controls';
 import { CatIcon, Icon } from '@/ui/Icon';
@@ -182,6 +185,207 @@ export function DurablePicker({
           <Icon name="edit" size={16} />
           <span className="row-main">{custom > 0 ? '修改自訂期限…' : '自訂使用期限…'}</span>
         </button>
+      </div>
+    </Sheet>
+  );
+}
+
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const MINUTES = Array.from({ length: 60 }, (_, i) => i);
+const QUICK_MINUTES = [0, 15, 30, 45];
+
+function parseYM(key: string) {
+  const d = fromDateKey(key || todayKey());
+  return { y: d.getFullYear(), m0: d.getMonth() };
+}
+
+function parseHM(value: string): [number, number] {
+  const m = /^(\d{1,2}):(\d{1,2})$/.exec(value.trim());
+  if (m) {
+    const h = Math.min(23, Math.max(0, Number(m[1])));
+    const min = Math.min(59, Math.max(0, Number(m[2])));
+    return [h, min];
+  }
+  const now = new Date();
+  return [now.getHours(), now.getMinutes()];
+}
+
+export function DatePickerSheet({ open, value, onPick, onClose }: {
+  open: boolean;
+  value: string;
+  onPick: (date: string) => void;
+  onClose: () => void;
+}) {
+  const weekStart = useSettings((s) => s.weekStart);
+  const [ym, setYm] = useState(() => parseYM(value));
+
+  useEffect(() => {
+    if (open) setYm(parseYM(value));
+  }, [open, value]);
+
+  const today = todayKey();
+  const quickDays = [
+    { label: '前天', key: addDays(today, -2) },
+    { label: '昨天', key: addDays(today, -1) },
+    { label: '今天', key: today },
+  ];
+
+  const shiftMonth = (delta: number) => {
+    haptic('light');
+    setYm((prev) => {
+      const next = new Date(prev.y, prev.m0 + delta, 1);
+      return { y: next.getFullYear(), m0: next.getMonth() };
+    });
+  };
+
+  const weekdayLabels = Array.from({ length: 7 }, (_, i) => WEEKDAYS[(weekStart + i) % 7]);
+  const cells = monthGrid(ym.y, ym.m0, weekStart);
+
+  return (
+    <Sheet open={open} onClose={onClose} title="選擇日期">
+      <div className="dp-body">
+        <div className="dp-quick">
+          {quickDays.map((q) => (
+            <button
+              key={q.label}
+              type="button"
+              className={`dp-chip${value === q.key ? ' active' : ''}`}
+              onClick={() => { haptic('light'); onPick(q.key); onClose(); }}
+            >
+              {q.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="dp-head">
+          <button type="button" className="icon-btn" aria-label="上個月" onClick={() => shiftMonth(-1)}>
+            <Icon name="chevLeft" size={18} />
+          </button>
+          <strong className="num">{ym.y} 年 {ym.m0 + 1} 月</strong>
+          <button type="button" className="icon-btn" aria-label="下個月" onClick={() => shiftMonth(1)}>
+            <Icon name="chevRight" size={18} />
+          </button>
+        </div>
+
+        <div className="dp-weekdays" aria-hidden="true">
+          {weekdayLabels.map((w) => <span key={w}>{w}</span>)}
+        </div>
+
+        <div className="dp-grid" role="grid" aria-label="日曆">
+          {cells.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              className={`dp-cell num${c.inMonth ? '' : ' out'}${c.key === today ? ' today' : ''}${c.key === value ? ' selected' : ''}`}
+              aria-label={c.key}
+              aria-pressed={c.key === value}
+              onClick={() => { haptic('light'); onPick(c.key); onClose(); }}
+            >
+              {c.day}
+            </button>
+          ))}
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+export function TimePickerSheet({ open, value, onPick, onClose }: {
+  open: boolean;
+  value: string;
+  onPick: (time: string) => void;
+  onClose: () => void;
+}) {
+  const [[hour, minute], setHM] = useState<[number, number]>(() => parseHM(value));
+  const hourRef = useRef<HTMLDivElement>(null);
+  const minRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setHM(parseHM(value));
+    const id = window.requestAnimationFrame(() => {
+      hourRef.current?.querySelector('.tp-opt.selected')?.scrollIntoView?.({ block: 'center' });
+      minRef.current?.querySelector('.tp-opt.selected')?.scrollIntoView?.({ block: 'center' });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [open, value]);
+
+  const applyNow = () => {
+    haptic('light');
+    const now = new Date();
+    onPick(`${pad2(now.getHours())}:${pad2(now.getMinutes())}`);
+    onClose();
+  };
+
+  const confirm = () => {
+    haptic('light');
+    onPick(`${pad2(hour)}:${pad2(minute)}`);
+    onClose();
+  };
+
+  return (
+    <Sheet open={open} onClose={onClose} title="選擇時間">
+      <div className="tp-body">
+        <div className="tp-preview num" aria-live="polite">
+          {pad2(hour)}:{pad2(minute)}
+        </div>
+
+        <div className="tp-quick">
+          {QUICK_MINUTES.map((qm) => (
+            <button
+              key={qm}
+              type="button"
+              className={`dp-chip num${minute === qm ? ' active' : ''}`}
+              onClick={() => { haptic('light'); setHM(([h]) => [h, qm]); }}
+            >
+              :{pad2(qm)}
+            </button>
+          ))}
+        </div>
+
+        <div className="tp-cols">
+          <div className="tp-col-wrap">
+            <div className="tp-col-label">時</div>
+            <div className="tp-col" ref={hourRef} role="listbox" aria-label="小時">
+              {HOURS.map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  role="option"
+                  aria-selected={hour === h}
+                  className={`tp-opt num${hour === h ? ' selected' : ''}`}
+                  onClick={() => { haptic('light'); setHM(([, m]) => [h, m]); }}
+                >
+                  {pad2(h)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="tp-col-wrap">
+            <div className="tp-col-label">分</div>
+            <div className="tp-col" ref={minRef} role="listbox" aria-label="分鐘">
+              {MINUTES.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="option"
+                  aria-selected={minute === m}
+                  className={`tp-opt num${minute === m ? ' selected' : ''}`}
+                  onClick={() => { haptic('light'); setHM(([h]) => [h, m]); }}
+                >
+                  {pad2(m)}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="tp-actions">
+          <button type="button" className="btn ghost" onClick={applyNow}>現在</button>
+          <button type="button" className="btn primary" onClick={confirm}>確定</button>
+        </div>
       </div>
     </Sheet>
   );

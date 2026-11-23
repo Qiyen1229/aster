@@ -31,7 +31,7 @@ import { Sheet } from '@/ui/Sheet';
 import { EmptyState, Segmented, Switch } from '@/ui/controls';
 import { CatIcon, Icon } from '@/ui/Icon';
 import { Keypad } from './Keypad';
-import { AccountPicker, CurrencyPicker, DurablePicker, ProjectPicker, TagPicker } from './pickers';
+import { AccountPicker, CurrencyPicker, DatePickerSheet, DurablePicker, ProjectPicker, TagPicker, TimePickerSheet } from './pickers';
 import { computeSplit, SplitSheet, type SplitState } from './SplitSheet';
 import { lifeLabel } from '@/domain/durable';
 import { LifeSpanSheet } from '../plan/LifeSpanSheet';
@@ -55,7 +55,7 @@ const MODES: { value: AddMode | 'loan'; label: string }[] = [
 const isLoanMode = (m: AddMode): m is 'receivable' | 'payable' => m === 'receivable' || m === 'payable';
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
-type Picker = null | 'account' | 'toAccount' | 'currency' | 'tags' | 'project' | 'photo' | 'split' | 'durable';
+type Picker = null | 'account' | 'toAccount' | 'currency' | 'tags' | 'project' | 'photo' | 'split' | 'durable' | 'date' | 'time';
 
 const nowTime = () => { const d = new Date(); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 
@@ -1069,14 +1069,12 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                     </button>
                   </>
                 )}
-                <label className="pill" style={{ position: 'relative' }}>
+                <button type="button" className="pill" onClick={() => { haptic('light'); setPicker('date'); }} aria-label="日期">
                   <Icon name="calendar" size={16} /> {dateLabel}
-                  <input type="date" className="pill-picker-input" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="日期" />
-                </label>
-                <label className="pill num" style={{ position: 'relative' }}>
+                </button>
+                <button type="button" className="pill num" onClick={() => { haptic('light'); setPicker('time'); }} aria-label="時間">
                   <Icon name="clock" size={16} /> {time}
-                  <input type="time" className="pill-picker-input" value={time} onChange={(e) => e.target.value && setTime(e.target.value)} aria-label="時間" />
-                </label>
+                </button>
                 {mode === 'transfer' && (
                   <span className="pill">
                     手續費
@@ -1396,6 +1394,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         totalMinor={value && value.gt(0) ? toMinor(value, txCurrency) : 0} currency={txCurrency} />
       <TagPicker open={picker === 'tags'} onClose={() => setPicker(null)} tags={tags} value={tagIds} onChange={setTagIds} />
       <ProjectPicker open={picker === 'project'} onClose={() => setPicker(null)} projects={projects} value={projectId} onPick={setProjectId} />
+      <DatePickerSheet open={picker === 'date'} onClose={() => setPicker(null)} value={date} onPick={setDate} />
+      <TimePickerSheet open={picker === 'time'} onClose={() => setPicker(null)} value={time} onPick={setTime} />
       <Sheet open={!!viewer} onClose={() => { if (viewer) URL.revokeObjectURL(viewer); setViewer(null); }} title="收據" full>
         {viewer && <img src={viewer} alt="收據照片" style={{ width: '100%', borderRadius: 12 }} />}
       </Sheet>

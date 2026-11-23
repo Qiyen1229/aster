@@ -58,7 +58,7 @@ export function TwoFactorSection() {
           </>
         ) : (
           <>
-            <div className="row"><span className="row-main"><span className="row-title">尚未啟用</span><span className="row-sub" style={{ whiteSpace: 'normal' }}>密碼外洩時，沒有手機上的驗證碼就登不進來（網銀等級的保護）</span></span></div>
+            <div className="row"><span className="row-main"><span className="row-title">尚未啟用</span><span className="row-sub" style={{ whiteSpace: 'normal' }}>需要手機驗證碼登入</span></span></div>
             <button className="row accent" disabled={busy} onClick={() => void start()}>開始設定</button>
           </>
         )}
