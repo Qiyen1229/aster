@@ -140,7 +140,7 @@ export default function ShortcutsPage() {
 
       <div className="section-title">已連結的裝置</div>
       <p className="muted" style={{ margin: '-4px 4px 8px', fontSize: '0.8rem' }}>
-        可在此確認捷徑是否曾成功送出資料（顯示「已傳送 N 次資料」；若仍為「還沒有送過資料」，請確認捷徑內的「自動化操作」已開啟）。
+        可確認捷徑成功送出資料，若仍為「還沒有送過資料」，請確認捷徑內的「自動化操作」已開啟。
       </p>
       <div className="list">
         {tokens?.length === 0 && <div className="row"><span className="row-sub">還沒有。按上面的「加入」會自動建立。</span></div>}

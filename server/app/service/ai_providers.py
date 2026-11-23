@@ -163,8 +163,8 @@ def _post(p: Provider, payload: dict, timeout: int) -> dict:
         return json.loads(r.read().decode("utf-8"))
 
 
-def _post_gemini_audio(p: Provider, system: str, user: str, b64: str, fmt: str, max_tokens: int, timeout: int) -> str:
-    """Gemini OpenAI 相容端點的 input_audio 僅支援 mp3/wav；改走 Gemini 原生 generateContent inlineData 以完整支援 iOS mp4 / webm / ogg。"""
+def _post_gemini_inline(p: Provider, system: str, user: str, mime_type: str, b64: str, max_tokens: int, timeout: int) -> str:
+    """透過 Gemini 原生 generateContent inlineData 傳送音訊或 PDF（OpenAI 相容端點不支援 iOS 音訊或 PDF 檔案）。"""
     root = p.base_url.rstrip("/")
     if root.endswith("/openai"):
         root = root[:-len("/openai")]
@@ -175,7 +175,7 @@ def _post_gemini_audio(p: Provider, system: str, user: str, b64: str, fmt: str, 
             "role": "user",
             "parts": [
                 {"text": user},
-                {"inlineData": {"mimeType": AUDIO_MIME.get(fmt, f"audio/{fmt}"), "data": b64}},
+                {"inlineData": {"mimeType": mime_type, "data": b64}},
             ],
         }],
         "generationConfig": {
@@ -245,20 +245,32 @@ def complete_json(
             continue
         if audio and p.name == "nvidia":
             continue  # NVIDIA 文字模型不支援 input_audio，避免誤打失敗連帶觸發 5 分鐘冷卻
+        pdf_b64 = next((u.split(",", 1)[1] for u in (images or []) if u.startswith("data:application/pdf;base64,")), None)
+        if pdf_b64 and p.name == "nvidia":
+            continue
         tried += 1
         t0 = time.monotonic()
         try:
             if audio and (p.name == "gemini" or "generativelanguage.googleapis.com" in p.base_url):
                 b64, fmt = audio
-                raw_text = _post_gemini_audio(p, system, user, b64, fmt, max_tokens, s.ai_timeout_seconds)
+                raw_text = _post_gemini_inline(p, system, user, AUDIO_MIME.get(fmt, f"audio/{fmt}"), b64, max_tokens, s.ai_timeout_seconds)
+                data = extract_json(clean_content(raw_text))
+            elif pdf_b64 and (p.name == "gemini" or "generativelanguage.googleapis.com" in p.base_url):
+                raw_text = _post_gemini_inline(p, system, user, "application/pdf", pdf_b64, max_tokens, s.ai_timeout_seconds)
                 data = extract_json(clean_content(raw_text))
             else:
-                # 圖片／音訊放在使用者訊息裡
+                # 圖片／音訊／PDF 放在使用者訊息裡
                 if audio:
                     b64, fmt = audio
                     content: object = [{"type": "text", "text": user}, {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}}]
                 elif images:
-                    content = [{"type": "text", "text": user}, *({"type": "image_url", "image_url": {"url": u}} for u in images)]
+                    parts: list[object] = [{"type": "text", "text": user}]
+                    for u in images:
+                        if u.startswith("data:application/pdf;base64,"):
+                            parts.append({"type": "file", "file": {"filename": "statement.pdf", "file_data": u}})
+                        else:
+                            parts.append({"type": "image_url", "image_url": {"url": u}})
+                    content = parts
                 else:
                     content = user
                 payload = {"model": p.model, "temperature": 0, "max_tokens": max_tokens,

@@ -294,13 +294,34 @@ export async function aiAgentPlan(text: string, screen?: string, onPartial?: (su
 
 export interface StatementEntry { date: string; amount: number; type: 'expense' | 'income'; merchant: string; foreign_amount: number | null; foreign_currency: string | null }
 
+function readFileAsBase64DataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = typeof reader.result === 'string' ? reader.result : '';
+      if (!res) { reject(new Error('讀取檔案失敗')); return; }
+      const b64 = res.includes(',') ? res.slice(res.indexOf(',') + 1) : res;
+      resolve(`data:application/pdf;base64,${b64}`);
+    };
+    reader.onerror = () => reject(new Error('讀取檔案失敗'));
+    reader.readAsDataURL(file);
+  });
+}
+
 /**
- * 帳單截圖 → 逐筆明細（2 點額度）。只送圖片（縮小後、不保存在伺服器），不送任何帳目或分類；
+ * 帳單截圖／PDF → 逐筆明細（2 點額度）。只送圖片（縮小後）或 PDF（不保存在伺服器），不送任何帳目或分類；
  * 回傳的只是「擷取結果」，對帳比對在本機做，加總與帳單合計不符時介面會提醒。截圖比收據大，所以縮圖上限放寬。
  */
 export async function aiStatement(file: File): Promise<{ entries: StatementEntry[]; total: number | null; quota: AiQuota }> {
-  const { compressForAi } = await import('./attachments');
-  const image = await compressForAi(file, { maxEdge: 2000, maxMB: 0.9 });
+  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  let image: string;
+  if (isPdf) {
+    if (file.size > 4 * 1024 * 1024) throw new Error('PDF 檔案請勿超過 4 MB，或改用截圖／CSV 對帳');
+    image = await readFileAsBase64DataUrl(file);
+  } else {
+    const { compressForAi } = await import('./attachments');
+    image = await compressForAi(file, { maxEdge: 2000, maxMB: 0.9 });
+  }
   const ctx = await parseContext();
   return aiPost<{ entries: StatementEntry[]; total: number | null; quota: AiQuota }>('/ai/statement', { image, today: ctx.today });
 }

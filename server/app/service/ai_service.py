@@ -260,11 +260,12 @@ class AiService:
         return SearchPlanResult(**r, quota=self._quota(user))  # type: ignore[arg-type]
 
     def statement(self, user: User, body: StatementRequest) -> StatementResult:
-        """帳單截圖 → 逐筆明細（2 點額度）。數字只是擷取結果，前端會用「明細加總＝帳單合計」驗證，且對帳比對在本機完成。"""
+        """帳單截圖／PDF → 逐筆明細（2 點額度）。數字只是擷取結果，前端會用「明細加總＝帳單合計」驗證，且對帳比對在本機完成。"""
         today = date.fromisoformat(body.today)
         msg = ai_tasks.dumps({"今天": body.today})
-        r = ai_tasks.run_task(self.db, user, "statement", ai_tasks.STATEMENT, msg, lambda d: ai_tasks.v_statement(d, today), images=[body.image],
-                              fail_message="看不出這張截圖裡的交易明細，請拍清楚一點、一次截一頁，或改用 CSV 對帳")
+        prefer = ("gemini",) if body.image.startswith("data:application/pdf") else None
+        r = ai_tasks.run_task(self.db, user, "statement", ai_tasks.STATEMENT, msg, lambda d: ai_tasks.v_statement(d, today), images=[body.image], prefer=prefer,
+                              fail_message="看不出這份帳單裡的交易明細，請拍清楚一點、或改用 CSV 對帳")
         return StatementResult(entries=[StatementEntry(**e) for e in r["entries"]], total=r["total"], quota=self._quota(user))  # type: ignore[index]
 
     def agent_plan(self, user: User, body: AgentPlanRequest) -> AgentPlanResult:

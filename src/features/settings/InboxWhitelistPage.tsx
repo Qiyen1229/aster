@@ -11,12 +11,10 @@ import { useNavigate } from 'react-router-dom';
 import { useAccounts, useCategories } from '@/app/hooks';
 import { db } from '@/db/schema';
 import { deleteRule } from '@/services/autocat';
-import { previewAutoBook, SOURCE_LABEL, type InboxRaw } from '@/services/inbox';
 import { useSettings } from '@/stores/settings';
 import { ask, askInput, useUI } from '@/stores/ui';
-import { formatMoney, toMinor } from '@/domain/money';
 import { EmptyState, Segmented } from '@/ui/controls';
-import { AccountField, SelectField, SwitchField, TextField } from '@/ui/form';
+import { AccountField, SwitchField } from '@/ui/form';
 import { Icon, iconEmoji } from '@/ui/Icon';
 import { blankRule, RULE_MATCH_LABEL, RuleEditorSheet, ruleTargetSummary, type RuleDraft } from './RuleEditorSheet';
 
@@ -36,12 +34,6 @@ export default function InboxWhitelistPage() {
   const [tab, setTab] = useState<'white' | 'black' | 'rules' | 'tools'>('white');
   const [name, setName] = useState('');
   const [blockWord, setBlockWord] = useState('');
-  const [testText, setTestText] = useState('');
-  const [testCard, setTestCard] = useState('');
-  const [testMerchant, setTestMerchant] = useState('');
-  const [testAmount, setTestAmount] = useState('');
-  const [testSource, setTestSource] = useState<InboxRaw['source']>('notify');
-  const [testResult, setTestResult] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
 
   const addBlacklist = () => {
@@ -51,23 +43,6 @@ export default function InboxWhitelistPage() {
     update({ blacklist: [...blacklist, n] });
     setBlockWord('');
     snack(`已封鎖「${n}」：之後符合的通知將直接忽略`);
-  };
-
-  const runPreview = async () => {
-    const q = testText.trim();
-    if (!q) return;
-    try {
-      const r = await previewAutoBook(q, testCard, testMerchant, { source: testSource, amount: testAmount });
-      if (r.verdict.trust === 'drop') { setTestResult('會被黑名單或聊天過濾忽略'); return; }
-      if (!r.drafts.length) { setTestResult('本機解析看不懂金額，需手動確認或另用 AI 解析'); return; }
-      const modeLabel = r.dup?.level === 'strong' ? '疑似與帳本重複，需確認' : (cfg.autoBook || r.whitelisted) && r.verdict.trust === 'ok' ? '符合本機自動入帳條件' : '留在收件匣待確認';
-      const details = r.drafts.map((d) => {
-        const currency = d.currency ?? accMap.get(d.accountId)?.currency ?? 'TWD';
-        const catName = d.categoryId ? (catMap.get(d.categoryId)?.name ?? '未分類') : '轉帳';
-        return `「${d.note || catName}」· ${formatMoney(toMinor(d.amount, currency), currency)} · ${catName} · ${accMap.get(d.accountId)?.name ?? '未選帳戶'}`;
-      });
-      setTestResult(`${modeLabel} → ${details.join('；')}`);
-    } catch (e) { setTestResult(`試跑失敗：${(e as Error).message}`); }
   };
 
   const add = () => {
@@ -137,7 +112,7 @@ export default function InboxWhitelistPage() {
             { value: 'white', label: `白名單 (${list.length})` },
             { value: 'black', label: `黑名單 (${blacklist.length})` },
             { value: 'rules', label: `規則 (${rules.length})` },
-            { value: 'tools', label: '試跑與卡片' },
+            { value: 'tools', label: '預設卡片' },
           ]}
         />
       </div>
@@ -164,13 +139,13 @@ export default function InboxWhitelistPage() {
             </div>
           </div>
           {list.length === 0 ? (
-            <EmptyState emoji="🛡️" title="白名單是空的" text="加入信任的發送者後，即使沒開「看得懂的直接記帳」，它的消費通知也會直接入帳。" />
+            <EmptyState emoji="" title="白名單是空的" text="加入信任的發送者後，即使沒開「看得懂的直接記帳」，它的消費通知也會直接入帳。" />
           ) : (
             <div className="list">
               {list.map((n, idx) => (
                 <div key={`${n}-${idx}`} className="row">
                   <span className="row-main">
-                    <span className="row-title">✅ {n}</span>
+                    <span className="row-title">{n}</span>
                     <span className="row-sub">發送者或卡片名稱完全相符時套用</span>
                   </span>
                   <div style={{ display: 'flex', gap: 6 }}>
@@ -206,13 +181,13 @@ export default function InboxWhitelistPage() {
             </div>
           </div>
           {blacklist.length === 0 ? (
-            <EmptyState emoji="🤫" title="黑名單是空的" text="如果某些對話或廣告通知常被誤判進收件匣，加入黑名單就會永久安靜。" />
+            <EmptyState emoji="" title="黑名單是空的" text="如果某些對話或廣告通知常被誤判進收件匣，加入黑名單就會永久安靜。" />
           ) : (
             <div className="list">
               {blacklist.map((b, idx) => (
                 <div key={`${b}-${idx}`} className="row">
                   <span className="row-main">
-                    <span className="row-title">🚫 {b}</span>
+                    <span className="row-title">{b}</span>
                     <span className="row-sub">命中時自動忽略，不跳審核通知</span>
                   </span>
                   <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => update({ blacklist: blacklist.filter((x) => x !== b) })}>移除</button>
@@ -253,31 +228,8 @@ export default function InboxWhitelistPage() {
       )}
 
       {tab === 'tools' && (
-        <section aria-label="試跑與卡片對應">
-          <div className="section-title" style={{ marginTop: 4 }}>規則試跑測試</div>
-          <div className="list">
-            <SelectField label="通知來源" value={testSource} onChange={setTestSource} options={Object.entries(SOURCE_LABEL).map(([value, s]) => ({ value: value as InboxRaw['source'], label: s.label }))} />
-            <TextField label="卡片／App" value={testCard} onChange={setTestCard} placeholder="例如 LINE；發送者標題放在通知第一行" />
-            <TextField label="商家" value={testMerchant} onChange={setTestMerchant} placeholder="選填" />
-            <TextField label="獨立金額欄" value={testAmount} onChange={setTestAmount} placeholder="選填，例如 USD 100" />
-          </div>
-          <p className="muted" style={{ fontSize: '0.8rem' }}>僅試跑本機解析、來源規則與帳本重複提醒，不送出帳目、不呼叫 AI；不含伺服器過濾、其他待確認通知或匯率入帳驗證。</p>
-          <div className="card" style={{ marginBottom: 14 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                className="input"
-                value={testText}
-                onChange={(e) => setTestText(e.target.value)}
-                placeholder="貼上一段銀行／LINE 通知試跑看看…"
-                aria-label="測試通知文字"
-                style={{ flex: 1 }}
-              />
-              <button type="button" className="pill accent-pill" disabled={!testText.trim()} onClick={() => void runPreview()}>試跑</button>
-            </div>
-            {testResult && <p style={{ margin: '10px 0 0', fontSize: '0.88rem', lineHeight: 1.5 }}>{testResult}</p>}
-          </div>
-
-          <div className="section-title">已學習的卡片對應帳戶</div>
+        <section aria-label="預設卡片對應">
+          <div className="section-title" style={{ marginTop: 4 }}>已學習的卡片對應帳戶</div>
           {Object.keys(cfg.cardMap).length === 0 ? (
             <EmptyState emoji="💳" title="還沒有卡片對應紀錄" text="之後在確認或自動記帳時，系統會記住每張卡對應的帳戶；你也可以在這裡手動調整。" />
           ) : (

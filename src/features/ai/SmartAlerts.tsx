@@ -21,26 +21,16 @@ export function SmartAlerts({ aiStatus }: { aiStatus?: AiStatus | null }) {
   return (
     <div style={{ minWidth: 0 }}>
       {/* 1. 頂部狀態卡片 */}
-      <div className="card glass" style={{ display: 'flex', alignItems: 'center', gap: 14, margin: '4px 0 16px' }}>
-        <span
-          className="row-icon"
-          style={{
-            background: '#30D158',
-            color: '#0b1c10',
-            width: 40,
-            height: 40,
-            borderRadius: 12,
-            display: 'inline-grid',
-            placeItems: 'center',
-            flexShrink: 0,
-          }}
-        >
-          <Icon name="shieldCheck" size={22} />
-        </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, fontSize: '0.98rem', color: 'var(--text)' }}>本機離線智慧守護</div>
-          <div className="muted" style={{ fontSize: '0.82rem', marginTop: 2, lineHeight: 1.4 }}>
-            純端運算不耗額度，自動偵測未登記訂閱、異常漲價與預算超支。
+      <div className="list" style={{ marginTop: 4 }}>
+        <div className="row with-icon">
+          <span className="set-tile" style={{ ['--c' as string]: '#30D158' }} aria-hidden="true">
+            <Icon name="shieldCheck" size={18} />
+          </span>
+          <div className="row-main">
+            <div className="row-title">本機離線智慧守護</div>
+            <div className="row-sub" style={{ whiteSpace: 'normal' }}>
+              純端運算不耗額度，自動偵測未登記訂閱、異常漲價與預算超支。
+            </div>
           </div>
         </div>
       </div>
@@ -48,23 +38,12 @@ export function SmartAlerts({ aiStatus }: { aiStatus?: AiStatus | null }) {
       {/* 2. 即時防護開關 */}
       <div className="section-title">即時偵測防護</div>
       <div className="list">
-        <div className="row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span
-              className="row-icon"
-              style={{
-                background: '#BF5AF2',
-                color: '#fff',
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                display: 'inline-grid',
-                placeItems: 'center',
-              }}
-            >
-              <Icon name="repeat" size={17} />
-            </span>
-            <span className="row-title">消費異常與訂閱偵測</span>
+        <div className="row with-icon">
+          <span className="set-tile" style={{ ['--c' as string]: '#BF5AF2' }} aria-hidden="true">
+            <Icon name="repeat" size={18} />
+          </span>
+          <div className="row-main">
+            <div className="row-title">消費異常與訂閱偵測</div>
           </div>
           <Switch
             checked={insights.anomaly}
@@ -72,23 +51,12 @@ export function SmartAlerts({ aiStatus }: { aiStatus?: AiStatus | null }) {
             onChange={(v) => set('insights', { ...insights, anomaly: v })}
           />
         </div>
-        <div className="row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span
-              className="row-icon"
-              style={{
-                background: '#FF9F0A',
-                color: '#261600',
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                display: 'inline-grid',
-                placeItems: 'center',
-              }}
-            >
-              <Icon name="target" size={17} />
-            </span>
-            <span className="row-title">預算進度超支預警</span>
+        <div className="row with-icon">
+          <span className="set-tile" style={{ ['--c' as string]: '#FF9F0A' }} aria-hidden="true">
+            <Icon name="target" size={18} />
+          </span>
+          <div className="row-main">
+            <div className="row-title">預算進度超支預警</div>
           </div>
           <Switch
             checked={insights.budgetWarn}
@@ -97,23 +65,12 @@ export function SmartAlerts({ aiStatus }: { aiStatus?: AiStatus | null }) {
           />
         </div>
         {AUTH_ENABLED && insights.anomaly && (
-          <div className="row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span
-                className="row-icon"
-                style={{
-                  background: '#0A84FF',
-                  color: '#fff',
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  display: 'inline-grid',
-                  placeItems: 'center',
-                }}
-              >
-                <Icon name="sparkles" size={17} />
-              </span>
-              <span className="row-title">疑難支出請 Cilo 比對市價</span>
+          <div className="row with-icon">
+            <span className="set-tile" style={{ ['--c' as string]: '#0A84FF' }} aria-hidden="true">
+              <Icon name="sparkles" size={18} />
+            </span>
+            <div className="row-main">
+              <div className="row-title">疑難支出請 Cilo 比對市價</div>
             </div>
             <Switch
               checked={insights.aiPrice && !!ai?.enabled}
@@ -133,74 +90,40 @@ export function SmartAlerts({ aiStatus }: { aiStatus?: AiStatus | null }) {
           <div className="section-title">Cilo 智慧分析</div>
           <div className="list">
             {!ai?.enabled ? (
-              <button type="button" className="row tap" onClick={() => navigate('/settings/ai')}>
-                <span
-                  className="row-icon"
-                  style={{
-                    background: '#17181c',
-                    color: '#fff',
-                    border: '1px solid var(--sep)',
-                    width: 32,
-                    height: 32,
-                    borderRadius: 8,
-                    display: 'inline-grid',
-                    placeItems: 'center',
-                  }}
-                >
-                  <Icon name="ai" size={17} />
+              <button type="button" className="row with-icon" onClick={() => navigate('/settings/ai')}>
+                <span className="set-tile" style={{ ['--c' as string]: '#5856D6' }} aria-hidden="true">
+                  <Icon name="ai" size={18} />
                 </span>
-                <span className="row-main">
-                  <span className="row-title">Cilo 對話與進階財務分析</span>
-                  <span className="row-sub">目前未啟用 · 點擊前往設定開啟</span>
-                </span>
+                <div className="row-main">
+                  <div className="row-title">Cilo 對話與進階財務分析</div>
+                  <div className="row-sub">目前未啟用 · 點擊前往設定開啟</div>
+                </div>
                 <Icon name="chevronR" className="row-chev" />
               </button>
             ) : !dataOn ? (
-              <button type="button" className="row tap" onClick={() => navigate('/settings/ai')}>
-                <span
-                  className="row-icon"
-                  style={{
-                    background: '#FF9F0A',
-                    color: '#fff',
-                    width: 32,
-                    height: 32,
-                    borderRadius: 8,
-                    display: 'inline-grid',
-                    placeItems: 'center',
-                  }}
-                >
-                  <Icon name="shieldCheck" size={17} />
+              <button type="button" className="row with-icon" onClick={() => navigate('/settings/ai')}>
+                <span className="set-tile" style={{ ['--c' as string]: '#FF9F0A' }} aria-hidden="true">
+                  <Icon name="shieldCheck" size={18} />
                 </span>
-                <span className="row-main">
-                  <span className="row-title">財務數據存取授權</span>
-                  <span className="row-sub">問 Cilo 與財務分析需要允許存取去識別化統計 · 點擊前往授權</span>
-                </span>
+                <div className="row-main">
+                  <div className="row-title">財務數據存取授權</div>
+                  <div className="row-sub">問 Cilo 與財務分析需要允許存取去識別化統計 · 點擊前往授權</div>
+                </div>
                 <Icon name="chevronR" className="row-chev" />
               </button>
             ) : (
-              <button type="button" className="row tap" onClick={() => navigate('/settings/ai')}>
-                <span
-                  className="row-icon"
-                  style={{
-                    background: '#30D158',
-                    color: '#fff',
-                    width: 32,
-                    height: 32,
-                    borderRadius: 8,
-                    display: 'inline-grid',
-                    placeItems: 'center',
-                  }}
-                >
-                  <Icon name="sparkles" size={17} />
+              <button type="button" className="row with-icon" onClick={() => navigate('/settings/ai')}>
+                <span className="set-tile" style={{ ['--c' as string]: '#30D158' }} aria-hidden="true">
+                  <Icon name="sparkles" size={18} />
                 </span>
-                <span className="row-main">
-                  <span className="row-title">Cilo 分析服務運作中</span>
-                  <span className="row-sub">
+                <div className="row-main">
+                  <div className="row-title">Cilo 分析服務運作中</div>
+                  <div className="row-sub">
                     {aiStatus
                       ? `今日剩 ${aiStatus.quota.daily.remaining ?? '不限'} 次 · 本週剩 ${aiStatus.quota.weekly.remaining ?? '不限'} 次`
                       : '點擊管理 Cilo 與查看額度點數'}
-                  </span>
-                </span>
+                  </div>
+                </div>
                 <Icon name="chevronR" className="row-chev" />
               </button>
             )}

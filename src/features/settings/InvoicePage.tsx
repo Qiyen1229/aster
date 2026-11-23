@@ -144,8 +144,8 @@ export default function InvoicePage() {
       {server && !server.configured && (
         <div className="card" style={{ fontSize: '0.85rem' }}>
           <p style={{ marginTop: 0 }}><b>目前無法自動抓取載具發票</b></p>
-          <p className="muted">自動抓取要透過財政部「電子發票應用 API」，需要在伺服器設定財政部核發的 AppID（.env 的 <code>CLURE_EINVOICE_APP_ID</code>）。財政部自 112 年 3 月起只受理通過 ISO 27001 等資安認證的企業或組織申請，個人通常無法取得。</p>
-          <p className="muted" style={{ marginBottom: 0 }}>載具資料已保存。可以先用下方的「掃描紙本發票」或「匯入消費明細 CSV」記帳，同樣會套用預設帳戶與自動分類。</p>
+          <p className="muted">財政部自 112 年 3 月起只受理通過 ISO 27001 等資安認證的企業或組織申請，本APP站無法取得。</p>
+          <p className="muted" style={{ marginBottom: 0 }}>載具資料若已保存。可用下方的「掃描紙本發票」或「匯入消費明細 CSV」記帳，同樣會套用預設帳戶與自動分類。</p>
         </div>
       )}
 

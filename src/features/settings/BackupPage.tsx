@@ -170,7 +170,7 @@ export default function BackupPage() {
       <div className="section-title"><NewMark since="4.0.0" /> 匯入與對帳</div>
       <div className="list">
         <button className="row" onClick={() => navigate('/settings/import')}>
-          <span className="row-main"><span className="row-title">從 CSV／Moze 匯入・帳單對帳</span><span className="row-sub" style={{ display: 'block' }}>自動辨識 Moze 匯出檔，其他 App 可手動對應欄位</span></span>
+          <span className="row-main"><span className="row-title">從 CSV 匯入・帳單對帳</span><span className="row-sub" style={{ display: 'block' }}>支援銀行／信用卡對帳單與各類 CSV，可手動對應欄位</span></span>
           <Icon name="chevronR" className="row-chev" />
         </button>
       </div>

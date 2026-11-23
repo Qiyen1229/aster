@@ -56,12 +56,18 @@ describe('首頁互動式手勢教學（GestureTour）', () => {
 
     expect(host.textContent).toContain('第 1 / 3 步');
 
-    // Step 0：上滑超過 28px
+    // Step 0：上滑超過 18px → 進入下滑關閉指引 → 下滑超過 18px
     const target0 = host.querySelector<HTMLButtonElement>('.tour-target')!;
     await act(async () => {
       pointer(target0, 'pointerdown', { clientY: 800 });
       pointer(target0, 'pointermove', { clientY: 750 });
       pointer(target0, 'pointerup', { clientY: 750 });
+    });
+    expect(host.textContent).toContain('接著往下滑，關閉 Cilo 面板');
+    await act(async () => {
+      pointer(target0, 'pointerdown', { clientY: 750 });
+      pointer(target0, 'pointermove', { clientY: 800 });
+      pointer(target0, 'pointerup', { clientY: 800 });
     });
     expect(host.textContent).toContain('做到了');
     await act(async () => { vi.advanceTimersByTime(500); });

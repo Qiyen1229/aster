@@ -59,9 +59,6 @@ export default function ChannelsPage() {
         <EmptyState emoji="🔌" title="需要伺服器版" text="外部通知由你的 Aster 伺服器發送，請登入伺服器版 App 後使用。" />
       ) : !list ? <SkeletonRows n={3} /> : (
         <>
-          <p className="muted" style={{ fontSize: '0.85rem', margin: '4px 4px 12px' }}>
-            異常大額、預算超支、週報月報、發票中獎…直接推到 Discord、Telegram、LINE 或 Webhook。由伺服器發送，App 沒開也收得到週報與繳款提醒。
-          </p>
           {err && <p className="muted" style={{ color: 'var(--danger)' }}>{err}</p>}
           {list.length === 0 && !err ? (
             <EmptyState emoji="📣" title="還沒有通知通道" text="新增一個通道，異常和預算警示就會直接傳到你的聊天軟體。" action={<button className="btn small" onClick={() => setAdding(true)}>新增通道</button>} />
@@ -75,7 +72,7 @@ export default function ChannelsPage() {
             <SwitchField label="訊息包含金額與名稱" sub={e2ee ? '你啟用了端對端加密：關閉時只送「預算提醒」這類通用標題，不送金額與商家' : '關閉時只送通用標題，不送金額與商家'} checked={detail} onChange={(v) => set('outgoingDetail', v)} />
           </div>
           <p className="muted" style={{ fontSize: '0.78rem', margin: '8px 4px' }}>
-            網址與權杖以 AES-256-GCM 加密存在你的伺服器。訊息會經過 Discord、Telegram、LINE，敏感內容請勿送到不信任的頻道；週報、月報只有標題，不含金額。
+            異常大額、預算超支、週報月報、發票中獎…直接推到 Discord、Telegram、LINE 或 Webhook。由伺服器發送，App 沒開也收得到週報與繳款提醒。
           </p>
         </>
       )}

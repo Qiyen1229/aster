@@ -128,8 +128,9 @@ export default function ImportPage() {
         <h1>{mode === 'reconcile' ? '帳單對帳' : '匯入 CSV'}</h1>
         <div style={{ width: 44 }} />
       </header>
-      {/* 步驟點：匯入有 4 步（選檔、對應欄位、預覽、完成）；對帳只有 3 步（選檔、對應欄位、比對與補齊，截圖對帳直接從選檔到比對），不要顯示用不到的第 4 點 */}
-      <div className="steps" aria-hidden="true">{Array.from({ length: mode === 'reconcile' ? 3 : 4 }, (_, i) => <i key={i} className={i === step ? 'on' : ''} />)}</div>
+      {mode !== 'reconcile' && (
+        <div className="steps" aria-hidden="true">{Array.from({ length: 4 }, (_, i) => <i key={i} className={i === step ? 'on' : ''} />)}</div>
+      )}
 
       {step === 0 && (
         <>
@@ -140,7 +141,6 @@ export default function ImportPage() {
             <ul className="muted" style={{ paddingLeft: 20, fontSize: '0.9rem', lineHeight: 1.7 }}>
               <li><b>銀行／信用卡對帳單</b>：網銀下載的 CSV。支援支出／存入分兩欄與民國年日期；疑似重複會略過，沒有分類時依「自動分類規則」帶入</li>
               <li><b>電子發票</b>：請改用「設定 → 電子發票匯入」</li>
-              <li><b>Moze</b>：Moze →「設定 → 匯出資料 → CSV」，自動辨識所有欄位，轉出／轉入會自動配對成轉帳</li>
               <li>其他記帳 App 或 Excel 匯出的 CSV（UTF-8 或 Big5），下一步可手動對應欄位</li>
               <li>找不到的帳戶、分類、標籤會自動建立；匯入完成後自動重算所有帳戶餘額</li>
             </ul>
@@ -161,11 +161,11 @@ export default function ImportPage() {
             </label>
             {aiEnabledLocally() ? (
               <label className="btn tinted" style={{ cursor: 'pointer', marginTop: 8 }} aria-disabled={busy}>
-                {busy ? 'Cilo 讀取中…' : '📷 用帳單截圖對帳（Cilo，每張 2 點額度）'}
-                <input type="file" accept="image/*" multiple className="sr-only" disabled={busy} onChange={(e) => { const f = e.target.files; void onShot(f).finally(() => { e.target.value = ''; }); }} />
+                {busy ? 'Cilo 讀取中…' : '📄 用帳單截圖／PDF 對帳（Cilo，每份 2 點額度）'}
+                <input type="file" accept="image/*,.pdf,application/pdf" multiple className="sr-only" disabled={busy} onChange={(e) => { const f = e.target.files; void onShot(f).finally(() => { e.target.value = ''; }); }} />
               </label>
-            ) : <p className="row-sub" style={{ marginBottom: 0, whiteSpace: 'normal' }}>開啟 Cilo 後也能直接拍帳單截圖對帳（設定 → Cilo）。</p>}
-            <Intro id="import.recon">日期容差 ±3 天，金額與商家一起比對，全程在你的手機完成，補齊後可復原。截圖只送圖片給 Cilo 讀取（縮小後送出、不保存），讀到的加總會和帳單合計驗證；一次最多 4 張。</Intro>
+            ) : <p className="row-sub" style={{ marginBottom: 0, whiteSpace: 'normal' }}>開啟 Cilo 後也能直接上傳帳單截圖或 PDF 對帳（設定 → Cilo）。</p>}
+            <Intro id="import.recon">日期容差 ±3 天，金額與商家一起比對，全程在你的手機完成，補齊後可復原。截圖／PDF 只送給 Cilo 讀取（不保存），讀到的加總會和帳單合計驗證；截圖一次最多 4 張，PDF 建議 4 MB 內。</Intro>
           </div>
         </>
       )}

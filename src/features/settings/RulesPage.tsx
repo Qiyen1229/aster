@@ -31,9 +31,6 @@ export default function RulesPage() {
         <h1>自動分類規則</h1>
         <button className="icon-btn" aria-label="新增規則" onClick={() => setDraft(blankRule())}><Icon name="plus" /></button>
       </header>
-      <p className="muted" style={{ margin: '0 8px 12px', fontSize: '0.85rem' }}>
-        自動記帳、備註、帳單與電子發票符合規則時，可自動改寫名稱並帶入分類或指定帳戶。沒有規則時，參考你過去同樣文字最常用的分類與帳戶。
-      </p>
 
       {rules.length === 0 ? (
         <EmptyState emoji="🪄" title="還沒有規則" text="例如：「全聯」→ 日用品、「遠東百貨板橋分公司」→ 牛肉麵 · 晚餐。" action={<button className="btn small" onClick={() => setDraft(blankRule())}>新增規則</button>} />

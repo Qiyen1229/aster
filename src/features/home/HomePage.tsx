@@ -410,6 +410,13 @@ export default function HomePage() {
       {!travelProject && (
         <div className="home-lower" aria-label="快覽">
           {homeWidgets.length > 0 && <Suspense fallback={null}><Widgets /></Suspense>}
+          <div className="list" style={{ marginTop: homeWidgets.length > 0 ? 8 : 0 }}>
+            <button type="button" className="row" onClick={() => navigate('/settings/widgets')}>
+              <Icon name="grip" size={18} />
+              <span className="row-main"><span className="row-title">快覽設置</span></span>
+              <Icon name="chevronR" className="row-chev" />
+            </button>
+          </div>
         </div>
       )}
       </div>

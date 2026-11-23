@@ -176,7 +176,7 @@ class SearchPlanResult(BaseModel):
 
 
 class StatementRequest(BaseModel):
-    image: str = Field(min_length=100, max_length=1_600_000, pattern=r"^data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$")
+    image: str = Field(min_length=100, max_length=6_000_000, pattern=r"^data:(image/(jpeg|png|webp)|application/pdf);base64,[A-Za-z0-9+/=]+$")
     today: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
 
 

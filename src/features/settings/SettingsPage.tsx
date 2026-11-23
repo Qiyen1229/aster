@@ -49,8 +49,8 @@ function EncryptionSheet({ open, onClose }: { open: boolean; onClose: () => void
   return (
     <Sheet open={open} onClose={onClose} title="端對端加密">
       <div className="card" style={{ fontSize: '0.88rem' }}>
-        <p style={{ marginTop: 0 }}>{e2ee?.enabled ? '🔒 已啟用：帳目在這台裝置加密後才上傳，伺服器與管理員都讀不到。' : '啟用後，帳目會用你的「加密密碼」在裝置上加密才上傳，伺服器（含管理員）只看得到密文。'}</p>
-        <p className="muted" style={{ marginBottom: 0 }}>加密密碼與登入密碼分開。<b>忘記加密密碼，新裝置就取不回資料</b>（已登入的裝置仍有完整資料，可停用後重新上傳）。啟用後，推播內容會隱藏金額。</p>
+        <p style={{ marginTop: 0 }}>{e2ee?.enabled ? '🔒 已啟用：帳目在這台裝置加密後才上傳，伺服器與管理員都讀不到。' : '啟用後，帳目加密才上傳。'}</p>
+        <p className="muted" style={{ marginBottom: 0 }}><b>忘記加密密碼，新裝置就無法取回資料</b>（已登入的裝置仍有完整資料，可停用後重新上傳）。啟用後，推播內容會隱藏金額。</p>
       </div>
       {locked ? (
         <>
@@ -211,7 +211,6 @@ function AppearanceSheet({ open, onClose }: { open: boolean; onClose: () => void
               </button>
             ))}
           </div>
-          <div className="row-sub" style={{ whiteSpace: 'normal' }}>三套完整主題已搭配點綴色，皆支援深淺色與跟隨系統。</div>
         </div>
         {(s.themePalette ?? 'obsidian') === 'default' && (
           <div className="row set-stack">

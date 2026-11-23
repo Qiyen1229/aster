@@ -52,6 +52,7 @@ function measureFab(): Box {
 export function GestureTour({ desktop }: { desktop: boolean }) {
   const setSetting = useSettings((s) => s.set);
   const [step, setStep] = useState(0);
+  const [swipePhase, setSwipePhase] = useState<'up' | 'down'>('up');
   const [fabBox, setFabBox] = useState<Box>(measureFab);
   const [pressing, setPressing] = useState(false);
   const [doneMsg, setDoneMsg] = useState('');
@@ -72,8 +73,10 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
   useEffect(() => {
     const update = () => setFabBox(measureFab());
     update();
+    const raf = window.requestAnimationFrame(update);
     window.addEventListener('resize', update);
     return () => {
+      window.cancelAnimationFrame(raf);
       window.removeEventListener('resize', update);
       window.clearTimeout(holdTimer.current);
       window.clearTimeout(stepTimer.current);
@@ -90,6 +93,7 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
     stepTimer.current = window.setTimeout(() => {
       locked.current = false;
       setDoneMsg('');
+      setSwipePhase('up');
       setStep((s) => {
         if (s >= STEPS.length - 1) {
           setSetting('gestureTourDone', true);
@@ -100,13 +104,12 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
     }, 450);
   }, [setSetting]);
 
-  const onDown = (e: React.PointerEvent<HTMLButtonElement>) => {
-    if (e.button > 0 || locked.current) return;
-    startY.current = e.clientY;
-    startX.current = e.clientX;
+  const beginDrag = (x: number, y: number) => {
+    if (locked.current) return;
+    startY.current = y;
+    startX.current = x;
     pressingRef.current = true;
     setPressing(true);
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     if (step === 1) {
       window.clearTimeout(holdTimer.current);
       holdTimer.current = window.setTimeout(() => {
@@ -116,11 +119,18 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
     }
   };
 
-  const onMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+  const moveDrag = (x: number, y: number) => {
     if (!pressingRef.current || locked.current) return;
-    const up = startY.current - e.clientY;
-    const dx = Math.abs(e.clientX - startX.current);
-    if (step === 0 && up > 28) {
+    const up = startY.current - y;
+    const down = y - startY.current;
+    const dx = Math.abs(x - startX.current);
+    if (step === 0 && swipePhase === 'up' && up > 18) {
+      haptic('medium');
+      pressingRef.current = false;
+      setPressing(false);
+      setSwipePhase('down');
+      setDoneMsg('✓ 喚出成功！接著往下滑關閉');
+    } else if (step === 0 && swipePhase === 'down' && down > 18) {
       haptic('medium');
       advance('✓ 做到了！');
     } else if (step === 1 && (up > 24 || dx > 24)) {
@@ -128,7 +138,7 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
     }
   };
 
-  const onUp = () => {
+  const endDrag = () => {
     window.clearTimeout(holdTimer.current);
     const wasPressing = pressingRef.current;
     pressingRef.current = false;
@@ -137,6 +147,30 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
       haptic('light');
       finish();
     }
+  };
+
+  const onDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    if (e.button > 0) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    beginDrag(e.clientX, e.clientY);
+  };
+
+  const onMove = (e: React.PointerEvent<HTMLButtonElement>) => {
+    moveDrag(e.clientX, e.clientY);
+  };
+
+  const onUp = () => {
+    endDrag();
+  };
+
+  const onTouchStart = (e: React.TouchEvent<HTMLButtonElement>) => {
+    const t = e.touches[0];
+    if (t) beginDrag(t.clientX, t.clientY);
+  };
+
+  const onTouchMove = (e: React.TouchEvent<HTMLButtonElement>) => {
+    const t = e.touches[0];
+    if (t) moveDrag(t.clientX, t.clientY);
   };
 
   if (desktop) {
@@ -164,6 +198,10 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
   }
 
   const cur = STEPS[step];
+  const cardTitle = step === 0 && swipePhase === 'down' ? '接著往下滑，關閉 Cilo 面板' : cur.title;
+  const cardDesc = step === 0 && swipePhase === 'down'
+    ? '喚出 Cilo 後，只要對著按鈕或面板往下滑就能收起。現在試著把下方按鈕往下滑看看！'
+    : cur.desc;
   const cardBottom = typeof window !== 'undefined'
     ? Math.max(112, window.innerHeight - fabBox.top + 26)
     : 120;
@@ -175,8 +213,8 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
           <span className="tour-badge">{cur.badge}</span>
           <button type="button" className="tour-skip" onClick={finish}>略過</button>
         </div>
-        <h2>{cur.title}</h2>
-        <p className="muted">{cur.desc}</p>
+        <h2>{cardTitle}</h2>
+        <p className="muted">{cardDesc}</p>
         {doneMsg && <div className="tour-done-badge" role="status">{doneMsg}</div>}
         <div className="tour-foot">
           <div className="tour-dots" aria-hidden="true">
@@ -185,28 +223,31 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
           <button
             type="button"
             className="btn small tinted"
-            onClick={() => (step >= STEPS.length - 1 ? finish() : setStep((s) => s + 1))}
+            onClick={() => {
+              if (step >= STEPS.length - 1) finish();
+              else { setSwipePhase('up'); setDoneMsg(''); setStep((s) => s + 1); }
+            }}
           >
             {cur.nextLabel}
           </button>
         </div>
       </div>
 
-      {step === 0 && !doneMsg && (
+      {step === 0 && (
         <div
           className="tour-swipe-hint"
           aria-hidden="true"
           style={{ left: `${fabBox.left + fabBox.width / 2}px`, top: `${fabBox.top - 10}px` }}
         >
-          <Icon name="up" size={20} />
-          <span>往上滑</span>
+          <Icon name={swipePhase === 'down' ? 'down' : 'up'} size={20} />
+          <span>{swipePhase === 'down' ? '往下滑關閉' : '往上滑'}</span>
         </div>
       )}
 
       <button
         type="button"
         className={`tour-target${pressing ? ' pressing' : ''}${step === 1 ? ' mode-hold' : ''}`}
-        aria-label={cur.title}
+        aria-label={cardTitle}
         style={{
           left: `${fabBox.left}px`,
           top: `${fabBox.top}px`,
@@ -217,6 +258,10 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
         onPointerMove={onMove}
         onPointerUp={onUp}
         onPointerCancel={onUp}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onUp}
+        onTouchCancel={onUp}
         onContextMenu={(e) => e.preventDefault()}
       >
         <span className="tour-ring" aria-hidden="true" />

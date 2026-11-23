@@ -138,7 +138,6 @@ export function SessionsSection() {
           </div>
         ))}
       </div>
-      <p className="muted" style={{ fontSize: '0.8rem', margin: '6px 8px' }}>看到不認得的裝置，先把它登出，再到「帳號與資料管理」修改密碼（改密碼會一併登出其他所有裝置）。</p>
     </>
   );
 }
