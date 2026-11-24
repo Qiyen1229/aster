@@ -18,6 +18,7 @@ data/*
 !data/api/
 data/api/*
 !data/api/.gitkeep
+server/data/
 .pytest_cache/
 .venv/
 __pycache__/
