@@ -1069,7 +1069,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                     </button>
                   </>
                 )}
-                <button type="button" className="pill" onClick={() => { haptic('light'); setPicker('date'); }} aria-label="日期">
+                <button type="button" className="pill" onClick={() => { haptic('light'); setPicker('date'); }} aria-label="日期" data-date={date}>
                   <Icon name="calendar" size={16} /> {dateLabel}
                 </button>
                 <button type="button" className="pill num" onClick={() => { haptic('light'); setPicker('time'); }} aria-label="時間">

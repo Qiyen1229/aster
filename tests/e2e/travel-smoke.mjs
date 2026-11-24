@@ -242,9 +242,9 @@ try {
     return { open: card.classList.contains('open'), empty };
   })()`);
   check('未來日展開＋尚未記帳提示', futureOpen.open && futureOpen.empty, futureDate);
-  const sheetOk = await waitFor('input[type="date"]');
-  const sheetDate = sheetOk ? await evaluate(`document.querySelector('input[type="date"]').value`) : null;
-  check('記這天開啟記帳面板', sheetOk, `date=${sheetDate}`);
+  const sheetOk = await waitFor('button.pill[aria-label="日期"]');
+  const sheetDate = sheetOk ? await evaluate(`document.querySelector('button.pill[aria-label="日期"]')?.getAttribute('data-date')`) : null;
+  check('記這天開啟記帳面板', sheetOk && !!sheetDate, `date=${sheetDate}`);
   await navigate(APP + '/');
   await waitFor('.travel-timeline');
 
