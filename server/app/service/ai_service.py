@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import time
 import urllib.request
 import uuid
 from collections.abc import Callable, Iterator
@@ -23,7 +24,7 @@ from app.core.security import utcnow
 from app.core.request_info import ClientInfo
 from app.model import AiUsage, AppSetting, User
 from app.schema.ai import (
-    AgentPlanRequest, AgentPlanResult, StatementEntry, StatementRequest, StatementResult, AiAdminOut, AiAdminUpdate, AiConsole, AiProviderInfo, AiStatus, AskRequest, AskResult, ChatRequest, BudgetPlanRequest, BudgetPlanResult, CategorizeItem,
+    AgentPlanRequest, AgentPlanResult, StatementEntry, StatementRequest, StatementResult, AiAdminOut, AiAdminUpdate, AiConsole, AiProviderInfo, AiStatus, AskRequest, AskResult, AsrStatus, AsrTestResult, ChatRequest, BudgetPlanRequest, BudgetPlanResult, CategorizeItem,
     CategorizeRequest, CategorizeResult, ConsoleProvider, DayCount, InsightsRequest, InsightsResult, ParsedEntry, ParseEntryRequest,
     ParseEntryResult, PriceCheckRequest, PriceCheckResult, ReceiptRequest, RecentCall, SearchPlanRequest, SearchPlanResult, ExplainRequest, TestResult, TranscribeRequest, TranscribeResult, UsageTotals, UserUsage,
 )
@@ -82,6 +83,24 @@ def _transcribe_local(asr_url: str, audio_b64: str, fmt: str) -> str | None:
     except Exception as e:  # noqa: BLE001 — 本地 ASR 任何錯誤皆須安全 fallback 回 Gemini
         log.warning("本地 ASR 轉錄失敗，將 fallback 回 Gemini：%s", e)
     return None
+
+
+def _check_asr_health(asr_url: str) -> AsrStatus:
+    """檢查 CLURE_ASR_URL 是否設定及同主機 /health 端點連線狀態（只回傳 URL 與狀態，不揭露任何密鑰）。"""
+    url = asr_url.strip()
+    if not url:
+        return AsrStatus(configured=False, url="", health_ok=None, health_detail="未設定 CLURE_ASR_URL")
+    parsed = urlparse(url)
+    health_url = f"{parsed.scheme}://{parsed.netloc}/health"
+    t0 = time.monotonic()
+    try:
+        req = urllib.request.Request(health_url, method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:  # noqa: S310 — 網址來自管理員環境變數 CLURE_ASR_URL
+            ok = 200 <= getattr(resp, "status", 200) < 300
+        ms = int((time.monotonic() - t0) * 1000)
+        return AsrStatus(configured=True, url=url, health_ok=ok, health_detail="ok" if ok else "異常", health_latency_ms=ms)
+    except Exception:  # noqa: BLE001 — 不回傳內部例外細節，僅顯示連不上
+        return AsrStatus(configured=True, url=url, health_ok=False, health_detail="連不上")
 
 MAX_ENTRIES = 8
 
@@ -443,7 +462,7 @@ class AiService:
                 ok=h.ok, fail=h.fail, last_ok_at=h.last_ok_at, last_fail_at=h.last_fail_at, last_error=h.last_error, last_latency_ms=h.last_latency_ms, extra_keys=sorted(p.extra),
             ))
         return AiConsole(
-            settings=self.admin_read(), providers=providers,
+            settings=self.admin_read(), providers=providers, asr=_check_asr_health(s.asr_url),
             totals=UsageTotals(today=sum(day.values()), week=sum(week.values()), month=sum(month.values())),
             by_role=by_role, by_user=by_user,
             recent=[RecentCall(at=r.created_at, username=name or "（已刪除）", kind=r.kind, provider=r.provider, model=r.model, cost=r.cost) for r, name in recent_rows],
@@ -455,3 +474,31 @@ class AiService:
         AuditService(self.db).record("admin.ai_test", client, success=r["ok"], actor_id=admin.id, detail={"provider": name, "result": r["detail"]})
         self.db.commit()
         return TestResult(**r)
+
+    def test_asr(self, admin: User, body: TranscribeRequest, client: ClientInfo) -> AsrTestResult:
+        """後台測試本地 Breeze-ASR-25 與 Gemini fallback：不扣使用者額度。"""
+        asr_url = get_settings().asr_url.strip()
+        t0 = time.monotonic()
+        if asr_url:
+            local_text = _transcribe_local(asr_url, body.audio_b64, body.format)
+            if local_text:
+                ms = int((time.monotonic() - t0) * 1000)
+                AuditService(self.db).record("admin.asr_test", client, success=True, actor_id=admin.id, detail={"source": "local"})
+                self.db.commit()
+                return AsrTestResult(ok=True, source="local", text=local_text, latency_ms=ms, detail="Breeze-ASR-25 本地轉錄成功")
+        try:
+            text = ai_tasks.run_task(
+                self.db, admin, "transcribe", ai_tasks.TRANSCRIBE, "請將這段語音轉成繁體中文文字。",
+                ai_tasks.v_transcribe, audio=(body.audio_b64, body.format), prefer=("gemini",),
+                fail_message="語音辨識失敗", free=True,
+            )
+            ms = int((time.monotonic() - t0) * 1000)
+            AuditService(self.db).record("admin.asr_test", client, success=True, actor_id=admin.id, detail={"source": "gemini"})
+            self.db.commit()
+            detail = "本地 ASR 無法使用，已 fallback 至 Gemini" if asr_url else "未設定 CLURE_ASR_URL，使用 Gemini"
+            return AsrTestResult(ok=True, source="gemini", text=str(text), latency_ms=ms, detail=detail)
+        except ServiceError as e:
+            ms = int((time.monotonic() - t0) * 1000)
+            AuditService(self.db).record("admin.asr_test", client, success=False, actor_id=admin.id, detail={"source": "none"})
+            self.db.commit()
+            return AsrTestResult(ok=False, source="none", text="", latency_ms=ms, detail=e.message)

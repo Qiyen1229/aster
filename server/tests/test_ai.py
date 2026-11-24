@@ -958,3 +958,69 @@ def test_transcribe_local_asr_fallback_gemini(api: Api, monkeypatch) -> None:  #
         assert r.json()["text"] == "午餐牛肉麵 180"
     finally:
         get_settings.cache_clear()
+
+
+def test_admin_ai_console_asr_status_and_test(api: Api, monkeypatch) -> None:  # noqa: ANN001
+    import base64
+    from app.core.config import get_settings
+    from app.service import ai_providers, ai_service
+
+    monkeypatch.setenv("CLURE_ASR_URL", "http://10.0.30.100:8094/v1/audio/transcriptions")
+    monkeypatch.setenv("CLURE_AI_GEMINI_API_KEY", "super-secret-gemini-key")
+    get_settings.cache_clear()
+    try:
+        class _HealthResp:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        class _AsrResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps({"text": "咖啡 85"}).encode("utf-8")
+
+        def _fake_urlopen(req, timeout=None):  # noqa: ANN001
+            if req.full_url == "http://10.0.30.100:8094/health":
+                return _HealthResp()
+            if req.full_url == "http://10.0.30.100:8094/v1/audio/transcriptions":
+                return _AsrResp()
+            raise AssertionError(f"unexpected url: {req.full_url}")
+
+        monkeypatch.setattr(ai_service.urllib.request, "urlopen", _fake_urlopen)
+
+        api.register("admin_user")  # 第一位註冊者為管理員
+        c = api.get("/api/admin/ai/console")
+        assert c.status_code == 200, c.text
+        asr = c.json()["asr"]
+        assert asr["configured"] is True
+        assert asr["url"] == "http://10.0.30.100:8094/v1/audio/transcriptions"
+        assert asr["health_ok"] is True
+        assert asr["health_detail"] == "ok"
+        assert "super-secret-gemini-key" not in c.text
+
+        raw_audio = b"OggS-fake-audio-bytes-12345678901234567890"
+        t1 = api.post("/api/admin/ai/asr-test", {"audio_b64": base64.b64encode(raw_audio).decode(), "format": "mp4"})
+        assert t1.status_code == 200, t1.text
+        assert t1.json()["ok"] is True
+        assert t1.json()["source"] == "local"
+        assert t1.json()["text"] == "咖啡 85"
+
+        # 本地失敗時 fallback 到 Gemini
+        monkeypatch.setattr(ai_service.urllib.request, "urlopen", lambda *a, **kw: (_ for _ in ()).throw(TimeoutError("down")))
+        monkeypatch.setattr(ai_providers, "_post_gemini_inline", lambda *a, **kw: json.dumps({"text": "奶茶 50"}))
+        t2 = api.post("/api/admin/ai/asr-test", {"audio_b64": base64.b64encode(raw_audio).decode(), "format": "mp4"})
+        assert t2.status_code == 200, t2.text
+        assert t2.json()["ok"] is True
+        assert t2.json()["source"] == "gemini"
+        assert t2.json()["text"] == "奶茶 50"
+    finally:
+        get_settings.cache_clear()

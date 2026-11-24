@@ -11,7 +11,7 @@ from app.schema.admin import (
     AdminUserOut, CreateUserRequest, CreateUserResponse, MailStatus, MailTestRequest, ResetPasswordResponse, StatsOut, StatusUpdateRequest, SystemSettingsOut, SystemSettingsUpdate, UserListQuery, UserListResponse,
 )
 from app.core.rate_limit import RateLimiter
-from app.schema.ai import AiAdminOut, AiAdminUpdate, AiConsole, TestRequest, TestResult
+from app.schema.ai import AiAdminOut, AiAdminUpdate, AiConsole, AsrTestResult, TestRequest, TestResult, TranscribeRequest
 from app.schema.auth import MessageResponse
 from app.schema.audit import AuditLogList, AuditQuery
 from app.service import app_settings
@@ -128,3 +128,9 @@ def ai_console(admin: User = Depends(require_admin), db: Session = Depends(get_d
 def ai_test(body: TestRequest, admin: User = Depends(require_admin), client: ClientInfo = Depends(get_client), db: Session = Depends(get_db)) -> TestResult:
     rate_limit(ai_test_limiter, str(admin.id))
     return AiService(db).test_provider(body.provider, admin, client)
+
+
+@router.post("/ai/asr-test", response_model=AsrTestResult, summary="測試本地語音 ASR（Breeze-ASR-25）與 Gemini fallback")
+def ai_asr_test(body: TranscribeRequest, admin: User = Depends(require_admin), client: ClientInfo = Depends(get_client), db: Session = Depends(get_db)) -> AsrTestResult:
+    rate_limit(ai_test_limiter, str(admin.id))
+    return AiService(db).test_asr(admin, body, client)

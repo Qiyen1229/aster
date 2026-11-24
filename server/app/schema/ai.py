@@ -320,9 +320,26 @@ class DayCount(BaseModel):
     count: int
 
 
+class AsrStatus(BaseModel):
+    configured: bool
+    url: str = ""
+    health_ok: bool | None = None
+    health_detail: str = ""
+    health_latency_ms: int | None = None
+
+
+class AsrTestResult(BaseModel):
+    ok: bool
+    source: Literal["local", "gemini", "none"]
+    text: str = ""
+    latency_ms: int
+    detail: str = ""
+
+
 class AiConsole(BaseModel):
     settings: AiAdminOut
     providers: list[ConsoleProvider]
+    asr: AsrStatus
     totals: UsageTotals
     by_role: dict[str, UsageTotals]  # user／admin 分開的用量
     by_user: list[UserUsage]

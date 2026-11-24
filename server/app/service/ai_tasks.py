@@ -657,7 +657,7 @@ def run_task(db: Session, user: User, kind: str, system: str, user_msg: str, val
     if free:
         if not ai_quota.read_limits(db).enabled:
             raise ServiceError(503, "管理員已關閉 Cilo")
-        data, provider, model = ai_providers.complete_json(system, user_msg, max_tokens=MAX_TOKENS[kind], images=images)
+        data, provider, model = ai_providers.complete_json(system, user_msg, max_tokens=MAX_TOKENS[kind], images=images, audio=audio, prefer=prefer)
         try:
             result = validate(data)
         except (ValueError, TypeError, KeyError):

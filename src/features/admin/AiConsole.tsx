@@ -2,7 +2,7 @@
  * Cilo 主控台（/admin/ai）：供應商連線狀況（可即時測試）、用量、各使用者用量、最近呼叫，以及開關與額度設定。
  * API Key 只存在伺服器 .env；這裡只顯示最後 4 碼。連線狀況（成功／失敗次數、最近錯誤）記在記憶體，API 重啟會歸零。
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '@/services/api';
 import { useUI } from '@/stores/ui';
 import { EmptyState, SkeletonRows } from '@/ui/controls';
@@ -16,8 +16,14 @@ interface Settings {
   enabled: boolean; user_daily: number; user_weekly: number; user_monthly: number; global_daily: number; admin_daily: number; admin_weekly: number; admin_monthly: number; overridden: boolean;
   used_today: number; used_today_by_provider: Record<string, number>;
 }
+interface AsrStatus {
+  configured: boolean; url: string; health_ok: boolean | null; health_detail: string; health_latency_ms: number | null;
+}
+interface AsrTestResult {
+  ok: boolean; source: 'local' | 'gemini' | 'none'; text: string; latency_ms: number; detail: string;
+}
 interface Console {
-  settings: Settings; providers: Provider[];
+  settings: Settings; providers: Provider[]; asr?: AsrStatus;
   totals: { today: number; week: number; month: number };
   by_role: Record<'user' | 'admin', { today: number; week: number; month: number }>;
   by_user: { user_id: number; username: string; role: 'user' | 'admin'; today: number; week: number; month: number }[];
@@ -41,12 +47,63 @@ function status(p: Provider): { icon: string; text: string; tone: 'ok' | 'warn' 
   return { icon: '🔵', text: '已設定，尚未測試', tone: 'muted' };
 }
 
+type AudioFmt = 'mp4' | 'webm' | 'ogg' | 'wav' | 'mp3' | 'aac';
+
+function inferAudioFormat(file: File): AudioFmt {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'm4a' || ext === 'mp4') return 'mp4';
+  if (ext === 'webm') return 'webm';
+  if (ext === 'ogg' || ext === 'oga') return 'ogg';
+  if (ext === 'wav') return 'wav';
+  if (ext === 'mp3') return 'mp3';
+  if (ext === 'aac') return 'aac';
+  if (file.type.includes('webm')) return 'webm';
+  if (file.type.includes('ogg')) return 'ogg';
+  if (file.type.includes('wav')) return 'wav';
+  if (file.type.includes('mpeg') || file.type.includes('mp3')) return 'mp3';
+  if (file.type.includes('aac')) return 'aac';
+  return 'mp4';
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const s = typeof reader.result === 'string' ? reader.result : '';
+      const i = s.indexOf(',');
+      if (!s || i === -1) { reject(new Error('讀取音檔失敗')); return; }
+      resolve(s.slice(i + 1));
+    };
+    reader.onerror = () => reject(new Error('讀取音檔失敗'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function pickRecorderMime(): { mime: string; format: AudioFmt } {
+  const list: { mime: string; format: AudioFmt }[] = [
+    { mime: 'audio/mp4', format: 'mp4' },
+    { mime: 'audio/webm;codecs=opus', format: 'webm' },
+    { mime: 'audio/webm', format: 'webm' },
+    { mime: 'audio/ogg;codecs=opus', format: 'ogg' },
+    { mime: 'audio/ogg', format: 'ogg' },
+  ];
+  if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+    for (const c of list) if (MediaRecorder.isTypeSupported(c.mime)) return c;
+  }
+  return { mime: '', format: 'mp4' };
+}
+
 export default function AiConsole() {
   const [d, setD] = useState<Console | null>(null);
   const [err, setErr] = useState('');
   const [tests, setTests] = useState<Record<string, TestResult | 'busy'>>({});
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [asrSample, setAsrSample] = useState<{ b64: string; format: AudioFmt; label: string } | null>(null);
+  const [asrBusy, setAsrBusy] = useState(false);
+  const [asrRes, setAsrRes] = useState<AsrTestResult | null>(null);
+  const [recording, setRecording] = useState(false);
+  const recRef = useRef<{ rec: MediaRecorder; stream: MediaStream; chunks: BlobPart[]; format: AudioFmt } | null>(null);
 
   const load = useCallback(async () => {
     try { setD(await api<Console>('/admin/ai/console')); setErr(''); }
@@ -69,6 +126,59 @@ export default function AiConsole() {
     void load();
   };
   const testAll = async () => { for (const p of d?.providers ?? []) if (p.configured) await test(p.name); };
+
+  const onPickAsrFile = async (file: File) => {
+    try {
+      const b64 = await blobToBase64(file);
+      setAsrSample({ b64, format: inferAudioFormat(file), label: `${file.name}（${Math.max(1, Math.round(file.size / 1024))} KB）` });
+      setAsrRes(null);
+    } catch (e) { useUI.getState().showSnack({ text: (e as Error).message }); }
+  };
+
+  const toggleRecord = async () => {
+    if (recording && recRef.current) {
+      recRef.current.rec.stop();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      useUI.getState().showSnack({ text: '目前瀏覽器不支援錄音，請改用上傳音檔' });
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const picked = pickRecorderMime();
+      const rec = picked.mime ? new MediaRecorder(stream, { mimeType: picked.mime }) : new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+      rec.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setRecording(false);
+        recRef.current = null;
+        const blob = new Blob(chunks, { type: picked.mime || 'audio/mp4' });
+        if (!blob.size) return;
+        const b64 = await blobToBase64(blob);
+        setAsrSample({ b64, format: picked.format, label: `即時錄音（${Math.max(1, Math.round(blob.size / 1024))} KB）` });
+        setAsrRes(null);
+      };
+      recRef.current = { rec, stream, chunks, format: picked.format };
+      rec.start();
+      setRecording(true);
+    } catch (e) {
+      useUI.getState().showSnack({ text: `無法啟動麥克風：${(e as Error).message}` });
+    }
+  };
+
+  const runAsrTest = async () => {
+    if (!asrSample) return;
+    setAsrBusy(true);
+    setAsrRes(null);
+    try {
+      const r = await api<AsrTestResult>('/admin/ai/asr-test', { method: 'POST', body: { audio_b64: asrSample.b64, format: asrSample.format } });
+      setAsrRes(r);
+    } catch (e) {
+      setAsrRes({ ok: false, source: 'none', text: '', latency_ms: 0, detail: (e as Error).message });
+    } finally { setAsrBusy(false); }
+  };
   const save = async (body: Record<string, unknown>) => {
     setBusy(true);
     try {
@@ -135,6 +245,57 @@ export default function AiConsole() {
         })}
       </div>
       <p className="set-note">「測試連線」會送 1 次極小的請求（用掉供應商 1 次額度，不扣使用者額度），成功會解除冷卻。Key 只存在伺服器的 .env，這裡只顯示最後 4 碼。</p>
+
+      <div className="section-title">本地語音（Breeze-ASR-25）測試</div>
+      <div className="card" style={{ marginBottom: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <span className="row-title">
+            {d.asr?.configured ? (d.asr.health_ok ? '🟢' : '🔴') : '⚪️'} CLURE_ASR_URL：{d.asr?.configured ? '已設定' : '未設定'}
+          </span>
+          <button type="button" className="btn small ghost" onClick={() => void load()}>檢查狀態</button>
+        </div>
+        {d.asr?.configured && (
+          <div className="row-sub" style={{ whiteSpace: 'normal', marginTop: 4 }}>
+            網址：<code>{d.asr.url}</code>
+            <br />
+            健康檢查（/health）：{d.asr.health_ok ? `ok${d.asr.health_latency_ms !== null ? `（${d.asr.health_latency_ms} ms）` : ''}` : d.asr.health_detail || '連不上'}
+          </div>
+        )}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10, alignItems: 'center' }}>
+          <label className="btn small tinted" style={{ cursor: 'pointer' }}>
+            上傳音檔
+            <input
+              type="file"
+              accept="audio/*,.m4a,.mp4,.webm,.ogg,.wav,.mp3,.aac"
+              className="sr-only"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (f) void onPickAsrFile(f);
+              }}
+            />
+          </label>
+          <button type="button" className={`btn small ${recording ? 'danger' : 'tinted'}`} onClick={() => void toggleRecord()}>
+            {recording ? '停止錄音' : '直接錄音'}
+          </button>
+          <button type="button" className="btn small" disabled={!asrSample || asrBusy || recording} onClick={() => void runAsrTest()}>
+            {asrBusy ? '轉錄中…' : '測試轉錄'}
+          </button>
+        </div>
+        {asrSample && <div className="row-sub" style={{ marginTop: 8 }}>已準備音檔：{asrSample.label}</div>}
+        {asrRes && (
+          <div role="status" style={{ marginTop: 10, fontSize: '0.88rem', lineHeight: 1.5 }}>
+            <div style={{ color: asrRes.ok ? 'var(--success, #30D158)' : 'var(--danger)', fontWeight: 600 }}>
+              {asrRes.ok ? '✅' : '❌'} {asrRes.detail}（來源：{asrRes.source === 'local' ? 'local' : asrRes.source === 'gemini' ? 'fallback gemini' : '無'} · {asrRes.latency_ms} ms）
+            </div>
+            {asrRes.text && (
+              <div style={{ marginTop: 4, padding: '8px 10px', borderRadius: 10, background: 'var(--surface-2)', color: 'var(--text)' }}>
+                {asrRes.text}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="section-title">用量（次）</div>
       <div className="admin-grid three">
