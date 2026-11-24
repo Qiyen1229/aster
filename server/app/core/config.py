@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     ai_openrouter_extra_body: str = ""
     ai_nvidia_extra_body: str = ""
     ai_custom_extra_body: str = ""
+    asr_url: str = ""
     ai_timeout_seconds: int = Field(30, ge=3, le=120)
     # 額度預設值（管理後台改過就以後台為準）：每位使用者的日／週／月上限，以及全站每日上限（保護上游免費額度；0＝不限）。
     # 免費層的每日上限以 Google AI Studio 的 Rate limit 頁面為準（會變動），全站每日上限請設在它以內

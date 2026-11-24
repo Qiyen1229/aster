@@ -5,8 +5,11 @@
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import urllib.request
+import uuid
 from collections.abc import Callable, Iterator
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -37,6 +40,48 @@ def _history(body: object) -> dict:
     return {"對話紀錄": [{"誰": "使用者" if x.role == "user" else "助手", "說": x.text} for x in h]} if h else {}
 
 log = logging.getLogger("aster.ai")
+
+_AUDIO_MIME = {
+    "mp4": "audio/mp4",
+    "webm": "audio/webm",
+    "ogg": "audio/ogg",
+    "wav": "audio/wav",
+    "mp3": "audio/mpeg",
+    "aac": "audio/aac",
+}
+
+
+def _transcribe_local(asr_url: str, audio_b64: str, fmt: str) -> str | None:
+    """優先嘗試本地 ASR（multipart/form-data: file + language=zh，timeout 30 秒）。
+    失敗、超時或回傳空字串時記錄警告並回傳 None，讓上層無縫 fallback 到 Gemini。
+    """
+    try:
+        raw = base64.b64decode(audio_b64)
+        boundary = f"----AsterAsr{uuid.uuid4().hex}"
+        mime = _AUDIO_MIME.get(fmt, "application/octet-stream")
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="audio.{fmt}"\r\n'
+            f"Content-Type: {mime}\r\n\r\n"
+        ).encode() + raw + (
+            f"\r\n--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="language"\r\n\r\n'
+            f"zh\r\n--{boundary}--\r\n"
+        ).encode()
+        req = urllib.request.Request(
+            asr_url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 — 網址來自管理員環境變數 CLURE_ASR_URL
+            data = json.loads(resp.read().decode("utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("text"), str):
+            text = data["text"].strip()[:300]
+            return text or None
+    except Exception as e:  # noqa: BLE001 — 本地 ASR 任何錯誤皆須安全 fallback 回 Gemini
+        log.warning("本地 ASR 轉錄失敗，將 fallback 回 Gemini：%s", e)
+    return None
 
 MAX_ENTRIES = 8
 
@@ -304,6 +349,12 @@ class AiService:
         return ParseEntryResult(entries=entries, quota=self._quota(user))  # type: ignore[arg-type]
 
     def transcribe(self, user: User, body: TranscribeRequest) -> TranscribeResult:
+        asr_url = get_settings().asr_url.strip()
+        if asr_url:
+            local_text = _transcribe_local(asr_url, body.audio_b64, body.format)
+            if local_text:
+                return TranscribeResult(text=local_text, quota=self._quota(user))
+
         text = ai_tasks.run_task(
             self.db, user, "transcribe", ai_tasks.TRANSCRIBE, "請將這段語音轉成繁體中文文字。",
             ai_tasks.v_transcribe, audio=(body.audio_b64, body.format), prefer=("gemini",),

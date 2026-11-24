@@ -881,3 +881,80 @@ def test_provider_routing_text_custom_media_gemini(monkeypatch) -> None:  # noqa
     # PDF 任務優先給 gemini，並略過 custom 與 nvidia
     pdf_order = [p.name for p in ai_providers._ordered_providers(s, images=["data:application/pdf;base64,AAA"])]
     assert pdf_order == ["gemini"]
+
+
+def test_transcribe_local_asr_success(api: Api, monkeypatch) -> None:  # noqa: ANN001
+    import base64
+    from app.core.config import get_settings
+    from app.service import ai_service
+
+    monkeypatch.setenv("CLURE_ASR_URL", "http://10.0.30.100:8094/v1/audio/transcriptions")
+    get_settings.cache_clear()
+    try:
+        captured: dict[str, object] = {}
+
+        class _FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps({"text": "早餐蛋餅 60"}).encode("utf-8")
+
+        def _fake_urlopen(req, timeout=None):  # noqa: ANN001
+            captured["url"] = req.full_url
+            captured["timeout"] = timeout
+            captured["content_type"] = req.get_header("Content-type")
+            captured["data"] = req.data
+            return _FakeResp()
+
+        def _should_not_call_gemini(*args, **kwargs):  # noqa: ANN001
+            raise AssertionError("本地 ASR 成功時不應呼叫 Gemini")
+
+        monkeypatch.setattr(ai_service.urllib.request, "urlopen", _fake_urlopen)
+        monkeypatch.setattr(ai_service.ai_tasks, "run_task", _should_not_call_gemini)
+
+        api.register("alice")
+        raw_audio = b"OggS-fake-audio-bytes-12345678901234567890"
+        r = api.post("/api/ai/transcribe", {
+            "audio_b64": base64.b64encode(raw_audio).decode(),
+            "format": "mp4",
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["text"] == "早餐蛋餅 60"
+        assert captured["url"] == "http://10.0.30.100:8094/v1/audio/transcriptions"
+        assert captured["timeout"] == 30
+        assert "multipart/form-data" in str(captured["content_type"])
+        assert raw_audio in captured["data"]  # type: ignore[operator]
+        assert b'name="language"\r\n\r\nzh' in captured["data"]  # type: ignore[operator]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_transcribe_local_asr_fallback_gemini(api: Api, monkeypatch) -> None:  # noqa: ANN001
+    import base64
+    from app.core.config import get_settings
+    from app.service import ai_providers, ai_service
+
+    monkeypatch.setenv("CLURE_ASR_URL", "http://10.0.30.100:8094/v1/audio/transcriptions")
+    monkeypatch.setenv("CLURE_AI_GEMINI_API_KEY", "test-gemini-key")
+    get_settings.cache_clear()
+    try:
+        def _failing_urlopen(req, timeout=None):  # noqa: ANN001
+            raise TimeoutError("local ASR timeout")
+
+        monkeypatch.setattr(ai_service.urllib.request, "urlopen", _failing_urlopen)
+        monkeypatch.setattr(ai_providers, "_post_gemini_inline", lambda *a, **kw: json.dumps({"text": "午餐牛肉麵 180"}))
+
+        api.register("alice")
+        raw_audio = b"OggS-fake-audio-bytes-12345678901234567890"
+        r = api.post("/api/ai/transcribe", {
+            "audio_b64": base64.b64encode(raw_audio).decode(),
+            "format": "mp4",
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["text"] == "午餐牛肉麵 180"
+    finally:
+        get_settings.cache_clear()
