@@ -855,3 +855,29 @@ def test_agent_plan_sell_stock_validated(api: Api, monkeypatch) -> None:  # noqa
     assert r.status_code == 200, r.text
     assert [s["tool"] for s in r.json()["steps"]] == ["sell_stock"]
     assert r.json()["steps"][0]["args"] == {"symbol": "0050", "shares": 1000, "price": 190, "account": "台新"}
+
+
+def test_provider_routing_text_custom_media_gemini(monkeypatch) -> None:  # noqa: ANN001
+    from types import SimpleNamespace
+    from app.service import ai_providers
+
+    dummy = [
+        SimpleNamespace(name="nvidia", configured=True, base_url="https://integrate.api.nvidia.com/v1", model="nv-vl", api_key="k", extra={}),
+        SimpleNamespace(name="gemini", configured=True, base_url="https://generativelanguage.googleapis.com/v1beta/openai", model="gemini-2.5-flash", api_key="k", extra={}),
+        SimpleNamespace(name="custom", configured=True, base_url="http://localhost:8000/v1", model="nemotron", api_key="k", extra={}),
+    ]
+    monkeypatch.setattr(ai_providers, "providers", lambda _s: dummy)
+    monkeypatch.setattr(ai_providers, "cooling_down", lambda _n: False)
+
+    s = SimpleNamespace()
+    # 文字任務優先給自架 custom
+    text_order = [p.name for p in ai_providers._ordered_providers(s)]
+    assert text_order == ["custom", "nvidia", "gemini"]
+
+    # 圖片任務優先給 gemini，並略過純文字 custom
+    img_order = [p.name for p in ai_providers._ordered_providers(s, images=["data:image/jpeg;base64,AAA"])]
+    assert img_order == ["gemini", "nvidia"]
+
+    # PDF 任務優先給 gemini，並略過 custom 與 nvidia
+    pdf_order = [p.name for p in ai_providers._ordered_providers(s, images=["data:application/pdf;base64,AAA"])]
+    assert pdf_order == ["gemini"]

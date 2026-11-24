@@ -224,6 +224,30 @@ def extract_json(text: str) -> object:
     raise ValueError("no json")
 
 
+def _ordered_providers(
+    s: Settings,
+    *,
+    images: list[str] | None = None,
+    audio: tuple[str, str] | None = None,
+    prefer: tuple[str, ...] | None = None,
+) -> list[Provider]:
+    """依請求媒體類型決定供應商順序並略過不支援該媒體的模型（避免誤打失敗觸發 5 分鐘冷卻）：
+    - 文字任務：優先自架 custom（Nemotron）
+    - 圖片／PDF／語音：優先 gemini，並略過純文字的 custom；PDF 與語音同時略過 nvidia
+    """
+    plist = list(providers(s))
+    has_pdf = any(u.startswith("data:application/pdf;base64,") for u in (images or []))
+    if audio or has_pdf:
+        plist = [p for p in plist if p.name not in ("custom", "nvidia")]
+    elif images:
+        plist = [p for p in plist if p.name != "custom"]
+
+    eff_prefer = prefer if prefer is not None else (("gemini",) if (images or audio) else ("custom",))
+    rank = {name: i for i, name in enumerate(eff_prefer)}
+    plist.sort(key=lambda p: rank.get(p.name, len(rank)))
+    return plist
+
+
 def complete_json(
     system: str,
     user: str,
@@ -235,18 +259,11 @@ def complete_json(
 ) -> tuple[object, str, str]:
     """依序嘗試各供應商，回傳 (解析後的 JSON, 供應商名稱, 模型)。全部失敗拋 503。"""
     s = get_settings()
-    plist = list(providers(s))
-    if prefer:
-        rank = {name: i for i, name in enumerate(prefer)}
-        plist.sort(key=lambda p: rank.get(p.name, len(rank)))
+    plist = _ordered_providers(s, images=images, audio=audio, prefer=prefer)
+    pdf_b64 = next((u.split(",", 1)[1] for u in (images or []) if u.startswith("data:application/pdf;base64,")), None)
     tried = 0
     for p in plist:
         if not p.configured or cooling_down(p.name):
-            continue
-        if audio and p.name == "nvidia":
-            continue  # NVIDIA 文字模型不支援 input_audio，避免誤打失敗連帶觸發 5 分鐘冷卻
-        pdf_b64 = next((u.split(",", 1)[1] for u in (images or []) if u.startswith("data:application/pdf;base64,")), None)
-        if pdf_b64 and p.name == "nvidia":
             continue
         tried += 1
         t0 = time.monotonic()
@@ -348,7 +365,7 @@ def stream_text(system: str, user: str, *, max_tokens: int = 800, images: list[s
     已經開始輸出之後才中斷就不再換供應商（換了會讓使用者看到前後不連的兩段回答），改丟 ValueError 由呼叫端處理。"""
     s = get_settings()
     tried = 0
-    for p in providers(s):
+    for p in _ordered_providers(s, images=images):
         if not p.configured or cooling_down(p.name):
             continue
         tried += 1
