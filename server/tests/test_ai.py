@@ -883,8 +883,9 @@ def test_provider_routing_text_custom_media_gemini(monkeypatch) -> None:  # noqa
     assert pdf_order == ["gemini"]
 
 
-def test_transcribe_local_asr_success(api: Api, monkeypatch) -> None:  # noqa: ANN001
+def test_transcribe_local_asr_success(api: Api, monkeypatch, caplog) -> None:  # noqa: ANN001
     import base64
+    import logging
     from app.core.config import get_settings
     from app.service import ai_service
 
@@ -918,10 +919,11 @@ def test_transcribe_local_asr_success(api: Api, monkeypatch) -> None:  # noqa: A
 
         api.register("alice")
         raw_audio = b"OggS-fake-audio-bytes-12345678901234567890"
-        r = api.post("/api/ai/transcribe", {
-            "audio_b64": base64.b64encode(raw_audio).decode(),
-            "format": "mp4",
-        })
+        with caplog.at_level(logging.INFO, logger="aster.ai"):
+            r = api.post("/api/ai/transcribe", {
+                "audio_b64": base64.b64encode(raw_audio).decode(),
+                "format": "mp4",
+            })
         assert r.status_code == 200, r.text
         assert r.json()["text"] == "早餐蛋餅 60"
         assert captured["url"] == "http://10.0.30.100:8094/v1/audio/transcriptions"
@@ -929,12 +931,14 @@ def test_transcribe_local_asr_success(api: Api, monkeypatch) -> None:  # noqa: A
         assert "multipart/form-data" in str(captured["content_type"])
         assert raw_audio in captured["data"]  # type: ignore[operator]
         assert b'name="language"\r\n\r\nzh' in captured["data"]  # type: ignore[operator]
+        assert any("AI transcribe user_id=" in rec.message and "provider=local" in rec.message and "ms=" in rec.message for rec in caplog.records)
     finally:
         get_settings.cache_clear()
 
 
-def test_transcribe_local_asr_fallback_gemini(api: Api, monkeypatch) -> None:  # noqa: ANN001
+def test_transcribe_local_asr_fallback_gemini(api: Api, monkeypatch, caplog) -> None:  # noqa: ANN001
     import base64
+    import logging
     from app.core.config import get_settings
     from app.service import ai_providers, ai_service
 
@@ -950,12 +954,14 @@ def test_transcribe_local_asr_fallback_gemini(api: Api, monkeypatch) -> None:  #
 
         api.register("alice")
         raw_audio = b"OggS-fake-audio-bytes-12345678901234567890"
-        r = api.post("/api/ai/transcribe", {
-            "audio_b64": base64.b64encode(raw_audio).decode(),
-            "format": "mp4",
-        })
+        with caplog.at_level(logging.INFO, logger="aster.ai"):
+            r = api.post("/api/ai/transcribe", {
+                "audio_b64": base64.b64encode(raw_audio).decode(),
+                "format": "mp4",
+            })
         assert r.status_code == 200, r.text
         assert r.json()["text"] == "午餐牛肉麵 180"
+        assert any("AI transcribe user_id=" in rec.message and "provider=gemini" in rec.message and "ms=" in rec.message for rec in caplog.records)
     finally:
         get_settings.cache_clear()
 

@@ -368,10 +368,13 @@ class AiService:
         return ParseEntryResult(entries=entries, quota=self._quota(user))  # type: ignore[arg-type]
 
     def transcribe(self, user: User, body: TranscribeRequest) -> TranscribeResult:
+        t0 = time.monotonic()
         asr_url = get_settings().asr_url.strip()
         if asr_url:
             local_text = _transcribe_local(asr_url, body.audio_b64, body.format)
             if local_text:
+                ms = int((time.monotonic() - t0) * 1000)
+                log.info("AI transcribe user_id=%s provider=local ms=%d", user.id, ms)
                 return TranscribeResult(text=local_text, quota=self._quota(user))
 
         text = ai_tasks.run_task(
@@ -379,6 +382,8 @@ class AiService:
             ai_tasks.v_transcribe, audio=(body.audio_b64, body.format), prefer=("gemini",),
             fail_message="語音辨識失敗，請再說一次或改用打字",
         )
+        ms = int((time.monotonic() - t0) * 1000)
+        log.info("AI transcribe user_id=%s provider=gemini ms=%d", user.id, ms)
         return TranscribeResult(text=str(text), quota=self._quota(user))  # type: ignore[arg-type]
 
     # ── 管理員 ──
