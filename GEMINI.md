@@ -9,3 +9,7 @@
 
 ## 打包與發布規範
 - 產出 NAS 部署包（`npm run pack:nas` / `aster-nas.zip`）或任何發布壓縮檔時，**絕不可包含 `data/`（含 `server/data/`）與 `.env`**，避免解壓覆蓋 NAS 現有資料庫、設定與金鑰。打包後須確認排除規則生效，不可手動把 `data/` 加進壓縮檔。
+
+## 版本更新與發佈重點規範
+- 每次執行版本升級（修改 `package.json`、`server/app/main.py`、`src/release.json` 與 `src/features/whatsnew/releaseNotes.ts`）前，**必須先提出預計寫入的「版本更新重點」範例**（含每個項目的 `title`（不超過 10 字）、`intro`、`howto` 以及 `release.json` 的 `headline`），讓使用者審閱與修改。
+- **未經使用者明確確認文案前，不得擅自寫入更新重點並提交發佈**。
