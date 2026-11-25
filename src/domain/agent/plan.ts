@@ -15,10 +15,51 @@
 import type { Account, Budget, Category, CategoryRule, Dividend, Durable, ExchangeRate, Goal, Installment, Project, RecurringRule, StockTrade, Transaction, Transfer, Wish } from '@/db/types';
 import { computePosition } from '@/domain/invest/position';
 import { currencyInfo, convertMinor } from '@/domain/money';
-import { resolveRate } from '@/services/fx';
-import { travelDraftDefaults } from '@/services/quickentry';
-import type { InboxEntry } from '@/services/inbox';
 import { statAmount } from '@/domain/ledger';
+
+export interface InboxDraftItem {
+  kind: 'expense' | 'income' | 'transfer';
+  amount: number;
+  currency?: string;
+  accountId: string;
+  toAccountId?: string;
+  categoryId?: string;
+  projectId?: string;
+  note: string;
+  date: string;
+  time?: string;
+  tagIds: string[];
+  categorySource: 'rule' | 'default' | 'memory' | 'text';
+  accountSource: 'text' | 'rule' | 'memory' | 'default';
+  dateGiven: boolean;
+  raw: string;
+}
+
+export interface InboxEntryItem {
+  item: { id: number; merchant: string; text: string };
+  review?: string | boolean;
+  dup?: { level: string };
+  drafts: InboxDraftItem[];
+}
+
+export interface PlanDeps {
+  resolveRate?: (rates: Map<string, ExchangeRate>, from: string, to: string) => Decimal | null;
+  travelDraftDefaults?: (draft: { currency?: string }, travel: Project | undefined, accCurrency: string, baseCurrency: string) => { currency: string };
+}
+
+function defaultResolveRate(rates: Map<string, ExchangeRate>, from: string, to: string): Decimal | null {
+  if (from === to) return new Decimal(1);
+  const direct = rates.get(`${from}>${to}`)?.rateDec;
+  if (direct) return new Decimal(direct);
+  const rev = rates.get(`${to}>${from}`)?.rateDec;
+  if (!rev) return null;
+  const n = new Decimal(rev);
+  return n.gt(0) ? new Decimal(1).div(n) : null;
+}
+
+function defaultTravelDraftDefaults(draft: { currency?: string }, travel: Project | undefined, accCurrency: string, baseCurrency: string): { currency: string } {
+  return { currency: draft.currency || (travel?.isTravel ? travel.currency : undefined) || accCurrency || baseCurrency };
+}
 import { formatMoney } from '@/domain/money';
 import { accountingMonth, addDays, type Range } from '@/domain/period';
 import { occurrences } from '@/domain/recurrence';
@@ -64,7 +105,7 @@ export type Op =
   | { kind: 'travel'; projectId: string | null }
   | { kind: 'installment'; input: Omit<Installment, 'id' | 'createdAt' | 'updatedAt' | 'schedule' | 'status'> }
   | { kind: 'recurring_manage'; ruleId: string; action: 'confirm' | 'skip' | 'pause' | 'resume' | 'delete' | 'edit'; date?: string; amountMinor?: number; day?: number; mode?: 'auto' | 'confirm' }
-  | { kind: 'inbox'; action: 'book' | 'skip'; entries: InboxEntry[]; travelProjectId?: string }
+  | { kind: 'inbox'; action: 'book' | 'skip'; entries: InboxEntryItem[]; travelProjectId?: string }
   | { kind: 'dividend'; input: Omit<Dividend, 'id' | 'createdAt' | 'updatedAt' | 'transactionId' | 'stockTradeId'> & { syncToLedger: boolean } }
   | { kind: 'wish'; draftId: string; input: { name: string; priceMinor: number; currency: string; coolDays: number; categoryId?: string; note?: string; url?: string } }
   | { kind: 'wish_decide'; wishId: string; decision: 'bought' | 'abandoned' | 'extend' }
@@ -141,8 +182,9 @@ export interface AgentData {
   durables?: Durable[];
   transfers?: Transfer[];
   watchlist?: { stockId: string; alerts: { priceDec: string; op: '>=' | '<='; enabled: boolean }[] }[];
-  inbox?: InboxEntry[];
+  inbox?: InboxEntryItem[];
   travelProjectId?: string | null;
+  deps?: PlanDeps;
 }
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
@@ -1062,6 +1104,8 @@ function manageInboxTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
   const bookable = hits.filter((e) => e.drafts.length && e.dup?.level !== 'strong' && !e.review);
   const travel = d.projects?.find((p) => p.id === d.travelProjectId);
   const rates = new Map((d.exchangeRates ?? []).map((r) => [`${r.base}>${r.quote}`, r]));
+  const resolveRateFn = d.deps?.resolveRate ?? defaultResolveRate;
+  const travelDefaultsFn = d.deps?.travelDraftDefaults ?? defaultTravelDraftDefaults;
   for (const e of bookable) for (const dr of e.drafts) {
     const acc = d.accounts.find((x) => x.id === dr.accountId && usableAcc(x));
     if (!acc) return blockedStep(tool, title, '有帳戶不存在或已封存，請到收件匣重新選擇');
@@ -1069,8 +1113,8 @@ function manageInboxTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
       const to = d.accounts.find((x) => x.id === dr.toAccountId && usableAcc(x));
       if (!to || to.id === acc.id || to.currency !== acc.currency) return blockedStep(tool, title, '跨幣別或無效的轉帳，請到收件匣手動處理');
     } else {
-      const { currency } = travelDraftDefaults(dr, travel, acc.currency, d.baseCurrency);
-      if (!resolveRate(rates, currency, acc.currency)) return blockedStep(tool, title, `缺少 ${currency}→${acc.currency} 匯率，請先更新匯率再預覽`);
+      const { currency } = travelDefaultsFn(dr, travel, acc.currency, d.baseCurrency);
+      if (!resolveRateFn(rates, currency, acc.currency)) return blockedStep(tool, title, `缺少 ${currency}→${acc.currency} 匯率，請先更新匯率再預覽`);
     }
   }
   const dupN = hits.filter((e) => e.dup?.level === 'strong').length;
@@ -1085,9 +1129,9 @@ function manageInboxTool(a: Record<string, unknown>, d: AgentData, W: Work): Res
     for (const dr of e.drafts) {
       const acc = d.accounts.find((x) => x.id === dr.accountId);
       if (!acc) continue;
-      const currency = dr.kind === 'transfer' ? acc.currency : travelDraftDefaults(dr, travel, acc.currency, d.baseCurrency).currency;
+      const currency = dr.kind === 'transfer' ? acc.currency : travelDefaultsFn(dr, travel, acc.currency, d.baseCurrency).currency;
       const original = minorOf(dr.amount, currency);
-      const amt = convertMinor(original, currency, acc.currency, resolveRate(rates, currency, acc.currency)!);
+      const amt = convertMinor(original, currency, acc.currency, resolveRateFn(rates, currency, acc.currency)!);
       const before = W.balances.get(acc.id) ?? acc.balanceMinor;
       if (dr.kind === 'transfer') {
         const to = d.accounts.find((x) => x.id === dr.toAccountId);
@@ -1469,6 +1513,46 @@ function editGoalTool(a: Record<string, unknown>, d: AgentData, W: Work): Resolv
 
 // ───────────── 入口 ─────────────
 
+type ToolHandler = (a: Record<string, unknown>, d: AgentData, W: Work, work: Transaction[], draftBudgets: Budget[]) => ResolvedStep;
+
+const TOOL_REGISTRY: Record<ToolName, ToolHandler> = {
+  reclassify: (a, d, _W, work) => reclassify(a, d, work),
+  set_budget: (a, d, _W, work, draftBudgets) => setBudget(a, d, work, draftBudgets),
+  add_recurring: (a, d) => addRecurring(a, d),
+  prepayment_sim: (a, d) => prepayment(a, d),
+  add_goal: (a, d, W) => {
+    const r = addGoal(a, d);
+    if (r.op?.kind === 'goal') W.draftGoals.set(r.op.input.name, r.op);
+    return r;
+  },
+  add_rule: (a, d, _W, work) => addRule(a, d, work),
+  add_transaction: (a, d, W, work) => addTransactionTool(a, d, W, work),
+  transfer: (a, d, W) => transferTool(a, d, W),
+  add_debt: (a, d, W) => addDebtTool(a, d, W),
+  settle_debt: (a, d, W) => settleDebtTool(a, d, W),
+  goal_deposit: (a, d, W) => goalDepositTool(a, d, W),
+  buy_stock: (a, d, W) => tradeStockTool('buy', a, d, W),
+  sell_stock: (a, d, W) => tradeStockTool('sell', a, d, W),
+  show_view: (a) => showViewTool(a),
+  edit_transaction: (a, d, W, work) => editTxTool(a, d, work, W),
+  delete_transaction: (a, d, W, work) => deleteTxTool(a, d, work, W),
+  add_category: (a, d, W) => addCategoryTool(a, d, W),
+  add_account: (a, d, W) => addAccountTool(a, d, W),
+  add_project: (a, d, W) => addProjectTool(a, d, W),
+  set_travel_mode: (a, d) => setTravelModeTool(a, d),
+  manage_recurring: (a, d, W) => manageRecurringTool(a, d, W),
+  manage_inbox: (a, d, W) => manageInboxTool(a, d, W),
+  add_installment: (a, d, W) => addInstallmentTool(a, d, W),
+  add_dividend: (a, d, W) => addDividendTool(a, d, W),
+  add_wish: (a, d, W) => addWishTool(a, d, W),
+  decide_wish: (a, d) => decideWishTool(a, d),
+  manage_durable: (a, d, W) => manageDurableTool(a, d, W),
+  add_watch: (a, d) => addWatchTool(a, d),
+  delete_transfer: (a, d, W) => deleteTransferTool(a, d, W),
+  manage_debt: (a, d, W) => manageDebtTool(a, d, W),
+  edit_goal: (a, d, W) => editGoalTool(a, d, W),
+};
+
 /** 驗證並模擬整份計畫。回傳每一步的預覽與要執行的操作；不修改傳入的資料（在複本上模擬） */
 export function resolvePlan(steps: RawStep[], data: AgentData): ResolvedStep[] {
   // 工作副本：這份計畫裡新建的分類／帳戶／專案直接加進清單，後面的步驟用名稱就找得到（執行時再把草稿 id 換成真的 id）
@@ -1490,41 +1574,8 @@ export function resolvePlan(steps: RawStep[], data: AgentData): ResolvedStep[] {
   const out: ResolvedStep[] = [];
   for (const s of steps.slice(0, MAX_STEPS)) {
     const a = (s.args && typeof s.args === 'object' ? s.args : {}) as Record<string, unknown>;
-    if (s.tool === 'reclassify') out.push(reclassify(a, d, work));
-    else if (s.tool === 'set_budget') out.push(setBudget(a, d, work, draftBudgets));
-    else if (s.tool === 'add_recurring') out.push(addRecurring(a, d));
-    else if (s.tool === 'prepayment_sim') out.push(prepayment(a, d));
-    else if (s.tool === 'add_goal') {
-      const r = addGoal(a, d);
-      if (r.op?.kind === 'goal') W.draftGoals.set(r.op.input.name, r.op);
-      out.push(r);
-    }
-    else if (s.tool === 'add_rule') out.push(addRule(a, d, work));
-    else if (s.tool === 'add_transaction') out.push(addTransactionTool(a, d, W, work));
-    else if (s.tool === 'transfer') out.push(transferTool(a, d, W));
-    else if (s.tool === 'add_debt') out.push(addDebtTool(a, d, W));
-    else if (s.tool === 'settle_debt') out.push(settleDebtTool(a, d, W));
-    else if (s.tool === 'goal_deposit') out.push(goalDepositTool(a, d, W));
-    else if (s.tool === 'buy_stock') out.push(tradeStockTool('buy', a, d, W));
-    else if (s.tool === 'sell_stock') out.push(tradeStockTool('sell', a, d, W));
-    else if (s.tool === 'show_view') out.push(showViewTool(a));
-    else if (s.tool === 'edit_transaction') out.push(editTxTool(a, d, work, W));
-    else if (s.tool === 'delete_transaction') out.push(deleteTxTool(a, d, work, W));
-    else if (s.tool === 'add_category') out.push(addCategoryTool(a, d, W));
-    else if (s.tool === 'add_account') out.push(addAccountTool(a, d, W));
-    else if (s.tool === 'add_project') out.push(addProjectTool(a, d, W));
-    else if (s.tool === 'set_travel_mode') out.push(setTravelModeTool(a, d));
-    else if (s.tool === 'manage_recurring') out.push(manageRecurringTool(a, d, W));
-    else if (s.tool === 'manage_inbox') out.push(manageInboxTool(a, d, W));
-    else if (s.tool === 'add_installment') out.push(addInstallmentTool(a, d, W));
-    else if (s.tool === 'add_dividend') out.push(addDividendTool(a, d, W));
-    else if (s.tool === 'add_wish') out.push(addWishTool(a, d, W));
-    else if (s.tool === 'decide_wish') out.push(decideWishTool(a, d));
-    else if (s.tool === 'manage_durable') out.push(manageDurableTool(a, d, W));
-    else if (s.tool === 'add_watch') out.push(addWatchTool(a, d));
-    else if (s.tool === 'delete_transfer') out.push(deleteTransferTool(a, d, W));
-    else if (s.tool === 'manage_debt') out.push(manageDebtTool(a, d, W));
-    else if (s.tool === 'edit_goal') out.push(editGoalTool(a, d, W));
+    const handler = Object.prototype.hasOwnProperty.call(TOOL_REGISTRY, s.tool) ? TOOL_REGISTRY[s.tool as ToolName] : undefined;
+    if (handler) out.push(handler(a, d, W, work, draftBudgets));
     else out.push({ op: null, preview: { tool: 'reclassify', title: '不支援的操作', lines: [], warnings: [], blocked: `不支援的操作「${String(s.tool).slice(0, 20)}」` } });
   }
   if (data.snapshot) for (const step of out) step.snapshot = data.snapshot;

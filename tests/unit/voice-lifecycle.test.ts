@@ -39,6 +39,12 @@ vi.mock('@/stores/ui', () => ({
   useUI: { getState: () => ({ showSnack: showSnackMock }) },
 }));
 
+vi.mock('@/services/notify', () => ({
+  notifyUser: (opts: unknown) => showSnackMock(typeof opts === 'string' ? { text: opts } : opts),
+  promptUser: vi.fn(),
+  registerUiBridge: vi.fn(),
+}));
+
 class FakeMediaRecorder {
   static instances: FakeMediaRecorder[] = [];
   static supportedMimes = new Set<string>(['audio/mp4']);

@@ -106,3 +106,17 @@ export function buildTree(all: Category[], kind: CategoryKind, includeArchived =
     subs: visible.filter((c) => c.parentId === main.id).sort((a, b) => a.sort - b.sort),
   }));
 }
+
+/** 刪除標籤並同步清除所有關聯表內的該標籤 ID（單一交易保證一致性） */
+export async function deleteTagCascade(tagId: string): Promise<void> {
+  await db.transaction('rw', [db.tags, db.transactions, db.transfers, db.rules, db.templates, db.recurring_rules, db.saved_filters], async () => {
+    const now = Date.now();
+    await db.transactions.where('tagIds').equals(tagId).modify((tx) => { tx.tagIds = tx.tagIds.filter((x) => x !== tagId); tx.updatedAt = now; });
+    await db.transfers.filter((tr) => tr.tagIds.includes(tagId)).modify((tr) => { tr.tagIds = tr.tagIds.filter((x) => x !== tagId); tr.updatedAt = now; });
+    await db.rules.filter((r) => !!r.tagIds?.includes(tagId)).modify((r) => { r.tagIds = r.tagIds?.filter((x) => x !== tagId); r.updatedAt = now; });
+    await db.templates.filter((tpl) => !!tpl.payload.tagIds?.includes(tagId)).modify((tpl) => { tpl.payload.tagIds = tpl.payload.tagIds?.filter((x) => x !== tagId); tpl.updatedAt = now; });
+    await db.recurring_rules.filter((rr) => !!rr.template.tagIds?.includes(tagId)).modify((rr) => { rr.template.tagIds = rr.template.tagIds?.filter((x) => x !== tagId); rr.updatedAt = now; });
+    await db.saved_filters.filter((sf) => !!sf.filter.tagIds?.includes(tagId)).modify((sf) => { sf.filter.tagIds = sf.filter.tagIds?.filter((x) => x !== tagId); sf.updatedAt = now; });
+    await db.tags.delete(tagId);
+  });
+}

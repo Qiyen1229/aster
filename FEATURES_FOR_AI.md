@@ -101,13 +101,6 @@
 7. **關於**、帳號與資料管理（登出、清除所有資料）。
 - 說明文字用 ⓘ（`Hint`／`Intro`）折疊；署名「2026.02.03 · Qiyen 著」。
 
-### 1.11 首頁計算機（v4.1.3，`features/home/CalculatorSheet.tsx`、`services/calcHistory.ts`）
-- 入口：首頁右上角（搜尋左邊），底部升起的視窗（`Sheet variant="rise"`），第一次打開才載入（`HomePage` 的 `calcUsed`）。
-- **計算**：沿用記帳鍵盤（`Keypad`＋`pressKey`，最多 4 位小數）；「＝」算出結果並記入記錄。
-- **記帳快捷**（對目前數字運算並記錄）：＋10% 服務費、＋5% 稅、9／85／8／7 折、AA 2～6 人平分、取整、**外幣→主幣別**（用 `services/fx.getRate`，取不到匯率會提示）。
-- **記錄**：預設最近 **10 筆**，可選 5／10／20／50；存在該帳號本機 `meta` 表（`calc.history`／`calc.keep`，不同步、不進備份）；和最前一筆完全相同不重複記；變少時立即裁掉。
-- **一鍵複製**（純數字，不帶千分位；剪貼簿失敗退回 `execCommand`）、**一鍵記一筆**（只帶金額 `openAdd({ mode: 'expense', amount })`，帳戶／分類／日期用預設，計算機同時關閉；金額不是正數會提示）。點記錄本體會把結果帶回計算機。
-
 ---
 
 ## 2. 投資組合（`features/invest/`、`domain/invest/`、`services/quotes/`）

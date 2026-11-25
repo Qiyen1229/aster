@@ -49,12 +49,20 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const rawUrl = (event.notification.data as { url?: string } | undefined)?.url ?? '/';
-  const targetUrl = new URL(rawUrl, self.location.origin).origin === self.location.origin
-    ? new URL(rawUrl, self.location.origin).href
-    : self.location.origin + '/';
+  const parsed = new URL(rawUrl, self.location.origin);
+  const sameOrigin = parsed.origin === self.location.origin;
+  const targetUrl = sameOrigin ? parsed.href : self.location.origin + '/';
+  const targetPath = sameOrigin ? (parsed.pathname + parsed.search + parsed.hash) : '/';
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
-      for (const c of list) if ('focus' in c) { void (c as WindowClient).navigate(targetUrl); return (c as WindowClient).focus(); }
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (list) => {
+      for (const c of list) {
+        if ('focus' in c) {
+          const wc = c as WindowClient;
+          await wc.navigate(targetUrl).catch(() => undefined);
+          wc.postMessage({ type: 'aster:navigate', url: targetPath });
+          return wc.focus();
+        }
+      }
       return self.clients.openWindow(targetUrl);
     }),
   );

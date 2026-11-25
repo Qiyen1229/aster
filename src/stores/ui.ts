@@ -2,6 +2,7 @@
  * 全域 UI 狀態：記帳面板、Snackbar（含復原）、動作選單。
  */
 import { create } from 'zustand';
+import { registerUiBridge } from '@/services/notify';
 import type { TxType } from '@/db/types';
 import { todayKey } from '@/domain/period';
 
@@ -169,3 +170,8 @@ export function ask(message: string, opts: Partial<ConfirmOptions> = {}): Promis
   const confirmText = opts.confirmText ?? (/刪除|移除|撤銷/.test(title) ? '刪除' : /清除/.test(title) ? '清除' : /登出/.test(title) ? '登出' : '確定');
   return askConfirm({ title, message: rest || undefined, danger, confirmText, cancelText: '取消', ...opts });
 }
+
+registerUiBridge({
+  showSnack: (opts) => useUI.getState().showSnack(opts),
+  askInput,
+});

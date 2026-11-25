@@ -18,7 +18,7 @@ import { formatMoney, toMinor } from '@/domain/money';
 import { addDays, toDateKey, todayKey } from '@/domain/period';
 import { db } from '@/db/schema';
 import { useSettings } from '@/stores/settings';
-import { useUI } from '@/stores/ui';
+import { notifyUser } from './notify';
 import { AUTH_ENABLED, useAuth } from '@/stores/auth';
 import { suggestAccount } from './autocat';
 import { bookDrafts, fallbackAccount, parseContext, resolveDraft, type ResolvedDraft } from './quickentry';
@@ -631,5 +631,5 @@ export async function processInboxOnStartup(): Promise<{ booked: number; pending
 /** 下拉刷新／回到前景：和開啟 App 一樣處理收件匣（自動入帳、合併重複），有入帳就提示 */
 export async function refreshInbox(): Promise<void> {
   const r = await processInboxOnStartup();
-  if (r?.booked || r?.merged) useUI.getState().showSnack({ text: `收件匣：自動記下 ${r.booked} 筆${r.merged ? `、合併 ${r.merged} 筆重複通知` : ''}${r.pending ? `，${r.pending} 筆待確認` : ''}` });
+  if (r?.booked || r?.merged) notifyUser({ text: `收件匣：自動記下 ${r.booked} 筆${r.merged ? `、合併 ${r.merged} 筆重複通知` : ''}${r.pending ? `，${r.pending} 筆待確認` : ''}` });
 }

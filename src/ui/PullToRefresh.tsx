@@ -5,18 +5,18 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { haptic } from '@/services/haptics';
 
-const PTR_THRESHOLD = 44;
+const PTR_THRESHOLD = 48;
 
 /** Portal 彈窗的 touch 事件會沿 React 樹冒泡回頁面；來源是彈窗時不啟動下拉更新，避免「下滑關彈窗」同時觸發刷新 */
 export function isOverlayTouch(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest('.sheet, .sheet-backdrop, .dlg-wrap, [role="dialog"], [role="alertdialog"]') !== null;
 }
 
-export function PullToRefresh({ onRefresh, children }: { onRefresh: () => Promise<unknown>; children: ReactNode }) {
+export function usePullToRefresh(onRefresh: () => Promise<unknown>) {
   const [armed, setArmed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const indicatorRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<number | null>(null);
+  const timersRef = useRef<number[]>([]);
   const ptrRef = useRef<{
     startY: number;
     startX: number;
@@ -28,7 +28,7 @@ export function PullToRefresh({ onRefresh, children }: { onRefresh: () => Promis
 
   useEffect(() => () => {
     if (ptrRef.current?.rafId) cancelAnimationFrame(ptrRef.current.rafId);
-    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    while (timersRef.current.length) clearTimeout(timersRef.current.pop());
   }, []);
 
   const hideIndicator = () => {
@@ -39,93 +39,100 @@ export function PullToRefresh({ onRefresh, children }: { onRefresh: () => Promis
     el.style.opacity = '0';
   };
 
-  return (
-    <div
-      onTouchStart={(e) => {
-        if (refreshing || window.scrollY > 2 || isOverlayTouch(e.target)) return;
-        const t = e.touches[0];
-        if (!t) return;
-        ptrRef.current = { startY: t.clientY, startX: t.clientX, active: false, armed: false, currentY: 0, rafId: 0 };
-      }}
-      onTouchMove={(e) => {
-        const st = ptrRef.current;
-        if (!st || refreshing) return;
-        const t = e.touches[0];
-        if (!t) return;
-        const dy = t.clientY - st.startY;
-        const dx = Math.abs(t.clientX - st.startX);
-        if (!st.active) {
-          if (dy < 8 || dx > dy || window.scrollY > 2) {
-            if (dx > 14 || dy < -4) ptrRef.current = null;
-            return;
-          }
-          st.active = true;
-          if (indicatorRef.current) indicatorRef.current.style.transition = 'none';
+  const bind = {
+    onTouchStart: (e: React.TouchEvent<HTMLElement>) => {
+      if (refreshing || window.scrollY > 2 || isOverlayTouch(e.target)) return;
+      const t = e.touches[0];
+      if (!t) return;
+      ptrRef.current = { startY: t.clientY, startX: t.clientX, active: false, armed: false, currentY: 0, rafId: 0 };
+    },
+    onTouchMove: (e: React.TouchEvent<HTMLElement>) => {
+      const st = ptrRef.current;
+      if (!st || refreshing) return;
+      const t = e.touches[0];
+      if (!t) return;
+      const dy = t.clientY - st.startY;
+      const dx = Math.abs(t.clientX - st.startX);
+      if (!st.active) {
+        if (dy < 8 || dx > dy || window.scrollY > 2) {
+          if (dx > 14 || dy < -4) ptrRef.current = null;
+          return;
         }
-        const damped = Math.max(0, Math.min(78, Math.pow(Math.max(0, dy - 8), 0.76) * 2.2));
-        st.currentY = damped;
+        st.active = true;
+        if (indicatorRef.current) indicatorRef.current.style.transition = 'none';
+      }
+      const damped = Math.max(0, Math.min(78, Math.pow(Math.max(0, dy - 8), 0.76) * 2.2));
+      st.currentY = damped;
 
-        if (damped >= PTR_THRESHOLD && !st.armed) {
-          st.armed = true;
-          setArmed(true);
-          haptic('medium');
-        } else if (damped < PTR_THRESHOLD && st.armed) {
-          st.armed = false;
-          setArmed(false);
-          haptic('selection');
-        }
+      if (damped >= PTR_THRESHOLD && !st.armed) {
+        st.armed = true;
+        setArmed(true);
+        haptic('medium');
+      } else if (damped < PTR_THRESHOLD && st.armed) {
+        st.armed = false;
+        setArmed(false);
+        haptic('selection');
+      }
 
-        if (!st.rafId) {
-          st.rafId = requestAnimationFrame(() => {
-            if (ptrRef.current) {
-              ptrRef.current.rafId = 0;
-              const el = indicatorRef.current;
-              if (el) {
-                const y = ptrRef.current.currentY;
-                el.style.transform = `translate3d(0, calc(var(--safe-t, 0px) + ${y + 8}px), 0)`;
-                el.style.opacity = `${Math.min(1, y / 28)}`;
-              }
+      if (!st.rafId) {
+        st.rafId = requestAnimationFrame(() => {
+          if (ptrRef.current) {
+            ptrRef.current.rafId = 0;
+            const el = indicatorRef.current;
+            if (el) {
+              const y = ptrRef.current.currentY;
+              el.style.transform = `translate3d(0, calc(var(--safe-t, 0px) + ${y + 8}px), 0)`;
+              el.style.opacity = `${Math.min(1, y / 28)}`;
             }
-          });
+          }
+        });
+      }
+    },
+    onTouchCancel: () => {
+      const st = ptrRef.current;
+      ptrRef.current = null;
+      if (st?.rafId) cancelAnimationFrame(st.rafId);
+      setArmed(false);
+      hideIndicator();
+    },
+    onTouchEnd: () => {
+      const st = ptrRef.current;
+      ptrRef.current = null;
+      if (!st || !st.active) return;
+      if (st.rafId) cancelAnimationFrame(st.rafId);
+
+      const el = indicatorRef.current;
+      if (st.armed && !refreshing) {
+        setRefreshing(true);
+        if (el) {
+          el.style.transition = 'transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1), opacity 200ms ease';
+          el.style.transform = 'translate3d(0, calc(var(--safe-t, 0px) + 52px), 0)';
+          el.style.opacity = '1';
         }
-      }}
-      onTouchCancel={() => {
-        const st = ptrRef.current;
-        ptrRef.current = null;
-        if (st?.rafId) cancelAnimationFrame(st.rafId);
+        Promise.resolve(onRefresh()).finally(() => {
+          haptic('success');
+          timersRef.current.push(window.setTimeout(() => {
+            hideIndicator();
+            timersRef.current.push(window.setTimeout(() => {
+              setRefreshing(false);
+              setArmed(false);
+            }, 240));
+          }, 260));
+        });
+      } else {
         setArmed(false);
         hideIndicator();
-      }}
-      onTouchEnd={() => {
-        const st = ptrRef.current;
-        ptrRef.current = null;
-        if (!st || !st.active) return;
-        if (st.rafId) cancelAnimationFrame(st.rafId);
+      }
+    },
+  };
 
-        const el = indicatorRef.current;
-        if (st.armed && !refreshing) {
-          setRefreshing(true);
-          if (el) {
-            el.style.transition = 'transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1), opacity 200ms ease';
-            el.style.transform = 'translate3d(0, calc(var(--safe-t, 0px) + 52px), 0)';
-            el.style.opacity = '1';
-          }
-          Promise.resolve(onRefresh()).finally(() => {
-            haptic('success');
-            timerRef.current = window.setTimeout(() => {
-              hideIndicator();
-              timerRef.current = window.setTimeout(() => {
-                setRefreshing(false);
-                setArmed(false);
-              }, 240);
-            }, 220);
-          });
-        } else {
-          setArmed(false);
-          hideIndicator();
-        }
-      }}
-    >
+  return { armed, refreshing, indicatorRef, bind };
+}
+
+export function PullToRefresh({ onRefresh, children }: { onRefresh: () => Promise<unknown>; children: ReactNode }) {
+  const { armed, refreshing, indicatorRef, bind } = usePullToRefresh(onRefresh);
+  return (
+    <div {...bind}>
       <div
         ref={indicatorRef}
         className={`ptr-indicator${refreshing ? ' refreshing' : armed ? ' armed' : ''}`}

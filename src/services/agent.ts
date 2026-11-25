@@ -28,6 +28,8 @@ import type { Transaction } from '@/db/types';
 import { opsOf, resolvePlan, type AgentData, type Op, type RawStep, type ResolvedStep } from '@/domain/agent/plan';
 import { addDays, todayKey } from '@/domain/period';
 import { applyTheme, useSettings } from '@/stores/settings';
+import { resolveRate } from './fx';
+import { travelDraftDefaults } from './quickentry';
 import { ackInbox, invalidateInboxReadOnly, loadInboxReadOnly, matchesBlacklist } from './inbox';
 
 const OPS_KEY = 'agent.ops';
@@ -110,6 +112,7 @@ export async function loadAgentData(): Promise<AgentData> {
     wishes: wishRows.filter((x) => !x.deletedAt), durables: durableRows.filter((x) => !x.deletedAt), transfers: transferRows,
     watchlist: watchRows.map((w) => ({ stockId: w.stockId, alerts: w.alerts.map((a) => ({ priceDec: a.priceDec, op: a.op, enabled: a.enabled })) })),
     inbox, travelProjectId: st.travelModeProjectId, trades: tradeRows, exchangeRates, snapshot: { dbName: db.name, revision, settings },
+    deps: { resolveRate, travelDraftDefaults },
   };
 }
 

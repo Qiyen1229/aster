@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
 import type { Debt } from '@/db/types';
-import { addDebts, findOrCreatePerson, settleDebt, unsettleDebt } from '@/db/repo/plan';
+import { addDebts, clearSettledDebts, findOrCreatePerson, settleDebt, unsettleDebt } from '@/db/repo/plan';
 import { netByPerson } from '@/domain/debt';
 import { toMinor } from '@/domain/money';
 import { evaluate } from '@/domain/calc-expr';
@@ -150,14 +150,7 @@ function PersonDebts({ personId, debts }: { personId: string; debts: Debt[] }) {
       <button className="btn secondary small" onClick={() => setShowSettled((s) => !s)}>{showSettled ? '隱藏已結清' : '顯示已結清'}</button>
       <button className="btn danger small" style={{ marginLeft: 8 }} onClick={async () => {
         if (!await ask('刪除此人的所有已結清紀錄？')) return;
-        const t = Date.now();
-        await db.transaction('rw', [db.debts], async () => {
-          const settled = await db.debts.where('personId').equals(personId).filter((d) => !!d.settled && !d.deletedAt).toArray();
-          const hardIds = settled.filter((d) => !d.transactionId).map((d) => d.id);
-          const softIds = settled.filter((d) => !!d.transactionId).map((d) => d.id);
-          if (hardIds.length) await db.debts.bulkDelete(hardIds);
-          for (const id of softIds) await db.debts.update(id, { deletedAt: t, updatedAt: t });
-        });
+        await clearSettledDebts(personId);
       }}>清除已結清</button>
     </>
   );

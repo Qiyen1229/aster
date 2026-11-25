@@ -262,12 +262,49 @@ export default function App() {
   const onboarded = useSettings((s) => s.onboarded);
   const travelModeProjectId = useSettings((s) => s.travelModeProjectId);
   const location = useLocation();
+  const navigate = useNavigate();
   useShortcuts();
   const locked = useLock((s) => s.locked);
   const desktop = useMediaQuery('(min-width: 1024px)');
   const isOnboarding = location.pathname === '/onboarding';
   const fullscreen = FULLSCREEN.some((r) => r.test(location.pathname));
   const nav = useNavDirection(location.pathname);
+
+  // 通知點擊跳轉：Web SW postMessage 與原生 Capacitor 通知點擊皆導向指定頁（如 /inbox）
+  useEffect(() => {
+    const go = (raw?: string) => {
+      if (!raw || typeof raw !== 'string') return;
+      const path = raw.startsWith('/') ? raw : '/';
+      navigate(path);
+    };
+    const onSwMsg = (e: MessageEvent) => {
+      const d = e.data as { type?: string; url?: string } | undefined;
+      if (d?.type === 'aster:navigate') go(d.url);
+    };
+    if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', onSwMsg);
+
+    const cleanups: (() => void)[] = [];
+    void import('@capacitor/core').then(({ Capacitor }) => {
+      if (!Capacitor.isNativePlatform()) return;
+      void import('@capacitor/local-notifications').then(({ LocalNotifications }) =>
+        LocalNotifications.addListener('localNotificationActionPerformed', (ev) => {
+          const u = (ev.notification.extra as { url?: string } | undefined)?.url;
+          if (u) go(u);
+        }),
+      ).then((h) => cleanups.push(() => void h.remove())).catch(() => undefined);
+      void import('@capacitor/push-notifications').then(({ PushNotifications }) =>
+        PushNotifications.addListener('pushNotificationActionPerformed', (ev) => {
+          const u = (ev.notification.data as { url?: string } | undefined)?.url;
+          if (u) go(u);
+        }),
+      ).then((h) => cleanups.push(() => void h.remove())).catch(() => undefined);
+    }).catch(() => undefined);
+
+    return () => {
+      if ('serviceWorker' in navigator) navigator.serviceWorker.removeEventListener('message', onSwMsg);
+      cleanups.forEach((fn) => fn());
+    };
+  }, [navigate]);
 
   // html.is-desktop：Sheet 等 portal 到 body 的浮層也要知道現在是寬屏（置中對話框而非底部抽屜）
   useEffect(() => {

@@ -10,7 +10,6 @@
 import { ICON_192 } from '@/ui/assets';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { PrivacyPage, TermsPage } from '../features/legal/LegalPages';
 import App from '../App';
 import { adoptLegacyData, db, discardLegacyData, legacyDataCount, openUserDatabase } from '@/db/schema';
 import { bootstrap } from '@/db/bootstrap';
@@ -25,6 +24,8 @@ const RegisterPage = lazy(() => import('../features/auth/AuthPages').then((m) =>
 const ForgotPasswordPage = lazy(() => import('../features/auth/AuthPages').then((m) => ({ default: m.ForgotPasswordPage })));
 const ResetPasswordPage = lazy(() => import('../features/auth/AuthPages').then((m) => ({ default: m.ResetPasswordPage })));
 const ForceChangePasswordPage = lazy(() => import('../features/auth/AuthPages').then((m) => ({ default: m.ForceChangePasswordPage })));
+const PrivacyPage = lazy(() => import('../features/legal/LegalPages').then((m) => ({ default: m.PrivacyPage })));
+const TermsPage = lazy(() => import('../features/legal/LegalPages').then((m) => ({ default: m.TermsPage })));
 
 function Splash({ text }: { text?: string }) {
   return (

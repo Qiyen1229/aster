@@ -207,6 +207,7 @@ export function parseRows(rows: string[][], mapping: Mapping, defaults: { curren
     else if (signed.isNaN()) row.error = '金額不是數字';
     else if (signed.isZero() && row.kind !== 'adjust') row.error = '金額為 0';
     else if (!row.account) row.error = '缺少帳戶';
+    else if ((row.kind === 'transfer_out' || row.kind === 'transfer_in') && row.toAccount && row.toAccount === row.account) row.error = '轉出與轉入帳戶不能相同';
     if (row.kind === 'adjust') row.amount = signed; // 調整保留正負
     return row;
   });
@@ -360,6 +361,7 @@ export async function runImport(rows: ParsedRow[], base: string): Promise<{ txs:
     if (!toName) { mkTx(o, 'expense', category('expense', o.main || '轉帳', '')); continue; }
     const from = account(o.account, o.currency);
     const to = account(toName, p.in?.currency ?? o.currency);
+    if (from.id === to.id) throw new Error('轉出與轉入帳戶不能相同');
     const fromAmt = toMinor(o.amount, from.currency);
     const toAmt = p.in ? toMinor(p.in.amount, to.currency) : from.currency === to.currency ? fromAmt : amounts(fromAmt, from.currency, to).accountAmountMinor;
     const id = uid();

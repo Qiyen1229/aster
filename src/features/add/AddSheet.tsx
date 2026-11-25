@@ -14,7 +14,7 @@ import { db } from '@/db/schema';
 import type { Attachment, Debt } from '@/db/types';
 import {
   addTransaction, addTransfer, deleteTransactions, deleteTransfers, lastTransaction, restoreTransactions, restoreTransfers,
-  updateTransaction, updateTransfer,
+  undoCreatedTransaction, undoPartialDebtSettlement, updateTransaction, updateTransfer,
 } from '@/db/repo/ledger';
 import { buildTree } from '@/db/repo/categories';
 import { evaluate, hasOperator, pressKey } from '@/domain/calc-expr';
@@ -395,25 +395,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
           `${selectedDebt.direction === 'they_owe_me' ? '已收回' : '已還給'} ${who} ${formatMoney(paidAmt, selectedDebt.currency)}${isPartial ? '（部分還款）' : ''}`,
           async () => {
             if (isPartial) {
-              await db.transaction('rw', [db.debts, db.transactions, db.transfers, db.accounts, db.durables, db.stock_trades], async () => {
-                const paid = await db.debts.get(targetId);
-                const orig = await db.debts.get(selectedDebt.id);
-                if (paid?.settleTransferId) await deleteTransactions([paid.settleTransferId]);
-                if (orig && paid) {
-                  const t = Date.now();
-                  await db.debts.update(orig.id, { amountMinor: orig.amountMinor + paid.amountMinor, updatedAt: t });
-                  if (orig.transactionId) {
-                    const parent = await db.transactions.get(orig.transactionId);
-                    if (parent?.split) {
-                      await db.transactions.update(parent.id, {
-                        split: { ...parent.split, debtIds: parent.split.debtIds.filter((id) => id !== targetId) },
-                        updatedAt: t,
-                      });
-                    }
-                  }
-                }
-                await db.debts.delete(targetId);
-              });
+              await undoPartialDebtSettlement(targetId, selectedDebt.id);
             } else {
               await unsettleDebt(targetId);
             }
@@ -511,13 +493,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
           const wishId = mode === 'expense' ? prefill?.wishId : undefined;
           if (wishId) await decideWish(wishId, 'bought', tx.id);
           notify = () => snackUndo(mode === 'adjust' ? '已調整餘額' : `已記下 ${formatMoney(tx.amountMinor, tx.currency)}${sp ? `（我的份額 ${formatMoney(sp.myShare, tx.currency)}）` : ''}${durableId ? '，已加入耐用品追蹤' : ''}`,
-            async () => {
-              await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.durables, db.debts, db.stock_trades, db.wishes], async () => {
-                await deleteTransactions([tx.id]);
-                if (durableId) await db.durables.delete(durableId);
-                if (wishId) await db.wishes.update(wishId, { status: 'waiting', decidedAt: undefined, transactionId: undefined, updatedAt: Date.now() });
-              });
-            });
+            () => undoCreatedTransaction(tx.id, { durableId, wishId }));
         }
         if (!editing && autoCat?.ruleId && autoCat.categoryId === catId) await countRuleHit(autoCat.ruleId);
       }

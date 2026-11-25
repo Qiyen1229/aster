@@ -457,3 +457,35 @@ export async function lastTransaction(): Promise<Transaction | undefined> {
   const recent = await db.transactions.orderBy('ts').reverse().limit(20).toArray();
   return recent.find((t) => !t.deletedAt && (t.type === 'expense' || t.type === 'income'));
 }
+
+/** 復原部分還款（刪除還款紀錄並還原原借貸金額與分帳連結） */
+export async function undoPartialDebtSettlement(targetId: string, origDebtId: string): Promise<void> {
+  await db.transaction('rw', [db.debts, db.transactions, db.transfers, db.accounts, db.durables, db.stock_trades], async () => {
+    const paid = await db.debts.get(targetId);
+    const orig = await db.debts.get(origDebtId);
+    if (paid?.settleTransferId) await deleteTransactions([paid.settleTransferId]);
+    if (orig && paid) {
+      const t = Date.now();
+      await db.debts.update(orig.id, { amountMinor: orig.amountMinor + paid.amountMinor, updatedAt: t });
+      if (orig.transactionId) {
+        const parent = await db.transactions.get(orig.transactionId);
+        if (parent?.split) {
+          await db.transactions.update(parent.id, {
+            split: { ...parent.split, debtIds: parent.split.debtIds.filter((id) => id !== targetId) },
+            updatedAt: t,
+          });
+        }
+      }
+    }
+    await db.debts.delete(targetId);
+  });
+}
+
+/** 復原剛記下的一筆交易（含連動刪除耐用品追蹤與還原願望狀態） */
+export async function undoCreatedTransaction(txId: string, opts?: { durableId?: string; wishId?: string }): Promise<void> {
+  await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.durables, db.debts, db.stock_trades, db.wishes], async () => {
+    await deleteTransactions([txId]);
+    if (opts?.durableId) await db.durables.delete(opts.durableId);
+    if (opts?.wishId) await db.wishes.update(opts.wishId, { status: 'waiting', decidedAt: undefined, transactionId: undefined, updatedAt: Date.now() });
+  });
+}

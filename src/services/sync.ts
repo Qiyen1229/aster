@@ -26,7 +26,7 @@ import {
 import { recomputeBalances } from '@/db/repo/accounts';
 import { loadSettings } from '@/db/repo/settings';
 import { useSettings } from '@/stores/settings';
-import { useUI } from '@/stores/ui';
+import { notifyUser } from './notify';
 import { api, ApiError } from './api';
 import {
   activate, createConfig, decryptJson, E2EELockedError, encryptJson, isEncrypted, localKey, reconcile, unlock, type E2EEConfig,
@@ -233,7 +233,7 @@ async function pushPending(device: string, key: CryptoKey | null, version: numbe
   }
   if (blocked.size) {
     const message = `${blocked.size} 筆資料過大無法同步，已保留待重試；其他資料照常同步`;
-    useUI.getState().showSnack({ text: message });
+    notifyUser({ text: message });
     return message;
   }
   return undefined;

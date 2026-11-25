@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand';
 import { aiEnabledLocally, aiTranscribe } from './ai';
+import { notifyUser } from './notify';
 
 interface VoiceState {
   open: boolean;
@@ -349,8 +350,7 @@ export async function releaseVoice(elapsedMs?: number) {
     if (!useVoice.getState().open) return;
     if (!text) {
       closeVoice();
-      const { useUI } = await import('@/stores/ui');
-      useUI.getState().showSnack({ text: '沒有聽到內容，長按再說一次' });
+      notifyUser({ text: '沒有聽到內容，長按再說一次' });
       return;
     }
     await submitVoice();

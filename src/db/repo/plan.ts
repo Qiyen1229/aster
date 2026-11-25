@@ -633,3 +633,15 @@ export async function createSuggestedBudgets(sug: SuggestedBudgets, currency: st
   }
   return ids;
 }
+
+/** 清除某位往來對象的所有已結清借貸紀錄 */
+export async function clearSettledDebts(personId: string): Promise<void> {
+  const t = Date.now();
+  await db.transaction('rw', [db.debts], async () => {
+    const settled = await db.debts.where('personId').equals(personId).filter((d) => !!d.settled && !d.deletedAt).toArray();
+    const hardIds = settled.filter((d) => !d.transactionId).map((d) => d.id);
+    const softIds = settled.filter((d) => !!d.transactionId).map((d) => d.id);
+    if (hardIds.length) await db.debts.bulkDelete(hardIds);
+    for (const id of softIds) await db.debts.update(id, { deletedAt: t, updatedAt: t });
+  });
+}

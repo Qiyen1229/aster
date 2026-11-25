@@ -60,11 +60,14 @@ function fakeServer() {
       if ((body.key_version ?? 0) !== state.keyVersion) return conflict();
       const rejected: unknown[] = [];
       let accepted = 0;
+      const now = Date.now() + state.clockAhead;
+      const ahead = now + 5 * 60 * 1000;
       for (const c of body.changes) {
-        const k = `${c.table}|${c.key}`;
+        const clamped = { ...c, updated_at: c.updated_at > ahead ? now : c.updated_at };
+        const k = `${clamped.table}|${clamped.key}`;
         const cur = recs.get(k);
-        if (cur && cur.updated_at >= c.updated_at) { rejected.push({ ...cur }); continue; }
-        recs.set(k, { ...c, seq: ++seq, device: body.device_id });
+        if (cur && cur.updated_at >= clamped.updated_at) { rejected.push({ ...cur }); continue; }
+        recs.set(k, { ...clamped, seq: ++seq, device: body.device_id });
         accepted++;
       }
       return json({ accepted, rejected, cursor: seq });
@@ -239,6 +242,19 @@ describe('跨裝置同步', () => {
     server.state.clockAhead = 0;
     await sync.syncNow();
     expect(Math.abs(syncClock() - Date.now())).toBeLessThan(2000);
+  });
+
+  it('裝置時鐘超前超過 5 分鐘：伺服器端強制截斷為伺服器時間，避免未來時間永遠勝出', async () => {
+    await useDevice('phone');
+    await bootstrap();
+    const futureAt = Date.now() + 60 * 60 * 1000;
+    await db.sync_outbox.put({ id: '"exp-food"', key: 'categories|"exp-food"', table: 'categories', at: futureAt });
+    const cat = (await db.categories.get('exp-food'))!;
+    await db.categories.put({ ...cat, name: '未來時鐘', updatedAt: futureAt });
+    await sync.syncNow();
+    const stored = [...server.recs.values()].find((r) => r.key === '"exp-food"');
+    expect(stored).toBeDefined();
+    expect(stored!.updated_at).toBeLessThanOrEqual(Date.now() + 5000);
   });
 
   it('端對端加密：伺服器只存密文；新裝置輸入正確密碼才能同步', async () => {

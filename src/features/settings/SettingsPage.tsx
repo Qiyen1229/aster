@@ -4,7 +4,7 @@
  * 主頁面俐落清爽、一目瞭然；性質相近的功能合併於專屬面板內。
  */
 import { Capacitor } from '@capacitor/core';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
@@ -19,7 +19,7 @@ import type { AccentKey, ThemePalette } from '@/db/repo/settings';
 import { Segmented, Switch } from '@/ui/controls';
 import { Icon, type IconName } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
-import { isOverlayTouch } from '@/ui/PullToRefresh';
+import { usePullToRefresh } from '@/ui/PullToRefresh';
 import { InfoModal } from '@/ui/Hint';
 import { NewMark } from '@/ui/NewMark';
 import { openWhatsNew } from '@/features/whatsnew/WhatsNew';
@@ -440,8 +440,6 @@ function AboutHubSheet({ open, onClose }: { open: boolean; onClose: () => void }
   );
 }
 
-const PTR_THRESHOLD = 58;
-
 export default function SettingsPage() {
   const navigate = useNavigate();
   const s = useSettings();
@@ -457,121 +455,10 @@ export default function SettingsPage() {
   const [dataOpen, setDataOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
 
-  // 下拉刷新（Pull-to-Refresh）：硬體加速、零重繪
-  const [armed, setArmed] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const indicatorRef = useRef<HTMLDivElement>(null);
-  const ptrRef = useRef<{
-    startY: number;
-    startX: number;
-    active: boolean;
-    armed: boolean;
-    currentY: number;
-    rafId: number;
-  } | null>(null);
-
-  const onTouchStart = (e: React.TouchEvent<HTMLElement>) => {
-    if (refreshing || window.scrollY > 2 || isOverlayTouch(e.target)) return;
-    const t = e.touches[0];
-    if (!t) return;
-    ptrRef.current = { startY: t.clientY, startX: t.clientX, active: false, armed: false, currentY: 0, rafId: 0 };
-  };
-  const onTouchMove = (e: React.TouchEvent<HTMLElement>) => {
-    const st = ptrRef.current;
-    if (!st || refreshing) return;
-    const t = e.touches[0];
-    if (!t) return;
-    const dy = t.clientY - st.startY;
-    const dx = Math.abs(t.clientX - st.startX);
-    if (!st.active) {
-      if (dy < 8 || dx > dy || window.scrollY > 2) {
-        if (dx > 14 || dy < -4) ptrRef.current = null;
-        return;
-      }
-      st.active = true;
-      if (indicatorRef.current) indicatorRef.current.style.transition = 'none';
-    }
-    const damped = Math.max(0, Math.min(78, Math.pow(Math.max(0, dy - 8), 0.76) * 2.2));
-    st.currentY = damped;
-
-    if (damped >= PTR_THRESHOLD && !st.armed) {
-      st.armed = true;
-      setArmed(true);
-      haptic('medium');
-    } else if (damped < PTR_THRESHOLD && st.armed) {
-      st.armed = false;
-      setArmed(false);
-      haptic('selection');
-    }
-
-    if (!st.rafId) {
-      st.rafId = requestAnimationFrame(() => {
-        if (ptrRef.current) {
-          ptrRef.current.rafId = 0;
-          const el = indicatorRef.current;
-          if (el) {
-            const y = ptrRef.current.currentY;
-            el.style.transform = `translate3d(0, calc(var(--safe-t, 0px) + ${y + 8}px), 0)`;
-            el.style.opacity = `${Math.min(1, y / 28)}`;
-          }
-        }
-      });
-    }
-  };
-  const ptrTimers = useRef<number[]>([]);
-  useEffect(() => () => {
-    if (ptrRef.current?.rafId) cancelAnimationFrame(ptrRef.current.rafId);
-    while (ptrTimers.current.length) clearTimeout(ptrTimers.current.pop());
-  }, []);
-  const onTouchCancel = () => {
-    const st = ptrRef.current;
-    ptrRef.current = null;
-    if (st?.rafId) cancelAnimationFrame(st.rafId);
-    setArmed(false);
-    const el = indicatorRef.current;
-    if (el) {
-      el.style.transition = 'transform 240ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
-      el.style.transform = 'translate3d(0, -60px, 0)';
-      el.style.opacity = '0';
-    }
-  };
-  const onTouchEnd = () => {
-    const st = ptrRef.current;
-    ptrRef.current = null;
-    if (!st || !st.active) return;
-    if (st.rafId) cancelAnimationFrame(st.rafId);
-
-    const el = indicatorRef.current;
-    if (st.armed && !refreshing) {
-      setRefreshing(true);
-      if (el) {
-        el.style.transition = 'transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1), opacity 200ms ease';
-        el.style.transform = 'translate3d(0, calc(var(--safe-t, 0px) + 52px), 0)';
-        el.style.opacity = '1';
-      }
-      void Promise.allSettled([syncNow(), refreshRates(s.baseCurrency), import('@/services/inbox').then((m) => m.refreshInbox())]).finally(() => {
-        haptic('success');
-        ptrTimers.current.push(window.setTimeout(() => {
-          if (indicatorRef.current) {
-            indicatorRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
-            indicatorRef.current.style.transform = 'translate3d(0, -60px, 0)';
-            indicatorRef.current.style.opacity = '0';
-          }
-          ptrTimers.current.push(window.setTimeout(() => {
-            setRefreshing(false);
-            setArmed(false);
-          }, 240));
-        }, 320));
-      });
-    } else {
-      setArmed(false);
-      if (el) {
-        el.style.transition = 'transform 240ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
-        el.style.transform = 'translate3d(0, -60px, 0)';
-        el.style.opacity = '0';
-      }
-    }
-  };
+  // 下拉刷新（Pull-to-Refresh）：共用 hook
+  const { armed, refreshing, indicatorRef, bind: ptrBind } = usePullToRefresh(() =>
+    Promise.allSettled([syncNow(), refreshRates(s.baseCurrency), import('@/services/inbox').then((m) => m.refreshInbox())]),
+  );
 
   const account = AUTH_ENABLED && auth.user;
   const travelProjects = useLiveQuery(() =>
@@ -586,13 +473,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <main
-      className="page settings-page"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchCancel}
-    >
+    <main className="page settings-page" {...ptrBind}>
       {/* 下拉刷新指示器（浮動膠囊，零佈局重繪硬體加速） */}
       <div
         ref={indicatorRef}

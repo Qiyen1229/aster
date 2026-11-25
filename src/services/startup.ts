@@ -14,7 +14,7 @@ import { takeSnapshot } from './snapshots';
 import { addTwHolidays, marketState, parseTwseHolidays } from '@/domain/invest/market-hours';
 import { getJson } from './quotes/http';
 import { useSettings } from '@/stores/settings';
-import { useUI } from '@/stores/ui';
+import { notifyUser } from './notify';
 import { notify, runReminderChecks } from './notifications';
 
 /** 需要更新報價的標的：有持股或在觀察清單中 */
@@ -32,7 +32,7 @@ export async function updateAllQuotes(opts: { silent?: boolean } = {}) {
   for (const h of hits) await notify(h.title, h.body, h.url, 'price_alert', h.id);
   await takeSnapshot().catch(() => undefined);
   if (!opts.silent && r.failed.length) {
-    useUI.getState().showSnack({ text: `${r.failed.length} 檔報價更新失敗，顯示最後一次價格（${describeQuoteErrors(r.errors)}）`, duration: 7000 });
+    notifyUser({ text: `${r.failed.length} 檔報價更新失敗，顯示最後一次價格（${describeQuoteErrors(r.errors)}）`, duration: 7000 });
   }
   return r;
 }
@@ -66,7 +66,7 @@ export async function runStartupTasks() {
   await step('recurring', async () => { const r = await processRecurring(); created += r.created; pending += r.pending; });
   await step('installments', async () => { created += await processInstallments(); });
   if (created || pending) {
-    useUI.getState().showSnack({ text: [created ? `已自動入帳 ${created} 筆週期／分期帳目` : '', pending ? `${pending} 筆待確認` : ''].filter(Boolean).join('，') });
+    notifyUser({ text: [created ? `已自動入帳 ${created} 筆週期／分期帳目` : '', pending ? `${pending} 筆待確認` : ''].filter(Boolean).join('，') });
   }
   // 監看帳目變動的 hook 先裝好（很輕、不等網路）：啟動期間新記的帳不會漏掉
   void step('newTxWatcher', () => import('./insights').then((m) => m.installNewTxWatcher()));
@@ -94,7 +94,7 @@ export async function runStartupTasks() {
     step('carrier', async () => {
       const r = await (await import('./carrier')).syncCarrier();
       if (r && (r.created || r.matched)) {
-        useUI.getState().showSnack({ text: `電子發票：新記 ${r.created} 筆${r.matched ? `、對到 ${r.matched} 筆手動記帳` : ''}${r.usedDefault ? `（${r.usedDefault} 筆記到預設帳戶）` : ''}` });
+        notifyUser({ text: `電子發票：新記 ${r.created} 筆${r.matched ? `、對到 ${r.matched} 筆手動記帳` : ''}${r.usedDefault ? `（${r.usedDefault} 筆記到預設帳戶）` : ''}` });
       }
     }),
     // 預計扣款：只更新收件匣的數字（本機推算）

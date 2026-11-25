@@ -319,7 +319,8 @@ export function Calendar({
 
   // 繪製單週 7 天膠囊
   const renderWeekSlide = (days: string[], selDate: string) => (
-    <div className="cal-week-strip" role="row" aria-label="週曆">
+    <div role="grid" aria-label="週曆">
+    <div className="cal-week-strip" role="row">
       {days.map((k) => {
         const d = fromDateKey(k);
         const dayNum = d.getDate();
@@ -343,6 +344,7 @@ export function Calendar({
         return (
           <button
             key={k}
+            role="gridcell"
             className={`cal-pill ${mode === 'pnl' ? 'pnl-mode' : ''} ${isSelected ? 'selected' : ''} ${isToday ? 'today' : ''} ${isWeekend ? 'weekend' : ''} ${pnlTintClass}`}
             onClick={(e) => {
               if (justSwiped.current || isAnimating.current) {
@@ -391,80 +393,85 @@ export function Calendar({
         );
       })}
     </div>
+    </div>
   );
 
-  // 繪製單月 42 格
+  // 繪製單月 42 格（以 7 格一列包裹 role="row" + display:contents，維持 ARIA grid 階層與 CSS 7 欄排版）
   const renderMonthSlide = (cells: CalendarCell[], selDate: string, label: string) => (
     <div className={`cal-grid ${mode === 'pnl' ? 'cal-grid-pnl' : ''}`} role="grid" aria-label={label}>
-      {cells.map((c) => {
-        const t = dayTotals.get(c.key);
-        const has = daysWithRecords.has(c.key);
-        const hasExp = (t?.expense ?? 0) > 0;
-        const hasInc = (t?.income ?? 0) > 0;
-        const isToday = c.key === today;
-        const isSelected = c.key === selDate;
-        const isWeekend = c.weekday === 0 || c.weekday === 6;
+      {Array.from({ length: Math.ceil(cells.length / 7) }, (_, rowIdx) => (
+        <div key={rowIdx} role="row" style={{ display: 'contents' }}>
+          {cells.slice(rowIdx * 7, rowIdx * 7 + 7).map((c) => {
+            const t = dayTotals.get(c.key);
+            const has = daysWithRecords.has(c.key);
+            const hasExp = (t?.expense ?? 0) > 0;
+            const hasInc = (t?.income ?? 0) > 0;
+            const isToday = c.key === today;
+            const isSelected = c.key === selDate;
+            const isWeekend = c.weekday === 0 || c.weekday === 6;
 
-        const pnl = pnlDays?.get(c.key);
-        const hasPnl = mode === 'pnl' && pnl && pnl.hasActivity && pnl.currencies.length > 0;
-        let pnlTintClass = '';
-        if (hasPnl && pnl) {
-          const sumPnl = pnl.currencies.reduce((acc, cur) => acc + cur.pnlMinor, 0);
-          pnlTintClass = sumPnl > 0 ? 'pnl-tint-pos' : sumPnl < 0 ? 'pnl-tint-neg' : '';
-        }
+            const pnl = pnlDays?.get(c.key);
+            const hasPnl = mode === 'pnl' && pnl && pnl.hasActivity && pnl.currencies.length > 0;
+            let pnlTintClass = '';
+            if (hasPnl && pnl) {
+              const sumPnl = pnl.currencies.reduce((acc, cur) => acc + cur.pnlMinor, 0);
+              pnlTintClass = sumPnl > 0 ? 'pnl-tint-pos' : sumPnl < 0 ? 'pnl-tint-neg' : '';
+            }
 
-        return (
-          <button
-            key={c.key}
-            className={`cal-grid-cell ${mode === 'pnl' ? 'pnl-mode' : ''} ${c.inMonth ? '' : 'out'} ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''} ${isWeekend ? 'weekend' : ''} ${pnlTintClass}`}
-            role="gridcell"
-            aria-selected={isSelected}
-            aria-label={`${c.key}${mode === 'pnl' ? (hasPnl ? '，有損益' : '') : has ? '，有紀錄' : ''}`}
-            onClick={(e) => {
-              if (justSwiped.current || isAnimating.current) {
-                e.preventDefault();
-                e.stopPropagation();
-                return;
-              }
-              if (c.key !== selDate) haptic('selection');
-              onSelect(c.key);
-            }}
-          >
-            <span className="cal-grid-num num">
-              {c.day === 1 ? `${Number(c.key.slice(5, 7))}月` : c.day}
-            </span>
-            {mode === 'ledger' ? (
-              <span className="cal-pill-dots" aria-hidden="true">
-                {hasExp && <i className="dot exp" />}
-                {hasInc && <i className="dot inc" />}
-                {!hasExp && !hasInc && has && <i className="dot other" />}
-              </span>
-            ) : hasPnl && pnl ? (
-              <div className="cal-cell-pnl num" aria-hidden="true">
-                {pnl.currencies.length === 1 ? (
-                  <>
-                    <span className={`cal-pnl-amt ${pnl.currencies[0].pnlMinor > 0 ? 'pos' : pnl.currencies[0].pnlMinor < 0 ? 'neg' : 'flat'}`}>
-                      {formatPnlCompact(pnl.currencies[0])}
-                    </span>
-                    <span className={`cal-pnl-pct ${pnl.currencies[0].pnlMinor > 0 ? 'pos' : pnl.currencies[0].pnlMinor < 0 ? 'neg' : 'flat'}`}>
-                      {formatPnlPct(pnl.currencies[0].pnlPct)}
-                    </span>
-                  </>
-                ) : (
-                  <div className="cal-cell-pnl-dual">
-                    <span className={`cal-pnl-amt ${pnl.currencies[0].pnlMinor > 0 ? 'pos' : pnl.currencies[0].pnlMinor < 0 ? 'neg' : 'flat'}`}>
-                      {formatPnlCompact(pnl.currencies[0], true)}
-                    </span>
-                    <span className={`cal-pnl-amt ${pnl.currencies[1].pnlMinor > 0 ? 'pos' : pnl.currencies[1].pnlMinor < 0 ? 'neg' : 'flat'}`}>
-                      {formatPnlCompact(pnl.currencies[1], true)}
-                    </span>
+            return (
+              <button
+                key={c.key}
+                className={`cal-grid-cell ${mode === 'pnl' ? 'pnl-mode' : ''} ${c.inMonth ? '' : 'out'} ${isToday ? 'today' : ''} ${isSelected ? 'selected' : ''} ${isWeekend ? 'weekend' : ''} ${pnlTintClass}`}
+                role="gridcell"
+                aria-selected={isSelected}
+                aria-label={`${c.key}${mode === 'pnl' ? (hasPnl ? '，有損益' : '') : has ? '，有紀錄' : ''}`}
+                onClick={(e) => {
+                  if (justSwiped.current || isAnimating.current) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                  }
+                  if (c.key !== selDate) haptic('selection');
+                  onSelect(c.key);
+                }}
+              >
+                <span className="cal-grid-num num">
+                  {c.day === 1 ? `${Number(c.key.slice(5, 7))}月` : c.day}
+                </span>
+                {mode === 'ledger' ? (
+                  <span className="cal-pill-dots" aria-hidden="true">
+                    {hasExp && <i className="dot exp" />}
+                    {hasInc && <i className="dot inc" />}
+                    {!hasExp && !hasInc && has && <i className="dot other" />}
+                  </span>
+                ) : hasPnl && pnl ? (
+                  <div className="cal-cell-pnl num" aria-hidden="true">
+                    {pnl.currencies.length === 1 ? (
+                      <>
+                        <span className={`cal-pnl-amt ${pnl.currencies[0].pnlMinor > 0 ? 'pos' : pnl.currencies[0].pnlMinor < 0 ? 'neg' : 'flat'}`}>
+                          {formatPnlCompact(pnl.currencies[0])}
+                        </span>
+                        <span className={`cal-pnl-pct ${pnl.currencies[0].pnlMinor > 0 ? 'pos' : pnl.currencies[0].pnlMinor < 0 ? 'neg' : 'flat'}`}>
+                          {formatPnlPct(pnl.currencies[0].pnlPct)}
+                        </span>
+                      </>
+                    ) : (
+                      <div className="cal-cell-pnl-dual">
+                        <span className={`cal-pnl-amt ${pnl.currencies[0].pnlMinor > 0 ? 'pos' : pnl.currencies[0].pnlMinor < 0 ? 'neg' : 'flat'}`}>
+                          {formatPnlCompact(pnl.currencies[0], true)}
+                        </span>
+                        <span className={`cal-pnl-amt ${pnl.currencies[1].pnlMinor > 0 ? 'pos' : pnl.currencies[1].pnlMinor < 0 ? 'neg' : 'flat'}`}>
+                          {formatPnlCompact(pnl.currencies[1], true)}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            ) : null}
-          </button>
-        );
-      })}
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 

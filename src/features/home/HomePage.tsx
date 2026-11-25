@@ -20,7 +20,7 @@ import { useAccounts, useCategories, useTags, useMediaQuery } from '@/app/hooks'
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
 import { Icon } from '@/ui/Icon';
-import { isOverlayTouch } from '@/ui/PullToRefresh';
+import { usePullToRefresh } from '@/ui/PullToRefresh';
 import { Amount, EmptyState, SkeletonRows } from '@/ui/controls';
 import { Calendar } from './Calendar';
 import { MonthPicker } from './MonthPicker';
@@ -38,8 +38,6 @@ import { LedgerRow } from '../ledger/LedgerRow';
 const Widgets = lazy(() => import('./Widgets').then((m) => ({ default: m.Widgets })));
 const HomeInbox = lazy(() => import('./HomeInbox'));
 const WEEK_NAMES = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
-const PTR_THRESHOLD = 58;
-
 export default function HomePage() {
   const navigate = useNavigate();
   const desktop = useMediaQuery('(min-width: 1024px)');
@@ -62,121 +60,10 @@ export default function HomePage() {
   const [remindersOpen, setRemindersOpen] = useState(false);
   const unread = useUnreadCount() + useInboxCount((x) => x.n + x.extra);
 
-  // 下拉刷新（Pull-to-Refresh）：硬體加速、零重繪
-  const [armed, setArmed] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const indicatorRef = useRef<HTMLDivElement>(null);
-  const ptrRef = useRef<{
-    startY: number;
-    startX: number;
-    active: boolean;
-    armed: boolean;
-    currentY: number;
-    rafId: number;
-  } | null>(null);
-
-  const onTouchStart = (e: React.TouchEvent<HTMLElement>) => {
-    if (refreshing || window.scrollY > 2 || isOverlayTouch(e.target)) return;
-    const t = e.touches[0];
-    if (!t) return;
-    ptrRef.current = { startY: t.clientY, startX: t.clientX, active: false, armed: false, currentY: 0, rafId: 0 };
-  };
-  const onTouchMove = (e: React.TouchEvent<HTMLElement>) => {
-    const st = ptrRef.current;
-    if (!st || refreshing) return;
-    const t = e.touches[0];
-    if (!t) return;
-    const dy = t.clientY - st.startY;
-    const dx = Math.abs(t.clientX - st.startX);
-    if (!st.active) {
-      if (dy < 8 || dx > dy || window.scrollY > 2) {
-        if (dx > 14 || dy < -4) ptrRef.current = null;
-        return;
-      }
-      st.active = true;
-      if (indicatorRef.current) indicatorRef.current.style.transition = 'none';
-    }
-    const damped = Math.max(0, Math.min(78, Math.pow(Math.max(0, dy - 8), 0.76) * 2.2));
-    st.currentY = damped;
-
-    if (damped >= PTR_THRESHOLD && !st.armed) {
-      st.armed = true;
-      setArmed(true);
-      haptic('medium');
-    } else if (damped < PTR_THRESHOLD && st.armed) {
-      st.armed = false;
-      setArmed(false);
-      haptic('selection');
-    }
-
-    if (!st.rafId) {
-      st.rafId = requestAnimationFrame(() => {
-        if (ptrRef.current) {
-          ptrRef.current.rafId = 0;
-          const el = indicatorRef.current;
-          if (el) {
-            const y = ptrRef.current.currentY;
-            el.style.transform = `translate3d(0, calc(var(--safe-t, 0px) + ${y + 8}px), 0)`;
-            el.style.opacity = `${Math.min(1, y / 28)}`;
-          }
-        }
-      });
-    }
-  };
-  const ptrTimers = useRef<number[]>([]);
-  useEffect(() => () => {
-    if (ptrRef.current?.rafId) cancelAnimationFrame(ptrRef.current.rafId);
-    while (ptrTimers.current.length) clearTimeout(ptrTimers.current.pop());
-  }, []);
-  const onTouchCancel = () => {
-    const st = ptrRef.current;
-    ptrRef.current = null;
-    if (st?.rafId) cancelAnimationFrame(st.rafId);
-    setArmed(false);
-    const el = indicatorRef.current;
-    if (el) {
-      el.style.transition = 'transform 240ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
-      el.style.transform = 'translate3d(0, -60px, 0)';
-      el.style.opacity = '0';
-    }
-  };
-  const onTouchEnd = () => {
-    const st = ptrRef.current;
-    ptrRef.current = null;
-    if (!st || !st.active) return;
-    if (st.rafId) cancelAnimationFrame(st.rafId);
-
-    const el = indicatorRef.current;
-    if (st.armed && !refreshing) {
-      setRefreshing(true);
-      if (el) {
-        el.style.transition = 'transform 260ms cubic-bezier(0.2, 0.9, 0.3, 1), opacity 200ms ease';
-        el.style.transform = 'translate3d(0, calc(var(--safe-t, 0px) + 52px), 0)';
-        el.style.opacity = '1';
-      }
-      void Promise.allSettled([syncNow(), refreshRates(baseCurrency), import('@/services/inbox').then((m) => m.refreshInbox())]).finally(() => {
-        haptic('success');
-        ptrTimers.current.push(window.setTimeout(() => {
-          if (indicatorRef.current) {
-            indicatorRef.current.style.transition = 'transform 240ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
-            indicatorRef.current.style.transform = 'translate3d(0, -60px, 0)';
-            indicatorRef.current.style.opacity = '0';
-          }
-          ptrTimers.current.push(window.setTimeout(() => {
-            setRefreshing(false);
-            setArmed(false);
-          }, 240));
-        }, 320));
-      });
-    } else {
-      setArmed(false);
-      if (el) {
-        el.style.transition = 'transform 240ms cubic-bezier(0.2, 0, 0, 1), opacity 180ms ease';
-        el.style.transform = 'translate3d(0, -60px, 0)';
-        el.style.opacity = '0';
-      }
-    }
-  };
+  // 下拉刷新（Pull-to-Refresh）：共用 hook
+  const { armed, refreshing, indicatorRef, bind: ptrBind } = usePullToRefresh(() =>
+    Promise.allSettled([syncNow(), refreshRates(baseCurrency), import('@/services/inbox').then((m) => m.refreshInbox())]),
+  );
 
   const sel = fromDateKey(selected);
   const year = sel.getFullYear();
@@ -315,13 +202,7 @@ export default function HomePage() {
   const expenseTotal = dayTotal?.expense ?? 0;
 
   return (
-    <main
-      className="page home-page"
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchCancel}
-    >
+    <main className="page home-page" {...ptrBind}>
       {/* 下拉刷新指示器（浮動膠囊，零佈局重繪硬體加速） */}
       <div
         ref={indicatorRef}
