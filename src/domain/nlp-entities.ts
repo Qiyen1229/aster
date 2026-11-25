@@ -2,6 +2,8 @@
  * 中文一句話解析：帳戶與分類比對（純函式）
  * 從一句話裡找出提到的帳戶（完整名稱或去掉「銀行／卡」的簡稱）與分類。
  */
+import { SYNONYMS } from './merchant-synonyms';
+
 export interface NlpAccount { id: string; name: string; type?: string }
 export interface NlpCategory { id: string; name: string; kind: 'expense' | 'income'; parentId: string }
 
@@ -119,51 +121,6 @@ export function findAccounts(text: string, accounts: NlpAccount[]): AccountHit[]
  * generic：說的就是分類本身（「手搖飲」「晚餐」），認出來後從備註拿掉；
  * 其他是具體的東西或店名（「珍奶」「Uber」「星巴克」），只用來判斷分類，仍然留在備註。
  */
-interface Synonym { names: string[]; kind: 'expense' | 'income'; generic: string[]; specific?: string[] }
-const SYNONYMS: Synonym[] = [
-  { names: ['飲料', '飲品'], kind: 'expense', generic: ['手搖飲', '手搖', '飲料', '飲品', '飲料店', '茶飲'],
-    specific: ['珍奶', '珍珠奶茶', '奶茶', '紅茶', '綠茶', '青茶', '烏龍茶', '果汁', '汽水', '可樂', '咖啡', '拿鐵', '美式', '星巴克', 'starbucks', '路易莎', 'louisa', 'cama', '冰沙', '五十嵐', '50嵐', '清心', '可不可', '迷客夏', '麻古', '龜記', '得正', '一芳', '茶湯會', '大苑子', '春水堂', '鮮茶道', '八曜', 'coco', '麥香'] },
-  { names: ['早餐'], kind: 'expense', generic: ['早餐', '早點', '早飯', '早午餐', 'brunch'], specific: ['蛋餅', '飯糰', '吐司', '燒餅', '豆漿', '蘿蔔糕', '永和豆漿', '美而美', '麥味登', '拉亞', '早安美芝城', '三明治'] },
-  { names: ['午餐', '飲食', '外食', '餐飲'], kind: 'expense', generic: ['午餐', '午飯', '中餐'],
-    specific: ['便當', '自助餐', '水餃', '手工水餃', '鍋貼', '餃子', '八方雲集', '四海遊龍', '牛肉麵', '陽春麵', '乾麵', '拉麵', '烏龍麵', '義大利麵', '麵店', '麵館', '炒飯', '蓋飯', '丼飯', '滷肉飯', '雞肉飯', '排骨飯', '雞腿飯', '池上', '悟饕', '鼎泰豐', '咖哩', '健康餐', '輕食', '沙拉', '素食', '麥當勞', '肯德基', '漢堡王', '摩斯', '摩斯漢堡', '頂呱呱', '必勝客', '達美樂', '拿坡里', 'sukiya', 'すき家', '吉野家', '松屋', '三商巧福', '鬍鬚張', '薩莉亞', 'saizeriya', 'ubereats', 'uber eats', 'foodpanda', '外送'] },
-  { names: ['晚餐', '午餐', '飲食', '外食', '餐飲'], kind: 'expense', generic: ['晚餐', '晚飯'],
-    specific: ['火鍋', '小火鍋', '麻辣鍋', '涮涮鍋', '燒肉', '燒烤', '居酒屋', '壽司', '爭鮮', '藏壽司', '壽司郎', '牛排', '鐵板燒', '鹹酥雞', '雞排', '鹽水雞', '滷味', '小吃', '餐廳', '餐館', '熱炒', '快炒', '夜市'] },
-  { names: ['宵夜', '晚餐'], kind: 'expense', generic: ['宵夜', '消夜'] },
-  { names: ['點心'], kind: 'expense', generic: ['點心', '零食', '甜點', '下午茶'], specific: ['蛋糕', '餅乾', '冰淇淋', '甜甜圈', '麵包', '烘焙', '可頌', '貝果', '鬆餅', '豆花', '仙草', '紅豆餅', '車輪餅', '泡芙', '胡椒餅', '85度c', '多那之', '聖瑪莉'] },
-  { names: ['食材'], kind: 'expense', generic: ['食材', '買菜', '菜錢'], specific: ['全聯', '家樂福', '好市多', 'costco', '大潤發', '愛買', '美廉社', '超市', '生鮮', '菜市場', '水果'] },
-  { names: ['聚餐'], kind: 'expense', generic: ['聚餐', '聚會', '吃飯聚'] },
-  { names: ['計程車'], kind: 'expense', generic: ['計程車', '小黃', '叫車'], specific: ['uber', '55688', 'yoxi', 'line taxi', 'line go', 'bolt'] },
-  { names: ['捷運公車'], kind: 'expense', generic: ['捷運', '公車', '搭車'], specific: ['悠遊卡', '一卡通', 'ipass', 'icash', 'tpass', '北捷', '高捷', 'ubike', 'youbike'] },
-  { names: ['高鐵火車'], kind: 'expense', generic: ['高鐵', '台鐵', '火車', '客運'] },
-  { names: ['加油'], kind: 'expense', generic: ['加油', '油錢', '汽油'], specific: ['中油', '台塑石油'] },
-  { names: ['停車'], kind: 'expense', generic: ['停車', '停車費'], specific: ['autopass', '車麻吉', 'uTagGo'] },
-  { names: ['水電瓦斯'], kind: 'expense', generic: ['水電', '電費', '水費', '瓦斯', '瓦斯費'], specific: ['台電', '台灣電力', '自來水'] },
-  { names: ['網路電信'], kind: 'expense', generic: ['網路費', '電信費', '手機費', '電話費', '寬頻', '固網', '光世代'], specific: ['中華電信', '台灣大哥大', '遠傳'] },
-  { names: ['房租'], kind: 'expense', generic: ['房租', '租金'] },
-  { names: ['日用品'], kind: 'expense', generic: ['日用品', '衛生紙', '洗衣精'], specific: ['寶雅', '屈臣氏', '康是美', '小北', '無印良品', 'muji', 'ikea', '宜家', '大創', '7-11', '7-eleven', '全家', '萊爾富', 'ok超商', '超商', '便利商店', '蝦皮', 'momo', 'pchome', 'coupang', '酷澎'] },
-  { names: ['電影'], kind: 'expense', generic: ['電影', '看電影'], specific: ['威秀', '秀泰', '國賓影城'] },
-  { names: ['運動健身'], kind: 'expense', generic: ['健身房', '健身', '運動'], specific: ['world gym', '健身工廠'] },
-  { names: ['門診'], kind: 'expense', generic: ['看醫生', '掛號', '門診', '診所'], specific: ['耳鼻喉科', '皮膚科', '眼科', '復健科', '中醫', '小兒科', '家醫科', '醫院'] },
-  { names: ['藥品'], kind: 'expense', generic: ['藥局', '買藥', '藥品'], specific: ['大樹藥局', '丁丁藥局', '佑全'] },
-  { names: ['牙科'], kind: 'expense', generic: ['牙醫', '洗牙', '牙科'] },
-  { names: ['美髮'], kind: 'expense', generic: ['剪髮', '理髮', '美髮', '染髮'] },
-  { names: ['影音串流'], kind: 'expense', generic: [], specific: ['netflix', 'disney', 'youtube premium', 'hbo'] },
-  { names: ['音樂串流'], kind: 'expense', generic: [], specific: ['spotify', 'kkbox', 'apple music'] },
-  { names: ['紅白包'], kind: 'expense', generic: ['紅包', '白包', '禮金', '包紅包'] },
-  { names: ['請客'], kind: 'expense', generic: ['請客'] },
-  { names: ['禮物'], kind: 'expense', generic: ['禮物', '送禮'] },
-  { names: ['獸醫'], kind: 'expense', generic: ['獸醫', '看獸醫'] },
-  { names: ['薪資', '本薪'], kind: 'income', generic: ['薪水', '月薪', '薪資', '發薪'] },
-  { names: ['零用金'], kind: 'income', generic: ['零用金', '零用錢'] },
-  { names: ['獎金'], kind: 'income', generic: ['獎金', '年終'] },
-  { names: ['兼職外快', '兼職'], kind: 'income', generic: ['兼職', '外快', '接案'] },
-  { names: ['禮金紅包'], kind: 'income', generic: ['紅包', '禮金', '收紅包'] },
-  { names: ['退款'], kind: 'income', generic: ['退款', '退費'] },
-  { names: ['利息'], kind: 'income', generic: ['利息'] },
-  { names: ['股利'], kind: 'income', generic: ['股利', '配息', '股息'] },
-  { names: ['中獎'], kind: 'income', generic: ['中獎', '彩券'] },
-];
-
 export interface CategoryMatch {
   category: NlpCategory;
   /** 文字裡認出分類的那個詞 */
@@ -209,7 +166,7 @@ export function matchCategory(text: string, cats: NlpCategory[], kind?: 'expense
     if (!target) continue;
     for (const [list, generic] of [[syn.generic, true], [syn.specific ?? [], false]] as const) {
       for (const w of list) {
-        const i = lower.indexOf(w.toLowerCase());
+        const i = findTermIndex(lower, w.toLowerCase());
         if (i >= 0 && !isBoilerplateMatch(lower, i, w.length)) cands.push({ category: target, term: text.slice(i, i + w.length), generic, index: i });
       }
     }
