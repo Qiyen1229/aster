@@ -241,6 +241,18 @@ export function DatePickerSheet({ open, value, onPick, onClose }: {
 
   const weekdayLabels = Array.from({ length: 7 }, (_, i) => WEEKDAYS[(weekStart + i) % 7]);
   const cells = monthGrid(ym.y, ym.m0, weekStart);
+  const rows = Array.from({ length: Math.ceil(cells.length / 7) }, (_, r) => cells.slice(r * 7, r * 7 + 7));
+
+  const onGridKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const delta = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowDown' ? 7 : e.key === 'ArrowUp' ? -7 : 0;
+    if (!delta) return;
+    e.preventDefault();
+    const btns = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="gridcell"]')];
+    const idx = btns.indexOf(document.activeElement as HTMLButtonElement);
+    if (idx < 0) { btns[0]?.focus(); return; }
+    const nextIdx = Math.max(0, Math.min(btns.length - 1, idx + delta));
+    btns[nextIdx]?.focus();
+  };
 
   return (
     <Sheet open={open} onClose={onClose} title="選擇日期">
@@ -259,31 +271,46 @@ export function DatePickerSheet({ open, value, onPick, onClose }: {
         </div>
 
         <div className="dp-head">
-          <button type="button" className="icon-btn" aria-label="上個月" onClick={() => shiftMonth(-1)}>
-            <Icon name="chevLeft" size={18} />
-          </button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button type="button" className="icon-btn" aria-label="去年" onClick={() => shiftMonth(-12)} title="去年">
+              «
+            </button>
+            <button type="button" className="icon-btn" aria-label="上個月" onClick={() => shiftMonth(-1)}>
+              <Icon name="chevLeft" size={18} />
+            </button>
+          </div>
           <strong className="num">{ym.y} 年 {ym.m0 + 1} 月</strong>
-          <button type="button" className="icon-btn" aria-label="下個月" onClick={() => shiftMonth(1)}>
-            <Icon name="chevRight" size={18} />
-          </button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button type="button" className="icon-btn" aria-label="下個月" onClick={() => shiftMonth(1)}>
+              <Icon name="chevRight" size={18} />
+            </button>
+            <button type="button" className="icon-btn" aria-label="明年" onClick={() => shiftMonth(12)} title="明年">
+              »
+            </button>
+          </div>
         </div>
 
         <div className="dp-weekdays" aria-hidden="true">
           {weekdayLabels.map((w) => <span key={w}>{w}</span>)}
         </div>
 
-        <div className="dp-grid" role="grid" aria-label="日曆">
-          {cells.map((c) => (
-            <button
-              key={c.key}
-              type="button"
-              className={`dp-cell num${c.inMonth ? '' : ' out'}${c.key === today ? ' today' : ''}${c.key === value ? ' selected' : ''}`}
-              aria-label={c.key}
-              aria-pressed={c.key === value}
-              onClick={() => { haptic('light'); onPick(c.key); onClose(); }}
-            >
-              {c.day}
-            </button>
+        <div className="dp-grid" role="grid" aria-label="日曆" onKeyDown={onGridKeyDown}>
+          {rows.map((row, ri) => (
+            <div key={ri} role="row" style={{ display: 'contents' }}>
+              {row.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  role="gridcell"
+                  className={`dp-cell num${c.inMonth ? '' : ' out'}${c.key === today ? ' today' : ''}${c.key === value ? ' selected' : ''}`}
+                  aria-label={c.key}
+                  aria-selected={c.key === value}
+                  onClick={() => { haptic('light'); onPick(c.key); onClose(); }}
+                >
+                  {c.day}
+                </button>
+              ))}
+            </div>
           ))}
         </div>
       </div>
@@ -347,7 +374,19 @@ export function TimePickerSheet({ open, value, onPick, onClose }: {
         <div className="tp-cols">
           <div className="tp-col-wrap">
             <div className="tp-col-label">時</div>
-            <div className="tp-col" ref={hourRef} role="listbox" aria-label="小時">
+            <div
+              className="tp-col"
+              ref={hourRef}
+              role="listbox"
+              aria-label="小時"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+                e.preventDefault();
+                haptic('light');
+                setHM(([h, m]) => [(h + (e.key === 'ArrowDown' ? 1 : 23)) % 24, m]);
+              }}
+            >
               {HOURS.map((h) => (
                 <button
                   key={h}
@@ -365,7 +404,19 @@ export function TimePickerSheet({ open, value, onPick, onClose }: {
 
           <div className="tp-col-wrap">
             <div className="tp-col-label">分</div>
-            <div className="tp-col" ref={minRef} role="listbox" aria-label="分鐘">
+            <div
+              className="tp-col"
+              ref={minRef}
+              role="listbox"
+              aria-label="分鐘"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+                e.preventDefault();
+                haptic('light');
+                setHM(([h, m]) => [h, (m + (e.key === 'ArrowDown' ? 1 : 59)) % 60]);
+              }}
+            >
               {MINUTES.map((m) => (
                 <button
                   key={m}

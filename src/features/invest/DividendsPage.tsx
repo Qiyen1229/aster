@@ -7,14 +7,14 @@ import Decimal from 'decimal.js';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
 import type { Dividend, StockTrade } from '@/db/types';
-import { deleteDividend, nhiSupplement, saveDividend } from '@/db/repo/invest';
+import { deleteDividend, nhiSupplement, restoreDividend, saveDividend } from '@/db/repo/invest';
 import { computePosition } from '@/domain/invest/position';
 import { convertMinor, currencyInfo, formatMoney, fromMinor, safeToMinor, toMinor } from '@/domain/money';
 import { todayKey } from '@/domain/period';
 import { resolveRate } from '@/services/fx';
 import { useAccounts } from '@/app/hooks';
 import { useSettings } from '@/stores/settings';
-import { useUI, ask } from '@/stores/ui';
+import { useUI, ask, snackUndo } from '@/stores/ui';
 import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
 import { AccountField, AmountField, DateField, SelectField, SwitchField } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
@@ -142,8 +142,9 @@ export default function DividendsPage() {
               return (
                 <SwipeRow key={d.id} flat onTap={() => setEdit(d)} onEdit={() => setEdit(d)} onDelete={async () => {
                   if (await ask('刪除這筆股利？相關的入帳帳目或配股也會移除。')) {
-                    await deleteDividend(d.id);
-                    useUI.getState().showSnack({ text: '已刪除股利' });
+                    const snap = await deleteDividend(d.id);
+                    if (snap) snackUndo('已刪除股利', () => restoreDividend(snap));
+                    else useUI.getState().showSnack({ text: '已刪除股利' });
                   }
                 }}>
                   <div className="row">

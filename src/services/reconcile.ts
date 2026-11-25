@@ -33,7 +33,7 @@ export function stmtFromAi(entries: StatementEntry[], accountCurrency: string): 
  * 舊版沒有 id 的調整帳目退回用名稱比對（不限收支、同一筆原帳目不重複配）。
  */
 export const ADJ_SUFFIX = ' 匯差／手續費調整（對帳）';
-const ADJ_RE = /^(.*?)\s?匯差／手續費調整（對帳）(?:·([0-9a-f]{10}))?$/s;
+const ADJ_RE = /^(.*?)\s?匯差／手續費調整（對帳）(?:·([0-9a-zA-Z_-]{4,10}))?$/s;
 export const adjustmentNote = (label: string, ledgerId: string) => `${label.trim()}${ADJ_SUFFIX}·${ledgerId.slice(-10)}`;
 
 /** 帳本裡這個帳戶、帳單期間（前後各 3 天）內的收支帳目 */

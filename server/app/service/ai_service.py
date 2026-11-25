@@ -75,7 +75,7 @@ def _transcribe_local(asr_url: str, audio_b64: str, fmt: str) -> str | None:
             method="POST",
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 — 網址來自管理員環境變數 CLURE_ASR_URL
+        with urllib.request.urlopen(req, timeout=12) as resp:  # noqa: S310 — 網址來自管理員環境變數 CLURE_ASR_URL；保留時間給 Gemini fallback
             data = json.loads(resp.read().decode("utf-8"))
         if isinstance(data, dict) and isinstance(data.get("text"), str):
             text = data["text"].strip()[:300]

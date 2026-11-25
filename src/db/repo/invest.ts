@@ -14,6 +14,7 @@ import { addTransaction, deleteTransactions, restoreTransactions } from './ledge
 import { currencyInfo, toMinor } from '@/domain/money';
 import type { StockMeta } from '@/services/quotes/search';
 import { getSetting } from './settings';
+import { getRate } from '@/services/fx';
 import { useSettings } from '@/stores/settings';
 
 const now = () => Date.now();
@@ -40,9 +41,17 @@ async function ledgerFor(t: TradeInput & { id: string }, stock: Stock) {
   const acc = await db.accounts.get(t.cashAccountId);
   if (!acc) return {};
   const gross = toMinor(new Decimal(t.priceDec).mul(t.sharesDec), stock.currency);
-  // 交割帳戶為主幣別且標的為外幣時，使用成交當下匯率入帳；其他情況交給匯率表
+  // 若有成交匯率（標的幣別 → 主幣別），交割為主幣別時直接使用；交割為第三幣別時乘上主幣別→交割幣別匯率
   const baseCur = await getSetting('baseCurrency');
-  const fx = acc.currency !== stock.currency && acc.currency === baseCur && t.fxRateDec && t.fxRateDec !== '1' ? t.fxRateDec : undefined;
+  let fx: string | undefined;
+  if (acc.currency !== stock.currency && t.fxRateDec && t.fxRateDec !== '1') {
+    if (acc.currency === baseCur) {
+      fx = t.fxRateDec;
+    } else {
+      const baseToAcc = await getRate(baseCur, acc.currency);
+      if (baseToAcc) fx = new Decimal(t.fxRateDec).mul(baseToAcc).toSignificantDigits(8).toString();
+    }
+  }
   const base = { accountId: acc.id, currency: stock.currency, fxRateDec: fx, date: t.date, ts: t.ts, stockTradeId: t.id };
   const label = `${stock.name}（${stock.symbol}）${t.type === 'buy' ? '買進' : '賣出'} ${new Decimal(t.sharesDec).toString()} 股 @ ${t.priceDec}`;
   const main = await addTransaction({
@@ -166,10 +175,32 @@ async function removeDividendLinks(id: string) {
   if (d.stockTradeId) await db.stock_trades.delete(d.stockTradeId);
 }
 
-export async function deleteDividend(id: string) {
-  await db.transaction('rw', dividendTables(), async () => {
+export interface DeletedDividendSnapshot {
+  dividend: Dividend;
+  trade?: StockTrade;
+}
+
+export async function deleteDividend(id: string): Promise<DeletedDividendSnapshot | null> {
+  return db.transaction('rw', dividendTables(), async () => {
+    const dividend = await db.dividends.get(id);
+    if (!dividend) return null;
+    const trade = dividend.stockTradeId ? await db.stock_trades.get(dividend.stockTradeId) : undefined;
     await removeDividendLinks(id);
     await db.dividends.delete(id);
+    return { dividend, trade };
+  });
+}
+
+export async function restoreDividend(snap: DeletedDividendSnapshot): Promise<void> {
+  await db.transaction('rw', dividendTables(), async () => {
+    await db.dividends.put({ ...snap.dividend, updatedAt: now() });
+    if (snap.dividend.transactionId) {
+      await restoreTransactions([snap.dividend.transactionId]);
+      await db.transactions.update(snap.dividend.transactionId, { dividendId: snap.dividend.id, updatedAt: now() });
+    }
+    if (snap.trade) {
+      await db.stock_trades.put({ ...snap.trade, updatedAt: now() });
+    }
   });
 }
 

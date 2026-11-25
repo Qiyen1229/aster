@@ -16,7 +16,7 @@ import { bookDrafts, inboxDraftShape, reserveInboxSource } from './quickentry';
 import { addDebts, addInstallment, addLoan, addWish, confirmPending, decideWish, deleteBudget, deleteInstallment, deleteProject, deleteRecurringRule, extendWish, findOrCreatePerson, removeLoan, saveBudget, saveGoal, saveProject, saveRecurring, settleDebt, skipPending, unsettleDebt } from '@/db/repo/plan';
 import { addTransaction, addTransfer, deleteTransactions, deleteTransfers, restoreTransactions, restoreTransfers, updateTransaction, type TxInput } from '@/db/repo/ledger';
 import { addTrade, addWatch, deleteDividend, deleteTrade, saveDividend, updateAlerts } from '@/db/repo/invest';
-import { addDurable, addUse, sellDurable } from '@/db/repo/durables';
+import { addDurable, addUse, sellDurable, syncTxDurable } from '@/db/repo/durables';
 import { accountTypeInfo, addAccount, deleteOrArchiveAccount } from '@/db/repo/accounts';
 import { addCategory, deleteOrArchiveCategory } from '@/db/repo/categories';
 import { saveSetting } from '@/db/repo/settings';
@@ -263,6 +263,10 @@ async function executePlan(steps: ResolvedStep[], summary: string, idempotencyKe
   const rid = (id: string) => remap.get(id) ?? id;
   let travelApplied: string | null | undefined;
   if (!await db.meta.get(`agent.applied:${log.id}`)) {
+    const snapshot = steps[0]?.snapshot;
+    if (!snapshot || snapshot.dbName !== db.name || snapshot.settings !== settingsRevision() || snapshot.revision !== await stateRevision()) {
+      throw new Error('帳本或設定已在預覽後變更，請重新預覽並確認');
+    }
     for (const { op } of dbOps) if (op.kind === 'inbox' && op.action === 'book') {
       for (const entry of op.entries) await reserveInboxSource(`inbox-${entry.item.id}`, inboxDraftShape(entry.drafts));
     }
@@ -315,7 +319,8 @@ async function executePlan(steps: ResolvedStep[], summary: string, idempotencyKe
         if (o.set.tagNames !== undefined) next.tagIds = o.set.tagNames.length ? await ensureTags(o.set.tagNames) : [];
         if (o.set.excludeFromBudget !== undefined) next.excludeFromBudget = o.set.excludeFromBudget;
         if (o.set.excludeFromStats !== undefined) next.excludeFromStats = o.set.excludeFromStats;
-        await updateTransaction(t.id, next);
+        const saved = await updateTransaction(t.id, next);
+        await syncTxDurable(saved, -1, { name: saved.note.trim() || '耐用品', icon: '📦' });
       } else if (o.kind === 'tx_delete') {
         for (const id of o.ids) {
           const t = await db.transactions.get(id);

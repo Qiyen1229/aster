@@ -5,6 +5,7 @@
 import { db, uid } from '../schema';
 import type { Durable, Transaction } from '../types';
 import { addTransaction, deleteTransactions } from './ledger';
+import { scaleMinor } from '@/domain/money';
 import { getSetting } from './settings';
 
 const now = () => Date.now();
@@ -89,7 +90,7 @@ export const durableOfTx = (txId: string) => db.durables.where('txId').equals(tx
 
 /** 耐用品的成本：分帳只算我的份額，其餘用主幣別金額 */
 export const durableCostOf = (tx: Transaction) =>
-  tx.split ? Math.round((tx.baseAmountMinor * tx.split.myShareMinor) / Math.max(1, tx.amountMinor)) : tx.baseAmountMinor;
+  tx.split ? scaleMinor(tx.baseAmountMinor, tx.split.myShareMinor, Math.max(1, tx.amountMinor)) : tx.baseAmountMinor;
 
 /**
  * 讓耐用品跟著帳目：編輯帳目時呼叫。

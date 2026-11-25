@@ -85,7 +85,7 @@ export default function BackupPage() {
             const f = e.target.files?.[0];
             e.target.value = '';
             if (!f) return;
-            if (mode === 'replace' && !await ask(AUTH_ENABLED ? '完全取代會刪除目前所有資料，並同步到這個帳號的其他裝置，確定？' : '完全取代會刪除這台裝置上目前所有資料，確定？')) return;
+            if (mode === 'replace' && !await ask(AUTH_ENABLED ? '取代模式會清空並覆蓋備份檔中有包含的資料表（未包含的資料表會保留），並同步到其他裝置，確定？' : '取代模式會清空並覆蓋這台裝置上備份檔中有包含的資料表（未包含的資料表會保留），確定？')) return;
             void (async () => {
               if (await isEncryptedBackup(f)) { setPending({ file: f, action: 'restore' }); setRestorePass(''); setRestoreErr(''); return; } // 加密檔：先問密碼
               await run('restore', async () => {

@@ -81,7 +81,7 @@ function score(s: StmtRow, l: LedgerRow): Cand | null {
 }
 
 function reasonOf(c: Cand, accountCurrency: string): VarianceReason {
-  if (/退款|退刷|退貨|refund/i.test(`${c.s.text} ${c.l.text}`) || c.s.kind === 'income') return 'refund';
+  if (/退款|退刷|退貨|refund/i.test(`${c.s.text} ${c.l.text}`)) return 'refund';
   if (c.fxMatch || c.l.origCurrency !== accountCurrency || !!c.s.foreignCurrency) return 'fx';
   const ratio = c.l.accountMinor > 0 ? c.diff / c.l.accountMinor : 0;
   if (ratio >= 0.012 && ratio <= 0.018) return 'overseas_fee';

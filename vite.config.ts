@@ -86,7 +86,7 @@ export default defineConfig({
         id: '/',
         name: 'Aster 記帳',
         short_name: 'Aster',
-        description: '資料只存在你裝置上的個人記帳與投資組合 App',
+        description: '自架式本機優先個人記帳與投資組合 App，支援離線記帳與多裝置同步',
         lang: 'zh-Hant-TW',
         start_url: '/?source=pwa',
         scope: '/',

@@ -9,7 +9,7 @@
  */
 import Decimal from 'decimal.js';
 import type { PriceCache, PriceHistory, Stock, StockTrade } from '@/db/types';
-import { currencyInfo } from '@/domain/money';
+import { currencyInfo, fromMinor } from '@/domain/money';
 import { exchangeDate } from './market-hours';
 import type { CostMethod } from './position';
 
@@ -470,7 +470,7 @@ export function formatPnlCompact(pnl: DayCurrencyPnl, showPrefix = false): strin
   const isPos = pnl.pnlMinor > 0;
   const isNeg = pnl.pnlMinor < 0;
   const sign = isPos ? '+' : isNeg ? '-' : '';
-  const absVal = Math.abs(pnl.pnlMinor) / 100;
+  const absVal = fromMinor(Math.abs(pnl.pnlMinor), pnl.currency).toNumber();
 
   let valStr: string;
   if (pnl.currency === 'TWD') {

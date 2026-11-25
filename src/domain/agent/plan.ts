@@ -250,7 +250,7 @@ function reclassify(a: Record<string, unknown>, d: AgentData, work: Transaction[
   const total = hits.reduce((s, t) => s + (countsForBudget(t) ? statAmount(t) : 0), 0);
   const byFrom = new Map<string, number>();
   for (const t of hits) byFrom.set(t.categoryId, (byFrom.get(t.categoryId) ?? 0) + 1);
-  const lines = [`符合條件：${label}`, `共 ${hits.length} 筆${total ? `，合計 ${fmt(total, cur)}` : ''}`,
+  const lines = [`符合條件：${label}`, `共 ${hits.length} 筆${total ? `，合計 ${fmt(total, cur)}` : ''}（註：僅搜尋最近一年內未刪除帳目）`,
     `原本的分類：${[...byFrom].map(([id, n]) => `${catMap.get(id)?.name ?? '其他'} ${n} 筆`).join('、')}`];
 
   // 預算影響：本期各預算涵蓋範圍的花費變化（只算改分類造成的位移）

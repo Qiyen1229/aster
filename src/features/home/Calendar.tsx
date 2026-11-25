@@ -560,15 +560,15 @@ export function Calendar({
         <div ref={trackRef} className="cal-track">
           {collapsed ? (
             <>
-              <div className="cal-slide">{renderWeekSlide(prevWeekDays, addDays(selected, -7))}</div>
+              <div className="cal-slide" aria-hidden="true" {...({ inert: '' } as Record<string, unknown>)}>{renderWeekSlide(prevWeekDays, '')}</div>
               <div className="cal-slide">{renderWeekSlide(currWeekDays, selected)}</div>
-              <div className="cal-slide">{renderWeekSlide(nextWeekDays, addDays(selected, 7))}</div>
+              <div className="cal-slide" aria-hidden="true" {...({ inert: '' } as Record<string, unknown>)}>{renderWeekSlide(nextWeekDays, '')}</div>
             </>
           ) : (
             <>
-              <div className="cal-slide">{renderMonthSlide(prevMonthCells, '', prevLabel)}</div>
+              <div className="cal-slide" aria-hidden="true" {...({ inert: '' } as Record<string, unknown>)}>{renderMonthSlide(prevMonthCells, '', prevLabel)}</div>
               <div className="cal-slide">{renderMonthSlide(currMonthCells, selected, currLabel)}</div>
-              <div className="cal-slide">{renderMonthSlide(nextMonthCells, '', nextLabel)}</div>
+              <div className="cal-slide" aria-hidden="true" {...({ inert: '' } as Record<string, unknown>)}>{renderMonthSlide(nextMonthCells, '', nextLabel)}</div>
             </>
           )}
         </div>

@@ -275,7 +275,7 @@ export async function restoreTransactions(ids: string[]): Promise<void> {
 
 /** 批次修改（分類、帳戶、日期…）；帳戶變更時一併搬移餘額影響 */
 export async function batchUpdate(ids: string[], patch: Partial<Pick<Transaction, 'categoryId' | 'accountId' | 'date' | 'projectId' | 'tagIds'>>): Promise<void> {
-  await db.transaction('rw', db.transactions, db.accounts, async () => {
+  await db.transaction('rw', db.transactions, db.accounts, db.durables, async () => {
     for (const id of ids) {
       const tx = await db.transactions.get(id);
       if (!tx || tx.deletedAt || tx.transferId) continue;
@@ -286,7 +286,11 @@ export async function batchUpdate(ids: string[], patch: Partial<Pick<Transaction
         await bump(tx.accountId, -txEffect(tx));
         await bump(patch.accountId, txEffect(tx));
       }
-      await db.transactions.update(id, { ...patch, updatedAt: Date.now() });
+      const tsNow = Date.now();
+      await db.transactions.update(id, { ...patch, updatedAt: tsNow });
+      if (patch.date && patch.date !== tx.date) {
+        await db.durables.where('txId').equals(id).filter((d) => !d.deletedAt).modify({ purchaseDate: patch.date, updatedAt: tsNow });
+      }
     }
   });
 }

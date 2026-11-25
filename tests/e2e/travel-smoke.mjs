@@ -35,8 +35,15 @@ if (!(await appUp())) {
   previewProc = spawn('npx', ['vite', 'preview', '--port', '9122', '--strictPort'], { cwd: ROOT, stdio: 'ignore' });
   let up = false;
   for (let i = 0; i < 40 && !up; i++) { await sleep(500); up = await appUp(); }
-  if (!up) { console.error('無法啟動 preview：請先跑 VITE_AUTH_MODE=off npm run build'); previewProc.kill(); process.exit(1); }
+  if (!up) { console.error('無法啟動 preview：請先執行 VITE_AUTH_MODE=off npm run build'); previewProc.kill(); process.exit(1); }
 }
+// 確認目前載入的 bundle 是否為無登入煙霧模式（若跳到 /login 代表未用 VITE_AUTH_MODE=off 建置）
+try {
+  const html = await (await fetch(APP, { signal: AbortSignal.timeout(1500) })).text();
+  if (html.includes('/assets/') && process.env.VITE_AUTH_MODE && process.env.VITE_AUTH_MODE !== 'off') {
+    console.warn('提示：travel-smoke.mjs 需搭配 VITE_AUTH_MODE=off npm run build');
+  }
+} catch { /* ignore */ }
 
 // ── Chrome headless ──
 const CHROME = process.env.CHROME_PATH

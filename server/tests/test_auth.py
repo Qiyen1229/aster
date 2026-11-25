@@ -192,3 +192,21 @@ def test_first_user_is_single_admin_and_second_is_user(api: Api) -> None:
     assert r2.status_code == 201
     assert r2.json()["role"] == "user"
 
+
+def test_last_active_admin_cannot_delete_self_when_other_admin_frozen(api: Api) -> None:
+    from app.db import session_scope
+    from app.model import User
+
+    assert api.register("admin_a").status_code == 201
+    admin_b = Api("10.5.0.3")
+    assert admin_b.register("user_b").status_code == 201
+    for s in session_scope():
+        ub = s.query(User).filter(User.username == "user_b").one()
+        ub.role = "admin"
+        ub.is_active = False
+        s.commit()
+
+    r = api.c.request("DELETE", "/api/auth/account", json={"password": PASSWORD}, headers=api._h())
+    assert r.status_code == 400
+    assert "唯一的管理員" in r.json()["detail"]
+

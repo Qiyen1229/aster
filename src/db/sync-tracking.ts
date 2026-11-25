@@ -56,10 +56,22 @@ export function markRestore(tx: Transaction): void {
   restoreTrans.add(coreTrans(tx));
 }
 
-/** 本機時鐘與伺服器時鐘的差（ms）；由同步引擎在每次同步時校正，避免裝置時間不準造成「最後寫入者勝」誤判 */
-let clockOffset = 0;
+/** 本機時鐘與伺服器時鐘的差（ms）；由同步引擎在每次同步時校正並記在 localStorage，離線重開也能沿用 */
+const CLOCK_KEY = 'aster.clockOffset';
+let clockOffset = (() => {
+  try {
+    const v = Number(localStorage.getItem(CLOCK_KEY));
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+})();
 export function setClockOffset(ms: number): void {
   clockOffset = Number.isFinite(ms) ? ms : 0;
+  try {
+    if (clockOffset === 0) localStorage.removeItem(CLOCK_KEY);
+    else localStorage.setItem(CLOCK_KEY, String(clockOffset));
+  } catch { /* 忽略 */ }
 }
 /** 以伺服器時間為準的「現在」 */
 export function syncClock(): number {

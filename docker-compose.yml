@@ -23,7 +23,7 @@ x-logging: &logging
 services:
   # 前端建置器：監看原始碼 → 自動 vite build → 寫入 clure-www 資料卷（建置成功才切換，失敗保留舊版）
   web-builder:
-    image: node:20-alpine
+    image: node:22-alpine
     container_name: clure-web-builder
     restart: unless-stopped
     working_dir: /app

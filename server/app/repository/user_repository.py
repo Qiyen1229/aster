@@ -40,7 +40,7 @@ class UserRepository:
         return self.db.scalar(select(func.count(User.id))) or 0
 
     def count_admins(self) -> int:
-        return self.db.scalar(select(func.count(User.id)).where(User.role == ROLE_ADMIN)) or 0
+        return self.db.scalar(select(func.count(User.id)).where(User.role == ROLE_ADMIN, User.is_active.is_(True))) or 0
 
     def search(self, *, q: str | None, status: str, role: str, now: datetime, page: int, size: int) -> tuple[list[User], int]:
         stmt = select(User)

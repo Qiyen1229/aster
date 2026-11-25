@@ -12,6 +12,7 @@ import type { AccountType } from '@/db/types';
 import { CURRENCIES, toMinor } from '@/domain/money';
 import { evaluate } from '@/domain/calc-expr';
 import { useSettings } from '@/stores/settings';
+import { AUTH_ENABLED } from '@/stores/auth';
 import { useUI } from '@/stores/ui';
 import { Icon } from '@/ui/Icon';
 import { Segmented } from '@/ui/controls';
@@ -99,7 +100,11 @@ export default function Onboarding() {
         <>
           <img src={ICON_192} alt="" width={72} height={72} style={{ borderRadius: 16, marginTop: 8 }} />
           <h1>歡迎使用 Aster 記帳</h1>
-          <p style={{ marginBottom: 8 }}>🔒 資料存在你自己的伺服器，登入的每台裝置都會同步。先選主要幣別（報表與淨資產會換算成它，之後可在設定更改）。</p>
+          <p style={{ marginBottom: 8 }}>
+            {AUTH_ENABLED
+              ? '🔒 資料存在你自己的伺服器，登入的每台裝置都會同步。先選主要幣別（報表與淨資產會換算成它，之後可在設定更改）。'
+              : '🔒 本機模式：資料只存在這台裝置，可隨時在設定中匯出備份。先選主要幣別（報表與淨資產會換算成它，之後可在設定更改）。'}
+          </p>
           <div className="list" style={{ maxHeight: '44dvh', overflowY: 'auto' }}>
             {Object.values(CURRENCIES).map((c) => (
               <button key={c.code} className="row" onClick={() => s.set('baseCurrency', c.code)} aria-pressed={s.baseCurrency === c.code}>

@@ -10,6 +10,7 @@ import { saveSetting } from '@/db/repo/settings';
 import { useSettings } from '@/stores/settings';
 import { haptic } from '@/services/haptics';
 import { Icon } from '@/ui/Icon';
+import { activateModalFocus } from '@/ui/focusTrap';
 import { RELEASE_NOTES, condenseHighlights, featuresBetween, type ReleaseNote, type WhatsNewItem } from './releaseNotes';
 
 const KEY = 'aster.seenVersion';
@@ -133,9 +134,14 @@ export function WhatsNewHost() {
     if (!open) return;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    const releaseFocus = activateModalFocus(wrapRef.current);
     prevFocus.current = document.activeElement as HTMLElement | null;
+    requestAnimationFrame(() => {
+      wrapRef.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true });
+    });
 
     return () => {
+      releaseFocus();
       document.body.style.overflow = prevOverflow;
       const el = prevFocus.current;
       prevFocus.current = null;

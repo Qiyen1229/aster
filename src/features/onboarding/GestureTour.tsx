@@ -6,7 +6,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { haptic } from '@/services/haptics';
 import { useSettings } from '@/stores/settings';
+import { useUI } from '@/stores/ui';
 import { Icon } from '@/ui/Icon';
+import { activateModalFocus } from '@/ui/focusTrap';
 
 interface Box {
   left: number;
@@ -146,6 +148,7 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
     if (wasPressing && step === 2 && !locked.current) {
       haptic('light');
       finish();
+      useUI.getState().openAdd();
     }
   };
 
@@ -173,9 +176,16 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
     if (t) moveDrag(t.clientX, t.clientY);
   };
 
+  const tourRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const release = activateModalFocus(tourRef.current);
+    tourRef.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true });
+    return release;
+  }, [desktop]);
+
   if (desktop) {
     return (
-      <div className="tour-backdrop desktop" role="dialog" aria-modal="true" aria-label="寬屏快捷導覽">
+      <div ref={tourRef} className="tour-backdrop desktop" role="dialog" aria-modal="true" aria-label="寬屏快捷導覽">
         <div className="tour-card">
           <div className="tour-head">
             <span className="tour-badge">操作導覽</span>
@@ -207,7 +217,7 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
     : 120;
 
   return (
-    <div className="tour-backdrop" role="dialog" aria-modal="true" aria-label="互動式手勢教學">
+    <div ref={tourRef} className="tour-backdrop" role="dialog" aria-modal="true" aria-label="互動式手勢教學">
       <div className="tour-card" style={{ bottom: `${cardBottom}px` }}>
         <div className="tour-head">
           <span className="tour-badge">{cur.badge}</span>

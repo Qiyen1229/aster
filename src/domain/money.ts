@@ -80,6 +80,15 @@ export function convertMinor(minor: number, from: string, to: string, rate: Deci
   return toMinor(fromMinor(minor, from).mul(rate), to);
 }
 
+/** 依整數比例縮放金額（BigInt 四捨五入，避免浮點誤差） */
+export function scaleMinor(totalMinor: number, num: number, den: number): number {
+  if (den === 0) return totalMinor;
+  const sign = (totalMinor < 0 ? -1n : 1n) * (num < 0 ? -1n : 1n) * (den < 0 ? -1n : 1n);
+  const p = BigInt(Math.abs(Math.trunc(totalMinor))) * BigInt(Math.abs(Math.trunc(num)));
+  const d = BigInt(Math.abs(Math.trunc(den)));
+  return assertSafe(Number(sign * ((p + d / 2n) / d)));
+}
+
 /**
  * 將總額依權重拆分且總和保證等於原值（最大餘數法）。
  * 用於分期、AA 拆帳等需要「每份四捨五入但總和不能差 1 元」的場景。

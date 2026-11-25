@@ -927,7 +927,7 @@ def test_transcribe_local_asr_success(api: Api, monkeypatch, caplog) -> None:  #
         assert r.status_code == 200, r.text
         assert r.json()["text"] == "早餐蛋餅 60"
         assert captured["url"] == "http://10.0.30.100:8094/v1/audio/transcriptions"
-        assert captured["timeout"] == 30
+        assert captured["timeout"] == 12
         assert "multipart/form-data" in str(captured["content_type"])
         assert raw_audio in captured["data"]  # type: ignore[operator]
         assert b'name="language"\r\n\r\nzh' in captured["data"]  # type: ignore[operator]

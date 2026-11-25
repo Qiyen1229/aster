@@ -14,7 +14,7 @@ import {
 import { nextAfter, occurrences } from '@/domain/recurrence';
 import { buildSchedule, periodTotal } from '@/domain/installment';
 import { statAmount } from '@/domain/ledger';
-import { convertMinor } from '@/domain/money';
+import { convertMinor, scaleMinor } from '@/domain/money';
 import { accountingMonth, addDays, eachDay, todayKey, type Range } from '@/domain/period';
 import { resolveRate } from '@/services/fx';
 import { getSetting } from './settings';
@@ -34,8 +34,10 @@ export async function saveBudget(input: BudgetInput, id?: string): Promise<strin
 }
 
 export async function deleteBudget(id: string) {
-  await db.budgets.delete(id);
-  await db.budget_periods.where('budgetId').equals(id).delete();
+  await db.transaction('rw', [db.budgets, db.budget_periods], async () => {
+    await db.budgets.delete(id);
+    await db.budget_periods.where('budgetId').equals(id).delete();
+  });
 }
 
 /** 預算是否涵蓋這筆帳目 */
@@ -148,7 +150,7 @@ export async function projectStats(project: Project) {
   const rateBaseToProject = project.currency === base ? null : resolveRate(rates, base, project.currency);
   // 以專案幣別計：同幣別直接用原幣金額，否則由主幣別換算
   const inProject = (t: Transaction) => {
-    if (t.currency === project.currency) return t.split ? Math.round((t.amountMinor * t.split.myShareMinor) / t.amountMinor) : t.amountMinor;
+    if (t.currency === project.currency) return t.split ? scaleMinor(t.amountMinor, t.split.myShareMinor, t.amountMinor) : t.amountMinor;
     if (project.currency === base) return statAmount(t);
     return rateBaseToProject ? convertMinor(statAmount(t), base, project.currency, rateBaseToProject) : 0;
   };

@@ -18,7 +18,7 @@ import {
 } from '@/db/repo/ledger';
 import { buildTree } from '@/db/repo/categories';
 import { evaluate, hasOperator, pressKey } from '@/domain/calc-expr';
-import { addThousands, convertMinor, currencyInfo, formatMoney, fromMinor, toMinor } from '@/domain/money';
+import { addThousands, convertMinor, currencyInfo, formatMoney, fromMinor, scaleMinor, toMinor } from '@/domain/money';
 import { pad2, todayKey } from '@/domain/period';
 import { getRate } from '@/services/fx';
 import { discardAttachments, saveImageAttachment } from '@/services/attachments';
@@ -28,6 +28,7 @@ import { useSettings } from '@/stores/settings';
 import { askConfirm, snackUndo, useUI, type AddMode } from '@/stores/ui';
 import { confirmDeleteById } from '../ledger/deleteGuard';
 import { Sheet } from '@/ui/Sheet';
+import { activateModalFocus } from '@/ui/focusTrap';
 import { EmptyState, Segmented, Switch } from '@/ui/controls';
 import { CatIcon, Icon } from '@/ui/Icon';
 import { Keypad } from './Keypad';
@@ -174,6 +175,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   useEffect(() => {
     if (!mounted || !open) return;
     const unlockScroll = lockBodyScroll();
+    const releaseFocus = activateModalFocus(screenRef.current);
     const prevFocus = document.activeElement as HTMLElement | null;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !document.querySelector('.sheet, .dlg-wrap')) {
@@ -185,6 +187,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
     const t = window.setTimeout(() => screenRef.current?.focus({ preventScroll: true }), 300);
     return () => {
       unlockScroll();
+      releaseFocus();
       window.removeEventListener('keydown', onKeyDown);
       window.clearTimeout(t);
       if (prevFocus?.isConnected) prevFocus.focus({ preventScroll: true });
@@ -495,7 +498,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
             const cat = catMap.get(catId);
             const d = await addDurable({
               id: `durable-${tx.id}`, name: note.trim() || cat?.name || '耐用品', icon: cat?.icon || '📦', purchaseDate: date, currency: settings.baseCurrency, lifeYears: durableYears, txId: tx.id,
-              costMinor: sp ? Math.round((tx.baseAmountMinor * sp.myShare) / Math.max(1, tx.amountMinor)) : tx.baseAmountMinor,
+              costMinor: sp ? scaleMinor(tx.baseAmountMinor, sp.myShare, Math.max(1, tx.amountMinor)) : tx.baseAmountMinor,
             });
             durableId = d.id;
           }

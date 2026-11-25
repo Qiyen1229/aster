@@ -74,6 +74,15 @@ class AuthService:
             return None  # 這台裝置已被登出（自己登出、被別台踢掉、重用偵測）
         return user
 
+    def _acquire_write_lock(self, lock_id: int) -> None:
+        """取得跨行程交易寫入鎖，避免管理員數量或首次註冊檢查發生競態。"""
+        dialect = self.db.bind.dialect.name if self.db.bind is not None else ""
+        if dialect == "postgresql":
+            self.db.execute(text("SELECT pg_advisory_xact_lock(:id)"), {"id": lock_id})
+        elif dialect == "sqlite":
+            self.db.rollback()
+            self.db.execute(text("BEGIN IMMEDIATE"))
+
     # ───── 註冊 ─────
     def register(self, req: RegisterRequest, client: ClientInfo) -> tuple[User, IssuedTokens]:
         if not app_settings.registration_open(self.db, self.settings):
@@ -86,14 +95,7 @@ class AuthService:
             check_email_domain(req.email)
         except ValueError as e:
             raise ServiceError(422, str(e)) from e
-        # 交易層鎖定：防止併發首次註冊同時讀到 count() == 0 而產生多名管理員
-        dialect = self.db.bind.dialect.name if self.db.bind is not None else ""
-        if dialect == "postgresql":
-            self.db.execute(text("SELECT pg_advisory_xact_lock(1001)"))
-        elif dialect == "sqlite":
-            # SQLite 單寫入鎖：先確保取得保留鎖再 count()
-            self.db.rollback()
-            self.db.execute(text("BEGIN IMMEDIATE"))
+        self._acquire_write_lock(1001)
         # 全新系統（沒有任何使用者）時，第一位註冊者成為管理員；建議改用環境變數或 CLI 預先建立管理員
         role = ROLE_ADMIN if self.settings.first_user_admin and self.users.count() == 0 else ROLE_USER
         now = utcnow()
@@ -255,8 +257,10 @@ class AuthService:
     def delete_account(self, user: User, password: str, totp_code: str | None, client: ClientInfo) -> None:
         """刪除帳號與伺服器上的全部資料（帳目同步資料、收件匣、推播、外部通知、AI 用量、登入紀錄）。審計日誌只留不含個資的紀錄。"""
         self.confirm_identity(user, password, totp_code, client, "auth.account_delete")
-        if user.role == ROLE_ADMIN and self.users.count_admins() <= 1:
-            raise ServiceError(400, "你是唯一的管理員，請先建立另一位管理員，再刪除這個帳號")
+        if user.role == ROLE_ADMIN:
+            self._acquire_write_lock(1002)
+            if self.users.count_admins() <= 1:
+                raise ServiceError(400, "你是唯一的管理員，請先建立另一位管理員，再刪除這個帳號")
         uid = user.id
         self.users.delete(user)  # 其他資料表以外鍵 ON DELETE CASCADE 一併刪除
         self.audit.record("auth.account_delete", client, user_id=uid)

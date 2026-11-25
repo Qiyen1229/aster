@@ -139,6 +139,7 @@ export async function applyRemoteChanges(changes: SyncChange[]): Promise<Set<str
   const touched = new Set<string>();
   const list = (await decodeChanges(changes)).filter((c) => SYNCED.has(c.table));
   if (!list.length) return touched;
+  let overwritten = 0;
   const tables = [...new Set(list.map((c) => c.table))].map((t) => db.table(t));
   await db.transaction('rw', [...tables, db.sync_outbox], async (tx) => {
     markRemote(tx);
@@ -159,10 +160,18 @@ export async function applyRemoteChanges(changes: SyncChange[]): Promise<Set<str
       if (c.deleted) await table.delete(key as string);
       else if (c.payload) await table.put(c.payload);
       else continue;
-      if (pending) await db.sync_outbox.delete(oid);
+      if (pending) {
+        await db.sync_outbox.delete(oid);
+        overwritten += 1;
+      }
       touched.add(c.table);
     }
   });
+  if (overwritten > 0) {
+    void import('@/stores/ui').then(({ useUI }) => {
+      useUI.getState().showSnack({ text: `同步衝突：有 ${overwritten} 筆尚未上傳的本機修改已被伺服器較新版本覆蓋` });
+    }).catch(() => undefined);
+  }
   if ([...touched].some((t) => BALANCE_TABLES.has(t))) {
     await db.transaction('rw', db.accounts, db.transactions, db.transfers, async (tx) => {
       markRemote(tx);
