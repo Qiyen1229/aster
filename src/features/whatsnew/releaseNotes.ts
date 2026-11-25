@@ -25,6 +25,26 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.57', date: '2026-11-25',
+    features: [
+      {
+        title: '自訂日期與帳單對帳',
+        intro: '「記一筆」改用自訂月曆與雙欄時間選擇器（不依賴系統原生控制項）；帳單對帳新增 PDF 解析並移除多餘步驟點。',
+        howto: '開啟「記一筆」點選日期或時間膠囊即可操作；在「帳單對帳」可上傳帳單 PDF 或截圖核對。',
+      },
+      {
+        title: '本地語音優先辨識',
+        intro: '新增 CLURE_ASR_URL 本地語音辨識優先通道與 Gemini 自動備援，並於後台 /admin/ai 提供健康檢查與錄音／上傳測試卡片。',
+        howto: '於伺服器設定 CLURE_ASR_URL 後，語音記帳會優先使用本地模型，失敗時無縫切換回 Gemini。',
+      },
+      {
+        title: '通知跳轉與體驗優化',
+        intro: '修復點擊通知無法跳轉收件匣的問題、首頁快覽補上「快覽設置」入口、手勢教學支援上滑後下滑關閉，並強化日曆 ARIA 與按鈕觸控區。',
+        howto: '收到「收件匣有新項目」通知點擊後將直接開啟收件匣；首頁快覽最下方可一鍵進入配置。',
+      },
+    ],
+  },
+  {
     version: '4.1.56', date: '2026-11-23',
     features: [
       {

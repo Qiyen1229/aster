@@ -1,5 +1,5 @@
 {
-  "featureRelease": "4.1.56",
-  "showcaseReviewed": "4.1.56",
-  "headline": "修復股票刪除連動、超大數字與 XIRR 溢位、iOS 鍵盤跳動與 PWA 更新按鈕"
+  "featureRelease": "4.1.57",
+  "showcaseReviewed": "4.1.57",
+  "headline": "自訂記一筆日期時間選擇器、帳單 PDF 對帳、本地 Breeze-ASR-25 語音與通知點擊跳轉收件匣"
 }
