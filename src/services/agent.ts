@@ -13,7 +13,7 @@
 import Dexie from 'dexie';
 import { db, uid } from '@/db/schema';
 import { bookDrafts, inboxDraftShape, reserveInboxSource } from './quickentry';
-import { addDebts, addInstallment, addLoan, addWish, confirmPending, decideWish, deleteBudget, deleteInstallment, deleteRecurringRule, extendWish, findOrCreatePerson, removeLoan, saveBudget, saveGoal, saveProject, saveRecurring, settleDebt, skipPending, unsettleDebt } from '@/db/repo/plan';
+import { addDebts, addInstallment, addLoan, addWish, confirmPending, decideWish, deleteBudget, deleteInstallment, deleteProject, deleteRecurringRule, extendWish, findOrCreatePerson, removeLoan, saveBudget, saveGoal, saveProject, saveRecurring, settleDebt, skipPending, unsettleDebt } from '@/db/repo/plan';
 import { addTransaction, addTransfer, deleteTransactions, deleteTransfers, restoreTransactions, restoreTransfers, updateTransaction, type TxInput } from '@/db/repo/ledger';
 import { addTrade, addWatch, deleteDividend, deleteTrade, saveDividend, updateAlerts } from '@/db/repo/invest';
 import { addDurable, addUse, sellDurable } from '@/db/repo/durables';
@@ -647,6 +647,21 @@ export async function undoOp(id: string): Promise<UndoResult> {
         if (c.table === 'budgets') await deleteBudget(c.id);
         else if (c.table === 'installments') await deleteInstallment(c.id);
         else if (c.table === 'accounts') await deleteOrArchiveAccount(c.id);
+        else if (c.table === 'projects') {
+          const [txRef, trRef, budRef, recRef, tplRef] = await Promise.all([
+            db.transactions.where('projectId').equals(c.id).filter((t) => !t.deletedAt).count(),
+            db.transfers.filter((t) => t.projectId === c.id && !t.deletedAt).count(),
+            db.budgets.filter((b) => b.projectId === c.id).count(),
+            db.recurring_rules.filter((r) => r.template.projectId === c.id).count(),
+            db.templates.filter((t) => t.payload.projectId === c.id).count(),
+          ]);
+          const travelRef = (await db.settings.get('travelModeProjectId'))?.value === c.id ? 1 : 0;
+          if (txRef + trRef + budRef + recRef + tplRef + travelRef > 0) {
+            await db.projects.update(c.id, { status: 'archived', updatedAt: Date.now() });
+          } else {
+            await deleteProject(c.id);
+          }
+        }
         else if (c.table === 'debts') {
           const d = await db.debts.get(c.id);
           if (d?.transactionId) {

@@ -180,3 +180,15 @@ def test_refresh_grace_period_allows_ip_change_and_keeps_replacement(api: Api) -
     assert other_ip.post("/api/auth/refresh").status_code == 200
     # 先前成功拿到的新權杖也不會被撤銷
     assert api.post("/api/auth/refresh").status_code == 200
+
+
+def test_first_user_is_single_admin_and_second_is_user(api: Api) -> None:
+    r1 = api.register("first_admin")
+    assert r1.status_code == 201
+    assert r1.json()["role"] == "admin"
+
+    second = Api("10.5.0.2")
+    r2 = second.register("second_user")
+    assert r2.status_code == 201
+    assert r2.json()["role"] == "user"
+

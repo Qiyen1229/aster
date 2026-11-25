@@ -3,8 +3,9 @@
  * 商家記憶索引快取 5 分鐘（記帳時每次打字都會查，不必每次讀整張表）；規則有變更時呼叫 invalidateAutocat()。
  */
 import { db, uid } from '@/db/schema';
-import type { CategoryKind, CategoryRule } from '@/db/types';
+import type { Category, CategoryKind, CategoryRule } from '@/db/types';
 import { addDays, todayKey } from '@/domain/period';
+import { matchCategory } from '@/domain/nlp-entities';
 import { mergeSuggestions, pinnedSuggestions, rankNoteSuggestions, type NoteSuggestion } from '@/domain/notesuggest';
 import { listPinned, pinNote } from '@/db/repo/pinned';
 import { buildMemory, matchRule, recallCategory, type MemoryIndex } from '@/domain/rules';
@@ -17,7 +18,7 @@ export interface CategorySuggestion {
   renameNote?: string;
 }
 
-let cache: { dbName: string; at: number; rules: CategoryRule[]; memory: MemoryIndex; accounts: MemoryIndex } | null = null;
+let cache: { dbName: string; at: number; rules: CategoryRule[]; memory: MemoryIndex; accounts: MemoryIndex; cats: Category[] } | null = null;
 const TTL = 5 * 60 * 1000;
 
 export function invalidateAutocat(): void {
@@ -46,14 +47,15 @@ async function load() {
   cache = {
     dbName: database.name, at: Date.now(), rules: rules.filter((r) => !r.deletedAt && (!r.categoryId || live.has(r.categoryId))),
     memory: buildMemory(items), accounts: buildMemory(accItems),
+    cats: cats.filter((c) => !c.archived && !c.deletedAt),
   };
   return cache;
 }
 
-/** 依備註／商家文字建議分類：規則優先（可用完整通知比對），其次是商家記憶（只比對乾淨的商家／備註，避免被銀行通知雜訊污染） */
+/** 依備註／商家文字建議分類：規則優先（可用完整通知比對），其次是商家記憶，最後參考內建同義詞 */
 export async function suggestCategory(text: string, kind: CategoryKind, amount?: number, memoryText?: string): Promise<CategorySuggestion | null> {
   if (!text.trim()) return null;
-  const { rules, memory } = await load();
+  const { rules, memory, cats } = await load();
   const memQuery = memoryText?.trim() || text;
   const r = matchRule(rules, text, kind, amount);
   if (r) {
@@ -68,7 +70,9 @@ export async function suggestCategory(text: string, kind: CategoryKind, amount?:
     };
   }
   const c = recallCategory(memory, memQuery, kind);
-  return c ? { categoryId: c, tagIds: [], source: 'memory' } : null;
+  if (c) return { categoryId: c, tagIds: [], source: 'memory' };
+  const builtin = matchCategory(memQuery, cats, kind) ?? (memQuery !== text ? matchCategory(text, cats, kind) : undefined);
+  return builtin ? { categoryId: builtin.category.id, tagIds: [], source: 'memory' } : null;
 }
 
 /**

@@ -83,6 +83,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   const editing = !!(editTxId || editTransferId);
   const [loaded, setLoaded] = useState(!editing);
   const [editMeta, setEditMeta] = useState<{ source: string; createdAt: number; updatedAt: number } | null>(null);
+  const [linkedLock, setLinkedLock] = useState<string | null>(null);
   const [mode, setMode] = useState<AddMode>(prefill?.mode ?? 'expense');
   const [expr, setExpr] = useState(prefill?.amount ?? '');
   const [catByKind, setCatByKind] = useState<{ expense: string; income: string }>({ expense: '', income: '' });
@@ -241,8 +242,16 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       if (editTxId) {
         const t = await db.transactions.get(editTxId);
         if (!t) { onClose(); return; }
+        const linkedReason = t.stockTradeId
+          ? '股票交易連動'
+          : t.dividendId
+            ? '股利連動'
+            : t.transferId
+              ? '轉帳手續費連動'
+              : null;
+        setLinkedLock(linkedReason);
         setEditMeta({
-          source: t.recurringRuleId ? '週期自動入帳' : t.installmentId ? '分期帳目' : t.invoiceNo ? `電子發票（${t.invoiceNo}）` : t.merchant ? `商家／通知（${t.merchant}）` : '手動記帳',
+          source: linkedReason ?? (t.recurringRuleId ? '週期自動入帳' : t.installmentId ? '分期帳目' : t.invoiceNo ? `電子發票（${t.invoiceNo}）` : t.merchant ? `商家／通知（${t.merchant}）` : '手動記帳'),
           createdAt: t.createdAt,
           updatedAt: t.updatedAt,
         });
@@ -1201,6 +1210,11 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                       <span className="adv-label" style={{ fontSize: '0.8rem', color: 'var(--text-2)' }}>
                         來源：{editMeta.source}
                       </span>
+                      {linkedLock && (
+                        <span className="muted" style={{ fontSize: '0.75rem', color: 'var(--warn, var(--neg))' }}>
+                          此筆為{linkedLock}帳目，金額、幣別、帳戶與收支類型需回原來源修改。
+                        </span>
+                      )}
                       <span className="muted" style={{ fontSize: '0.75rem' }}>
                         建立 {new Date(editMeta.createdAt).toLocaleString('zh-TW')} · 最後修改 {new Date(editMeta.updatedAt).toLocaleString('zh-TW')}
                       </span>

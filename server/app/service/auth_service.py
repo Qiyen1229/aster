@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -85,6 +86,14 @@ class AuthService:
             check_email_domain(req.email)
         except ValueError as e:
             raise ServiceError(422, str(e)) from e
+        # 交易層鎖定：防止併發首次註冊同時讀到 count() == 0 而產生多名管理員
+        dialect = self.db.bind.dialect.name if self.db.bind is not None else ""
+        if dialect == "postgresql":
+            self.db.execute(text("SELECT pg_advisory_xact_lock(1001)"))
+        elif dialect == "sqlite":
+            # SQLite 單寫入鎖：先確保取得保留鎖再 count()
+            self.db.rollback()
+            self.db.execute(text("BEGIN IMMEDIATE"))
         # 全新系統（沒有任何使用者）時，第一位註冊者成為管理員；建議改用環境變數或 CLI 預先建立管理員
         role = ROLE_ADMIN if self.settings.first_user_admin and self.users.count() == 0 else ROLE_USER
         now = utcnow()

@@ -100,38 +100,38 @@ export async function applyFixes(account: Account, f: Fixes): Promise<string[]> 
   const refundCat = catByName(cats, /^其他/, 'income')?.id ?? '';
   const ids: string[] = [];
   const at = (date: string) => new Date(`${date}T12:00:00`).getTime();
-  for (const m of f.missing) {
-    const t = await addTransaction({
-      type: m.row.kind, accountId: account.id, categoryId: m.categoryId, amountMinor: m.row.amountMinor, currency: account.currency,
-      date: m.row.date, ts: at(m.row.date), note: m.row.text || '（對帳補入）', merchant: m.row.text || undefined,
-    });
-    ids.push(t.id);
-  }
-  const otherInc = refundCat;
-  for (const v of f.variances) {
-    const diff = v.diffMinor;
-    if (!diff) continue;
-    // 差額帳目的收支方向＝讓「原帳目＋差額」等於帳單金額：支出原帳目帳單較大→再記一筆支出（手續費），較小→收入（退回）；
-    // 收入原帳目（退款、入帳）則相反
-    const same = diff > 0; // 帳單金額比帳本大
-    const type: 'expense' | 'income' = (v.ledger.kind === 'expense') === same ? 'expense' : 'income';
-    const categoryId = type === 'expense' ? feeCat : otherInc;
-    if (!categoryId) continue;
-    const t = await addTransaction({
-      type, accountId: account.id, categoryId, amountMinor: Math.abs(diff), currency: account.currency,
-      date: v.stmt.date, ts: at(v.stmt.date), note: adjustmentNote(v.ledger.text.trim() || v.stmt.text, v.ledger.id),
-    });
-    ids.push(t.id);
-  }
-  if (f.adjustTo !== null) {
-    const cur = (await db.accounts.get(account.id))?.balanceMinor ?? 0;
-    const delta = f.adjustTo - cur;
-    if (delta !== 0) {
-      const today = new Date();
-      const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      const t = await addTransaction({ type: 'adjust', accountId: account.id, categoryId: 'sys-adjust', amountMinor: delta, currency: account.currency, date, ts: Date.now(), note: '對帳餘額校正' });
+  await db.transaction('rw', db.tables, async () => {
+    for (const m of f.missing) {
+      const t = await addTransaction({
+        type: m.row.kind, accountId: account.id, categoryId: m.categoryId, amountMinor: m.row.amountMinor, currency: account.currency,
+        date: m.row.date, ts: at(m.row.date), note: m.row.text || '（對帳補入）', merchant: m.row.text || undefined,
+      });
       ids.push(t.id);
     }
-  }
+    const otherInc = refundCat;
+    for (const v of f.variances) {
+      const diff = v.diffMinor;
+      if (!diff) continue;
+      const same = diff > 0; // 帳單金額比帳本大
+      const type: 'expense' | 'income' = (v.ledger.kind === 'expense') === same ? 'expense' : 'income';
+      const categoryId = type === 'expense' ? feeCat : otherInc;
+      if (!categoryId) continue;
+      const t = await addTransaction({
+        type, accountId: account.id, categoryId, amountMinor: Math.abs(diff), currency: account.currency,
+        date: v.stmt.date, ts: at(v.stmt.date), note: adjustmentNote(v.ledger.text.trim() || v.stmt.text, v.ledger.id),
+      });
+      ids.push(t.id);
+    }
+    if (f.adjustTo !== null) {
+      const cur = (await db.accounts.get(account.id))?.balanceMinor ?? 0;
+      const delta = f.adjustTo - cur;
+      if (delta !== 0) {
+        const today = new Date();
+        const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const t = await addTransaction({ type: 'adjust', accountId: account.id, categoryId: 'sys-adjust', amountMinor: delta, currency: account.currency, date, ts: Date.now(), note: '對帳餘額校正' });
+        ids.push(t.id);
+      }
+    }
+  });
   return ids;
 }

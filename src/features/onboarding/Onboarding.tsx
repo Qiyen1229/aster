@@ -54,6 +54,9 @@ export default function Onboarding() {
       }
       s.set('onboarded', true);
       await saveSetting('onboarded', true);
+      s.set('seenWhatsNew', __APP_VERSION__);
+      await saveSetting('seenWhatsNew', __APP_VERSION__);
+      try { localStorage.setItem('aster.seenVersion', __APP_VERSION__); } catch { /* 忽略 */ }
       if (!wasOnboarded.current) {
         s.set('gestureTourDone', false);
         await saveSetting('gestureTourDone', false);

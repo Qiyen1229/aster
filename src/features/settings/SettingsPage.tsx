@@ -597,7 +597,25 @@ export default function SettingsPage() {
       {/* 危險操作區 */}
       <Group id="danger">
         {account && (
-          <Row danger label="登出" onClick={async () => { if (await ask('確定登出？帳目已同步到伺服器，在任何裝置重新登入即可繼續使用。')) void auth.logout(); }} />
+          <Row
+            danger
+            label="登出"
+            onClick={async () => {
+              const pending = await db.sync_outbox.count().catch(() => 0);
+              const msg = pending > 0
+                ? `目前尚有 ${pending} 筆資料待同步，登出前會嘗試上傳；若失敗可能導致未同步資料遺失，確定要登出嗎？`
+                : '確定登出？已同步的帳目可在任何裝置重新登入後繼續使用。';
+              if (!(await ask(msg))) return;
+              try {
+                await auth.logout(false);
+              } catch (err) {
+                const detail = err instanceof Error ? err.message : '仍有未同步資料';
+                if (await ask(`${detail}，仍要強制登出嗎？（未上傳的變更將不會同步到伺服器）`)) {
+                  await auth.logout(true);
+                }
+              }
+            }}
+          />
         )}
         {account && <Row danger label="刪除帳號" sub="刪除伺服器上的帳號與全部資料" onClick={() => void deleteAccount()} />}
         <Row danger label="清除所有資料" sub="刪除此裝置上的全部資料，無法復原" onClick={async () => {

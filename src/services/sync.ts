@@ -531,11 +531,16 @@ export function stopSync(): void {
   useSync.setState({ phase: 'off' });
 }
 
-/** 登出前盡量把未上傳的變更送出（最多等 5 秒） */
-export async function flushBeforeLogout(): Promise<void> {
-  if (!started) return;
+/** 登出前盡量把未上傳的變更送出（最多等 5 秒），回傳實際是否清空與剩餘未上傳筆數 */
+export async function flushBeforeLogout(): Promise<{ ok: boolean; remaining: number }> {
+  if (!started) {
+    const remaining = await db.sync_outbox.count().catch(() => 0);
+    return { ok: remaining === 0, remaining };
+  }
   await Promise.race([syncNow(), new Promise((r) => setTimeout(r, 5000))]);
-  stopSync();
+  const remaining = await db.sync_outbox.count().catch(() => 0);
+  if (remaining === 0) stopSync();
+  return { ok: remaining === 0, remaining };
 }
 
 export type { SyncedTable };

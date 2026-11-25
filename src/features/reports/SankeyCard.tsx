@@ -14,6 +14,9 @@ import { chartTheme, useChartTheme } from './chart-theme';
 
 const EChart = lazy(() => import('./EChart'));
 
+const escHtml = (v: unknown) =>
+  String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 export function SankeyCard({ txs, cats, accounts, base, onOpenCategory }: {
   txs: Transaction[];
   cats: Map<string, Category>;
@@ -38,10 +41,11 @@ export function SankeyCard({ txs, cats, accounts, base, onOpenCategory }: {
         trigger: 'item',
         formatter: (p: { dataType: string; data: { label?: string; source?: string; target?: string; value: number } }) => {
           if (p.dataType === 'edge') {
-            const s = model.nodes.find((n) => n.id === p.data.source)?.label ?? '', g = model.nodes.find((n) => n.id === p.data.target)?.label ?? '';
-            return `${s} → ${g}<br/><b>${formatMoney(p.data.value, base)}</b>`;
+            const s = escHtml(model.nodes.find((n) => n.id === p.data.source)?.label ?? '');
+            const g = escHtml(model.nodes.find((n) => n.id === p.data.target)?.label ?? '');
+            return `${s} → ${g}<br/><b>${escHtml(formatMoney(p.data.value, base))}</b>`;
           }
-          return `${p.data.label}<br/><b>${formatMoney(p.data.value, base)}</b>`;
+          return `${escHtml(p.data.label ?? '')}<br/><b>${escHtml(formatMoney(p.data.value, base))}</b>`;
         },
       },
       series: [{

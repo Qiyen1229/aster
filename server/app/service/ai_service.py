@@ -80,27 +80,42 @@ def _transcribe_local(asr_url: str, audio_b64: str, fmt: str) -> str | None:
         if isinstance(data, dict) and isinstance(data.get("text"), str):
             text = data["text"].strip()[:300]
             return text or None
-    except Exception as e:  # noqa: BLE001 — 本地 ASR 任何錯誤皆須安全 fallback 回 Gemini
-        log.warning("本地 ASR 轉錄失敗，將 fallback 回 Gemini：%s", e)
+    except Exception as e:  # noqa: BLE001 — 本地 ASR 任何錯誤皆須安全 fallback 回 Gemini；只記錯誤類型避免洩漏 URL 憑證
+        log.warning("本地 ASR 轉錄失敗（%s），將 fallback 回 Gemini", type(e).__name__)
     return None
 
 
+def _redact_url(raw: str) -> str:
+    """去除 userinfo（帳密）、query（token）與 fragment，只保留協定、主機埠與路徑。"""
+    p = urlparse(raw)
+    host = p.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{p.port}" if p.port else host
+    return f"{p.scheme}://{netloc}{p.path}" if p.scheme and netloc else p.path
+
+
 def _check_asr_health(asr_url: str) -> AsrStatus:
-    """檢查 CLURE_ASR_URL 是否設定及同主機 /health 端點連線狀態（只回傳 URL 與狀態，不揭露任何密鑰）。"""
+    """檢查 CLURE_ASR_URL 是否設定及同主機 /health 端點連線狀態（只回傳去敏網址與狀態，不揭露任何密鑰）。"""
     url = asr_url.strip()
     if not url:
         return AsrStatus(configured=False, url="", health_ok=None, health_detail="未設定 CLURE_ASR_URL")
     parsed = urlparse(url)
-    health_url = f"{parsed.scheme}://{parsed.netloc}/health"
+    host = parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{parsed.port}" if parsed.port else host
+    health_url = f"{parsed.scheme}://{netloc}/health"
+    safe_url = _redact_url(url)
     t0 = time.monotonic()
     try:
         req = urllib.request.Request(health_url, method="GET")
         with urllib.request.urlopen(req, timeout=2) as resp:  # noqa: S310 — 網址來自管理員環境變數 CLURE_ASR_URL
             ok = 200 <= getattr(resp, "status", 200) < 300
         ms = int((time.monotonic() - t0) * 1000)
-        return AsrStatus(configured=True, url=url, health_ok=ok, health_detail="ok" if ok else "異常", health_latency_ms=ms)
+        return AsrStatus(configured=True, url=safe_url, health_ok=ok, health_detail="ok" if ok else "異常", health_latency_ms=ms)
     except Exception:  # noqa: BLE001 — 不回傳內部例外細節，僅顯示連不上
-        return AsrStatus(configured=True, url=url, health_ok=False, health_detail="連不上")
+        return AsrStatus(configured=True, url=safe_url, health_ok=False, health_detail="連不上")
 
 MAX_ENTRIES = 8
 

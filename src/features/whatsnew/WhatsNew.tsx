@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
+import { saveSetting } from '@/db/repo/settings';
 import { useSettings } from '@/stores/settings';
 import { haptic } from '@/services/haptics';
 import { Icon } from '@/ui/Icon';
@@ -62,6 +63,7 @@ export function planWhatsNew(opts: { current: string; onboarded: boolean; read: 
 
 export function WhatsNewHost() {
   const onboarded = useSettings((s) => s.onboarded);
+  const seenWhatsNew = useSettings((s) => s.seenWhatsNew);
   const [state, setState] = useState<{ seen: string; items: WhatsNewItem[] } | null>(null);
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(0);
@@ -94,12 +96,29 @@ export function WhatsNewHost() {
     });
   }, [manualSeq, manualItems]);
 
+  const persistSeen = useCallback((v: string) => {
+    try { localStorage.setItem(KEY, v); } catch { /* 忽略 */ }
+    if (useSettings.getState().seenWhatsNew !== v) {
+      useSettings.getState().set('seenWhatsNew', v);
+      void saveSetting('seenWhatsNew', v);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!onboarded) return;
+    if (!onboarded) {
+      persistSeen(__APP_VERSION__);
+      return;
+    }
     const plan = planWhatsNew({
       current: __APP_VERSION__, onboarded,
-      read: () => { try { return localStorage.getItem(KEY); } catch { return null; } },
-      write: (v) => { try { localStorage.setItem(KEY, v); } catch { /* 忽略 */ } },
+      read: () => {
+        try {
+          return localStorage.getItem(KEY) ?? (seenWhatsNew || null);
+        } catch {
+          return seenWhatsNew || null;
+        }
+      },
+      write: persistSeen,
     });
     if (plan) {
       setState(plan);
@@ -107,7 +126,7 @@ export function WhatsNewHost() {
       const t = setTimeout(() => setOpen(true), 900);
       return () => clearTimeout(t);
     } // 等主畫面出來再跳，不搶開啟的瞬間
-  }, [onboarded]);
+  }, [onboarded, seenWhatsNew, persistSeen]);
 
   // 開啟前保留原本焦點，關閉時歸還；同時鎖定 body 捲動，防止背景內容被滑動
   useEffect(() => {
@@ -172,8 +191,8 @@ export function WhatsNewHost() {
   const close = useCallback(() => {
     setOpen(false);
     useWhatsNewStore.getState().close();
-    try { localStorage.setItem(KEY, __APP_VERSION__); } catch { /* 忽略 */ }
-  }, []);
+    persistSeen(__APP_VERSION__);
+  }, [persistSeen]);
 
   // 鍵盤 Esc 關閉、左右箭頭換頁與 Tab 焦點鎖定
   useEffect(() => {

@@ -130,12 +130,17 @@ export async function addTransaction(input: TxInput, prepared?: Awaited<ReturnTy
   return (await db.transactions.get(targetId)) ?? row;
 }
 
-export async function updateTransaction(id: string, input: TxInput): Promise<Transaction> {
+export async function updateTransaction(id: string, input: TxInput, opts?: { allowLinked?: boolean }): Promise<Transaction> {
   const amounts = await resolveAmounts(input);
   let saved!: Transaction;
   await db.transaction('rw', db.transactions, db.accounts, db.attachments, db.debts, async () => {
     const old = await db.transactions.get(id);
     if (!old) throw new Error('帳目不存在');
+    if (!opts?.allowLinked && (old.stockTradeId || old.dividendId || old.transferId)) {
+      if (input.amountMinor !== old.amountMinor || input.currency !== old.currency || input.accountId !== old.accountId || input.type !== old.type) {
+        throw new Error('此帳目由股票／股利／轉帳自動連動產生，請回原頁面修改金額或帳戶');
+      }
+    }
     // 只覆蓋有給值的欄位，保留週期／分期／股票等來源關聯；專案可被清除
     const row = Object.fromEntries(Object.entries(toRow(id, input, amounts, old.createdAt)).filter(([, v]) => v !== undefined));
     saved = { ...old, ...row, projectId: input.projectId || undefined, fxRateDec: amounts.fxRateDec } as Transaction;

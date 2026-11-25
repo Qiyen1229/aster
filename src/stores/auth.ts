@@ -48,7 +48,7 @@ interface AuthState {
   init: () => Promise<void>;
   login: (identifier: string, password: string, totp?: string) => Promise<AuthUser>;
   register: (username: string, email: string, password: string) => Promise<AuthUser>;
-  logout: () => Promise<void>;
+  logout: (force?: boolean) => Promise<void>;
   changePassword: (current: string, next: string, totp?: string) => Promise<void>;
 }
 
@@ -100,13 +100,17 @@ export const useAuth = create<AuthState>((set, get) => ({
     return user;
   },
 
-  logout: async () => {
-    // 登出前先把尚未上傳的帳目送出
-    await import('@/services/sync').then((m) => m.flushBeforeLogout()).catch(() => undefined);
+  logout: async (force = false) => {
+    // 登出前先把尚未上傳的帳目送出；若仍有未上傳項目且未強制登出，拋錯讓 UI 確認
+    const res = await import('@/services/sync').then((m) => m.flushBeforeLogout()).catch(() => ({ ok: true, remaining: 0 }));
+    if (!force && res.remaining > 0) {
+      throw new Error(`仍有 ${res.remaining} 筆資料尚未同步到伺服器`);
+    }
     await api('/auth/logout', { method: 'POST' }).catch(() => undefined);
     saveSession(null);
+    set({ status: 'anon', user: null });
     // 重新載入，清除記憶體中的資料與設定
-    location.replace('/login');
+    if (typeof location !== 'undefined') location.replace('/login');
   },
 
   changePassword: async (current, next, totp) => {

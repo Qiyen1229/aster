@@ -37,9 +37,15 @@ export function EChart({ option, height = 240, onClick, ariaLabel }: {
   useEffect(() => {
     const t = chartTheme();
     const rawTip = (option as { tooltip?: unknown }).tooltip;
-    const mergedTip = rawTip && typeof rawTip === 'object' && !Array.isArray(rawTip)
-      ? { backgroundColor: t.surface, borderColor: t.sep, textStyle: { color: t.text }, confine: true, ...rawTip }
-      : { backgroundColor: t.surface, borderColor: t.sep, textStyle: { color: t.text }, confine: true };
+    const tipObj = rawTip && typeof rawTip === 'object' && !Array.isArray(rawTip) ? (rawTip as Record<string, unknown>) : null;
+    const mergedTip = {
+      backgroundColor: t.surface,
+      borderColor: t.sep,
+      textStyle: { color: t.text },
+      confine: true,
+      ...(tipObj && 'formatter' in tipObj ? {} : { renderMode: 'richText' }),
+      ...(tipObj ?? {}),
+    };
     chart.current?.setOption({
       animation: !reduced(),
       animationDuration: 700,

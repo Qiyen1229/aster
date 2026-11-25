@@ -1030,3 +1030,51 @@ def test_admin_ai_console_asr_status_and_test(api: Api, monkeypatch) -> None:  #
         assert t2.json()["text"] == "奶茶 50"
     finally:
         get_settings.cache_clear()
+
+
+def test_asr_status_redacts_url_credentials_and_query(api: Api, monkeypatch, caplog) -> None:  # noqa: ANN001
+    import base64
+    from app.service import ai_service
+
+    monkeypatch.setenv("CLURE_ASR_URL", "https://user:secret_pass@asr.example.com:8443/v1/audio/transcriptions?token=super_secret_token#frag")
+    monkeypatch.setenv("CLURE_AI_GEMINI_API_KEY", "test-gem-key")
+    get_settings.cache_clear()
+    try:
+        class _Resp:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self) -> bytes:
+                return b'{"status":"ok"}'
+
+        monkeypatch.setattr(ai_service.urllib.request, "urlopen", lambda *a, **kw: _Resp())
+        api.register("admin_redact")
+        c = api.get("/api/admin/ai/console")
+        assert c.status_code == 200
+        asr_url = c.json()["asr"]["url"]
+        assert asr_url == "https://asr.example.com:8443/v1/audio/transcriptions"
+        assert "secret_pass" not in c.text
+        assert "super_secret_token" not in c.text
+
+        # 本地轉錄失敗時，日誌不洩漏 URL 或 token
+        def fail_open(*a, **kw):  # noqa: ANN001, ANN202
+            raise RuntimeError("https://user:secret_pass@asr.example.com/?token=super_secret_token")
+
+        monkeypatch.setattr(ai_service.urllib.request, "urlopen", fail_open)
+        monkeypatch.setattr(ai_providers, "_post_gemini_inline", lambda *a, **kw: json.dumps({"text": "便當 100"}))
+        with caplog.at_level("WARNING"):
+            r = api.post("/api/ai/transcribe", {
+                "audio_b64": base64.b64encode(b"OggS-fake-audio-bytes-12345678901234567890").decode(),
+                "format": "mp4",
+            })
+        assert r.status_code == 200
+        joined = "\n".join(rec.message for rec in caplog.records)
+        assert "super_secret_token" not in joined
+        assert "secret_pass" not in joined
+    finally:
+        get_settings.cache_clear()
