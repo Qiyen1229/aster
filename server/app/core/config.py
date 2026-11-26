@@ -105,6 +105,15 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = ""  # 空白時自動由 public_url + /api/auth/google/callback 組成
 
+    # 輕量化 Email 自動記帳收信（IMAP 輪詢；僅擷取純文字通知，不存附件）
+    imap_host: str = ""
+    imap_port: int = 993
+    imap_user: str = ""
+    imap_password: str = ""
+    imap_folder: str = "INBOX"
+    imap_poll_seconds: int = Field(120, ge=30, le=3600)
+    imap_target_user: str = ""  # 收進哪位 Aster 使用者（填使用者名稱或 Email；留空則用第一位管理員）
+
     # 資料庫自動備份（只支援 SQLite；PostgreSQL 請用 pg_dump，見 docs/OPERATIONS.md）
     backup_daily: bool = True
     backup_keep: int = Field(7, ge=1, le=90)  # 保留最近幾份

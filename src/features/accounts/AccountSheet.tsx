@@ -61,6 +61,7 @@ function Inner({ onClose, account }: { onClose: () => void; account?: Account })
   const [icon, setIcon] = useState(account?.icon ?? '');
   const [color, setColor] = useState(account?.color ?? CATEGORY_COLORS[6]);
   const [include, setInclude] = useState(account?.includeInNetWorth ?? true);
+  const [last4, setLast4] = useState(account?.last4 ?? '');
   const [limit, setLimit] = useState(account?.credit ? fromMinor(account.credit.limitMinor, account.currency).toString() : '');
   const [statementDay, setStatementDay] = useState(account?.credit?.statementDay ?? 20);
   const [dueDay, setDueDay] = useState(account?.credit?.dueDay ?? 5);
@@ -85,7 +86,7 @@ function Inner({ onClose, account }: { onClose: () => void; account?: Account })
     if (isLiability || initialNegative) initialMinor = -Math.abs(initialMinor);
     const input = {
       name: name.trim(), type, currency, icon: icon || info.icon, color, includeInNetWorth: include, isLiability,
-      initialBalanceMinor: initialMinor, note,
+      initialBalanceMinor: initialMinor, note, last4: last4.replace(/\D/g, '').slice(0, 5) || undefined,
       credit: type === 'credit' ? { limitMinor: toMinor(evaluate(limit || '0') ?? 0, currency), statementDay, dueDay, autoPayAccountId: autoPay || undefined } : undefined,
       loan: type === 'loan' && loanOn ? {
         kind: loanKind, principalMinor: toMinor(evaluate(loanPrincipal || '0') ?? 0, currency), aprDec: loanApr || '0',
@@ -155,6 +156,12 @@ function Inner({ onClose, account }: { onClose: () => void; account?: Account })
           <div className="field"><span className="label" style={{ flex: 1 }}>期初為負數（透支）</span><Switch checked={initialNegative} onChange={setInitialNegative} label="期初為負數" /></div>
         )}
         <div className="field"><span className="label" style={{ flex: 1 }}>計入淨資產</span><Switch checked={include} onChange={setInclude} label="計入淨資產" /></div>
+        {(type === 'bank' || type === 'epay' || type === 'stored' || type === 'credit') && (
+          <div className="field">
+            <label htmlFor="acc-last4">末四碼（選填）</label>
+            <input id="acc-last4" inputMode="numeric" maxLength={5} value={last4} onChange={(e) => setLast4(e.target.value.replace(/\D/g, '').slice(0, 5))} placeholder="供自動轉帳比對，如 7068" />
+          </div>
+        )}
       </div>
 
       <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

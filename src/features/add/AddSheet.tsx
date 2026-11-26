@@ -516,7 +516,14 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       } else useUI.getState().showSnack({ text: '這則通知已入帳，本次未重複新增' });
       if (account) settings.set('lastAccountId', account.id);
       if (prefill?.inboxId && !editing) {
-        void import('@/services/inbox').then((m) => m.finishInboxItem(prefill.inboxId!, { card: prefill.inboxCard, accountId: account?.id })).catch(() => useUI.getState().showSnack({ text: '帳目已儲存，通知尚未清除；重新整理後可重試，不會重複入帳' }));
+        void import('@/services/inbox').then((m) => m.finishInboxItem(prefill.inboxId!, {
+          card: prefill.inboxCard,
+          accountId: account?.id,
+          rawKeyword: prefill.merchant || prefill.note,
+          note: note.trim(),
+          categoryId,
+          kind: mode === 'income' ? 'income' : mode === 'expense' ? 'expense' : undefined,
+        })).catch(() => useUI.getState().showSnack({ text: '帳目已儲存，通知尚未清除；重新整理後可重試，不會重複入帳' }));
       }
       if (!editing && settings.continuousAdd && !prefill?.inboxId) {
         // 再記一筆：保留分類／帳戶／日期，清空金額與備註

@@ -50,14 +50,18 @@ _ACTUAL_TX_RE = re.compile(
 )
 
 
+_NOISE_EXEMPT_RE = re.compile(r"(?:免|無需|不需|不須)(?:輸入|使用)?(?:驗證碼|動態密碼|安全碼|驗證密碼|OTP)", re.IGNORECASE)
+
+
 def is_noise_notification(body: HookItem) -> bool:
     """過濾銀行與行動支付 App 的非交易推播（OTP 驗證碼、登入通知、行銷廣告、一般 LINE 聊天）"""
-    if body.source != "notify" or body.amount:
+    if body.source not in ("notify", "email") or body.amount:
         return False
     combined = f"{body.text} {body.merchant}".strip()
     if not combined:
         return True
-    if _HARD_NOISE_RE.search(combined):
+    hard_check = _NOISE_EXEMPT_RE.sub("", combined)
+    if _HARD_NOISE_RE.search(hard_check):
         return True
     if _PROMO_NOISE_RE.search(combined) and not _ACTUAL_TX_RE.search(combined):
         return True

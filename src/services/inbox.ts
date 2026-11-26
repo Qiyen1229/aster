@@ -20,7 +20,7 @@ import { db } from '@/db/schema';
 import { useSettings } from '@/stores/settings';
 import { notifyUser } from './notify';
 import { AUTH_ENABLED, useAuth } from '@/stores/auth';
-import { suggestAccount } from './autocat';
+import { suggestAccount, learnImplicitMapping } from './autocat';
 import { bookDrafts, fallbackAccount, parseContext, resolveDraft, type ResolvedDraft } from './quickentry';
 
 export interface InboxRaw {
@@ -335,6 +335,79 @@ export function cardAccount(card: string, ctx: Ctx, cardMap: Record<string, stri
   return findAccounts(card, ctx.accounts)[0]?.id;
 }
 
+/**
+ * 多金額／點數折抵／雙幣別的規則優先抽取：
+ * 1. 先抓明確的「實付／實際付款／折抵後／扣點後」金額
+ * 2. 若同時出現外幣與「約／折合新台幣 X 元」，優先取台幣實付金額
+ * 3. 若有多個金額或外幣卻沒有明確實付字眼，標記 ambiguous=true 交由 AI 結構化抽取
+ */
+export function extractPreferredNoticeAmount(text: string): { amount?: number; currency?: string; ambiguous: boolean } {
+  const norm = toHalfWidth(text.normalize('NFKC'));
+  const netMatch = norm.match(/(?:實付|實際付款|實際扣款|實際支付|折抵後|扣點後|應付金額)\s*[:：]?\s*(?:NT\$|NTD|TWD|新[台臺]幣|\$)?\s*([\d,]+(?:\.\d+)?)/i);
+  if (netMatch) {
+    const val = Number(netMatch[1].replace(/,/g, ''));
+    if (val > 0) return { amount: val, currency: 'TWD', ambiguous: false };
+  }
+  const hasFx = /\b(?:USD|JPY|EUR|HKD|KRW|GBP|SGD|CNY|RMB)\b/i.test(norm);
+  if (hasFx) {
+    const twdMatch = norm.match(/(?:約|折合|換算|計)\s*(?:NT\$|NTD|TWD|(?:新)?[台臺]幣)\s*([\d,]+(?:\.\d+)?)/i);
+    if (twdMatch) {
+      const val = Number(twdMatch[1].replace(/,/g, ''));
+      if (val > 0) return { amount: val, currency: 'TWD', ambiguous: false };
+    }
+    return { ambiguous: true };
+  }
+  const hasDiscountWords = /折抵|點數|紅利|折扣|抵用|coupon|點/i.test(norm);
+  const nums = norm.match(/\d+(?:,\d{3})*(?:\.\d+)?/g) ?? [];
+  if (hasDiscountWords && nums.length >= 2) return { ambiguous: true };
+  return { ambiguous: false };
+}
+
+function matchAccountByLast4(text: string, accounts: { id: string; name: string; last4?: string; archived?: number; deletedAt?: number }[], excludeId?: string) {
+  const norm = toHalfWidth(text.normalize('NFKC'));
+  for (const m of norm.matchAll(/(?:帳號|帳戶|尾數|末碼|後四碼|末四碼|轉出至|轉入)\s*[:：]?\s*[*＊Xx]*(\d{4,5})|[*＊Xx]+(\d{4,5})/g)) {
+    const digits = m[1] || m[2];
+    if (!digits) continue;
+    const hit = accounts.find((a) => !a.archived && !a.deletedAt && a.id !== excludeId && (
+      (a.last4 && (a.last4 === digits || digits.endsWith(a.last4) || a.last4.endsWith(digits)))
+      || a.name.includes(digits)
+    ));
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+function detectTopologyTransfer(
+  text: string,
+  accounts: { id: string; name: string; type: string; last4?: string; archived?: number; deletedAt?: number; credit?: { autoPayAccountId?: string } }[],
+  sourceAccId?: string,
+): { fromId?: string; toId: string } | null {
+  const live = accounts.filter((a) => !a.archived && !a.deletedAt);
+  // 1. 自動加值／儲值：銀行／信用卡 → 儲值卡／電子票證
+  if (/(?:悠遊卡|一卡通|icash|愛金卡|電子票證)?自動加值|自動儲值|儲值成功/i.test(text) && !/儲值金不足/.test(text)) {
+    const stored = live.find((a) => (a.type === 'stored' || a.type === 'epay') && /悠遊|一卡通|icash|愛金/i.test(a.name) && text.includes(a.name.slice(0, 2)))
+      ?? live.find((a) => a.type === 'stored');
+    if (stored && stored.id !== sourceAccId) return { fromId: sourceAccId, toId: stored.id };
+  }
+  // 2. 扣繳卡費／繳信用卡費：銀行 → 信用卡
+  if (/(?:扣繳|繳納|自動扣款|代扣).{0,10}(?:卡費|信用卡)|信用卡.{0,8}(?:繳款|扣繳|入帳)成功/i.test(text)) {
+    const card = live.find((a) => a.type === 'credit' && (text.includes(a.name) || a.credit?.autoPayAccountId === sourceAccId))
+      ?? live.find((a) => a.type === 'credit');
+    if (card && card.id !== sourceAccId) {
+      const bankId = sourceAccId && live.find((a) => a.id === sourceAccId)?.type !== 'credit'
+        ? sourceAccId
+        : card.credit?.autoPayAccountId ?? live.find((a) => a.type === 'bank')?.id;
+      if (bankId && bankId !== card.id) return { fromId: bankId, toId: card.id };
+    }
+  }
+  // 3. 轉出至自己其他帳號末四碼
+  if (/轉出|匯出|轉帳/.test(text)) {
+    const dest = matchAccountByLast4(text, live, sourceAccId);
+    if (dest) return { fromId: sourceAccId, toId: dest.id };
+  }
+  return null;
+}
+
 /** 把一則收件匣項目解析成帳目草稿 */
 export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): Promise<ResolvedDraft[]> {
   const { cardMap, defaultAccountId } = useSettings.getState().inbox;
@@ -357,20 +430,24 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
   } else {
     drafts = parseEntries(it.text, { ...ctx, today: date });
     if (!drafts.length) return [];
-    // 通知／簡訊：多個金額時優先取真實交易金額（避開餘額、額度、手續費），並保留 parseEntries 辨識出的 income（如入帳、薪資、轉入）
+    // 通知／簡訊／Email：多個金額時優先取真實交易金額（避開餘額、額度、手續費），並保留轉出／拓樸轉帳優先於入帳
     if (it.source === 'notify' || it.source === 'sms' || it.source === 'email') {
       const merchant = it.merchant || noticeMerchant(it.text);
       const isBalanceOrFee = (d: DraftEntry) => /(?:餘額|結餘|可用額度|信用額度|手續費|(?:帳號|卡號)?(?:後|末)四碼)/.test(d.raw);
+      const prefAmt = extractPreferredNoticeAmount(it.text);
       const primary = drafts.find((d) => !isBalanceOrFee(d) && d.amount > 0)
         ?? drafts.find((d) => d.amount > 0)
         ?? drafts[0];
+      const chosenAmount = prefAmt.amount ?? primary.amount;
+      const chosenCurrency = prefAmt.currency ?? primary.currency;
       // 排除「回饋將於次月入帳」「退款須知」等行銷／說明文字，避免把消費通知誤判為收入
       const strippedForIncome = it.text
         .replace(/(?:點數|回饋|紅利|LINE\s*POINTS)[^。\n]{0,16}入帳/gi, '')
         .replace(/(?:退款|退貨)(?:須知|說明|規定|辦法|政策)/g, '');
-      const isIncome = primary.kind === 'income'
-        || /退款|退貨|退刷|入帳|進帳|跨行轉入|薪資|薪水|發薪/.test(strippedForIncome)
-        || (/(?:存入|轉入)/.test(strippedForIncome) && !/轉出|扣款|刷卡|消費|付款|提款/.test(strippedForIncome));
+      // 優先排除出金語意（「您的轉帳已入帳至對方帳戶」「轉出」「扣款」「自動加值」）避免被「入帳」字眼反判為收入
+      const isOutflow = /轉出|匯出|扣款|扣繳|自動加值|儲值|提款|提領|刷卡|消費|付款|已入帳至對方|入帳至對方|轉入他行/.test(strippedForIncome);
+      const isExplicitIncome = /退款|退貨|退刷|跨行轉入|薪資|薪水|發薪/.test(strippedForIncome)
+        || (!isOutflow && (/入帳|進帳|存入|轉入/.test(strippedForIncome) || primary.kind === 'income'));
       const fallbackNote = primary.note
         .replace(/【[^】]{1,24}】/g, ' ')
         .replace(/(?:消費|刷卡|交易|付款|扣款|支付)通知\s*[:：]?/g, ' ')
@@ -380,8 +457,20 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 40);
-      const resolvedKind = primary.kind === 'transfer' && primary.toAccountId ? 'transfer' : isIncome ? 'income' : 'expense';
-      drafts = [{ ...primary, note: merchant || fallbackNote, kind: resolvedKind }];
+      const topo = detectTopologyTransfer(it.text, ctx.accounts, byCard ?? primary.accountId);
+      const resolvedKind = (primary.kind === 'transfer' && primary.toAccountId) || topo
+        ? 'transfer'
+        : isExplicitIncome
+          ? 'income'
+          : 'expense';
+      drafts = [{
+        ...primary,
+        amount: chosenAmount,
+        currency: chosenCurrency,
+        note: merchant || fallbackNote,
+        kind: resolvedKind,
+        ...(topo ? { accountId: topo.fromId ?? primary.accountId, toAccountId: topo.toId } : {}),
+      }];
     }
   }
   const out: ResolvedDraft[] = [];
@@ -521,13 +610,27 @@ export async function loadInboxReadOnly(): Promise<InboxEntry[]> {
 /** 執行過收件匣操作後清掉唯讀快取，下次預覽重新抓 */
 export function invalidateInboxReadOnly(): void { roCache = null; }
 
-/** 「合併」：這則其實是已經記過的那筆，只補上缺少的商家，然後從收件匣移除（不新增帳目） */
+/** 「合併」：這則其實是已經記過的那筆，進行多訊源拼圖補全（補商家、卡別或明細進備註），然後從收件匣移除 */
 export async function mergeDuplicate(e: InboxEntry): Promise<boolean> {
   const id = e.dup?.from === 'ledger' ? e.dup.txId : e.dup?.inboxId ? `inbox-${e.dup.inboxId}-0` : undefined;
   const t = id ? await db.transactions.get(id) : undefined;
   if (!t || t.deletedAt) throw new Error('請先將被比對的那筆通知入帳，再確認合併');
-  const merchant = e.item.merchant || e.drafts[0]?.note;
-  if (!t.merchant && merchant) await db.transactions.update(t.id, { merchant: merchant.slice(0, 60), updatedAt: Date.now() });
+  const merchant = (e.item.merchant || e.drafts[0]?.note || '').trim();
+  const patch: Partial<typeof t> = {};
+  if (merchant && (!t.merchant || /^(?:ECPAY|NEWEBPAY|LINEPAY|APPLE\.COM)/i.test(t.merchant))) {
+    patch.merchant = merchant.slice(0, 60);
+  }
+  const extraParts: string[] = [];
+  if (merchant && (!t.note || !t.note.includes(merchant))) extraParts.push(merchant);
+  if (e.item.card && !isLineChat(e.item.card) && (!t.note || !t.note.includes(e.item.card))) extraParts.push(e.item.card);
+  if (extraParts.length) {
+    const joined = extraParts.join(' · ');
+    patch.note = (t.note ? `${t.note} · ${joined}` : joined).slice(0, 200);
+  }
+  if (Object.keys(patch).length) {
+    patch.updatedAt = Date.now();
+    await db.transactions.update(t.id, patch);
+  }
   await ackInbox([e.item.id]);
   learnCard(e.item.card, t.accountId);
   invalidateInboxReadOnly();
@@ -585,10 +688,26 @@ export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplic
   };
 }
 
-/** 在記帳面板手動記好後呼叫：從收件匣移除並學習卡片 */
-export async function finishInboxItem(id: string, opts: { card?: string; accountId?: string }) {
+/** 在記帳面板手動記好後呼叫：從收件匣移除、學習卡片，並隱式學習商家別名與分類規則 */
+export async function finishInboxItem(id: string, opts: {
+  card?: string;
+  accountId?: string;
+  rawKeyword?: string;
+  note?: string;
+  categoryId?: string;
+  kind?: 'expense' | 'income';
+}) {
   await ackInbox([Number(id)]);
   learnCard(opts.card, opts.accountId);
+  if (opts.rawKeyword && (opts.note || opts.categoryId)) {
+    await learnImplicitMapping({
+      rawKeyword: opts.rawKeyword,
+      note: opts.note,
+      categoryId: opts.categoryId,
+      kind: opts.kind,
+      accountId: opts.accountId,
+    }).catch(() => undefined);
+  }
 }
 
 /** 規則試跑預覽：輸入測試通知文字，回傳會被黑名單擋掉、或自動記成的名稱／分類／帳戶 */
@@ -623,8 +742,9 @@ async function enrichAmbiguousInboxWithAi(entries: InboxEntry[]): Promise<void> 
   if (!ai?.aiEnabledLocally()) return;
   const targets = entries.filter((e) =>
     !e.drafts.length
+    || extractPreferredNoticeAmount(e.item.text).ambiguous
     || e.drafts.some((d) => d.kind !== 'transfer' && d.categorySource === 'default' && (d.categoryId === 'exp-other_exp' || d.categoryId === 'inc-other_inc')),
-  ).slice(0, 5);
+  ).slice(0, 8);
   if (!targets.length) return;
   const fallback = await fallbackAccount();
   for (const e of targets) {

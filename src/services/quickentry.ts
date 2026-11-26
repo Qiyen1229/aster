@@ -43,7 +43,11 @@ export async function parseContext(today = todayKey()) {
   const [accounts, cats] = await Promise.all([db.accounts.orderBy('sort').toArray(), db.categories.toArray()]);
   return {
     today,
-    accounts: accounts.filter(usable).map((a) => ({ id: a.id, name: a.name, type: a.type })),
+    accounts: accounts.filter(usable).map((a) => ({
+      id: a.id, name: a.name, type: a.type,
+      ...(a.last4 ? { last4: a.last4 } : {}),
+      ...(a.credit ? { credit: a.credit } : {}),
+    })),
     categories: cats.filter((c) => !c.archived && !c.deletedAt && !c.system).map((c) => ({ id: c.id, name: c.name, kind: c.kind, parentId: c.parentId })),
   };
 }

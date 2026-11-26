@@ -114,6 +114,53 @@ export async function deleteRule(id: string): Promise<void> {
 }
 
 /**
+ * 隱式學習（Implicit Learning）：使用者在收件匣編輯通知並入帳時，
+ * 自動將「原始商家關鍵字 → 使用者改名／指定分類」沉澱為自動分類規則（已存在同關鍵字則更新）。
+ */
+export async function learnImplicitMapping(opts: {
+  rawKeyword?: string;
+  note?: string;
+  categoryId?: string;
+  kind?: CategoryKind;
+  accountId?: string;
+}): Promise<boolean> {
+  const kw = (opts.rawKeyword ?? '').trim().slice(0, 40);
+  if (kw.length < 2) return false;
+  const kind: CategoryKind = opts.kind === 'income' ? 'income' : 'expense';
+  const note = (opts.note ?? '').trim().slice(0, 24);
+  const renameNote = note && note.toLowerCase() !== kw.toLowerCase() ? note : undefined;
+  const validCat = opts.categoryId && opts.categoryId !== 'exp-other_exp' && opts.categoryId !== 'inc-other_inc'
+    ? opts.categoryId
+    : '';
+  if (!renameNote && !validCat) return false;
+
+  const existing = (await db.rules.toArray()).find(
+    (r) => !r.deletedAt && r.kind === kind && r.keyword.trim().toLowerCase() === kw.toLowerCase(),
+  );
+  if (existing) {
+    await saveRule({
+      ...existing,
+      categoryId: validCat || existing.categoryId,
+      renameNote: renameNote ?? existing.renameNote,
+      accountId: opts.accountId ?? existing.accountId,
+    });
+    return true;
+  }
+  await saveRule({
+    keyword: kw,
+    match: 'contains',
+    kind,
+    categoryId: validCat,
+    tagIds: [],
+    accountId: opts.accountId,
+    renameNote,
+    enabled: true,
+    priority: 50,
+  });
+  return true;
+}
+
+/**
  * 從歷史帳目找出「適合建立規則」的文字：同一個文字出現 3 次以上、而且幾乎都記在同一個分類，尚未有規則涵蓋。
  */
 export async function ruleCandidates(limit = 8): Promise<{ text: string; categoryId: string; kind: CategoryKind; count: number }[]> {

@@ -61,6 +61,8 @@ export interface Account extends BaseRow {
   archived: 0 | 1;
   groupId?: string;
   note?: string;
+  /** 帳號／卡號末四碼（可填 4–5 碼，供自動記帳辨識「轉出到自己其他帳戶」） */
+  last4?: string;
 }
 
 export type CategoryKind = 'expense' | 'income';

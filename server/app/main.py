@@ -126,9 +126,10 @@ async def lifespan(_: FastAPI):
     tasks: list[asyncio.Task] = []
     if get_settings().env != "test":
         from app.service.backup_service import backup_loop
+        from app.service.email_inbox import email_inbox_loop
         from app.service.push_service import push_loop
 
-        tasks = [asyncio.create_task(push_loop()), asyncio.create_task(backup_loop())]
+        tasks = [asyncio.create_task(push_loop()), asyncio.create_task(backup_loop()), asyncio.create_task(email_inbox_loop())]
     yield
     for t in tasks:
         t.cancel()
@@ -144,7 +145,7 @@ def _hook_payload(request: Request, body: dict) -> dict:
 def create_app() -> FastAPI:
     s = get_settings()
     app = FastAPI(
-        title="Aster API", version="4.1.60", lifespan=lifespan,
+        title="Aster API", version="4.1.61", lifespan=lifespan,
         docs_url="/api/docs" if s.env != "production" else None, redoc_url=None, openapi_url="/api/openapi.json" if s.env != "production" else None,
     )
 
