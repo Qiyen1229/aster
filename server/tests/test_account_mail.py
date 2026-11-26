@@ -15,7 +15,7 @@ def outbox(monkeypatch) -> list[tuple[str, str, str]]:  # noqa: ANN001
     sent: list[tuple[str, str, str]] = []
     monkeypatch.setattr(mailer, "mail_configured", lambda: True)
     monkeypatch.setattr("app.service.auth_service.mail_configured", lambda: True)
-    monkeypatch.setattr("app.service.auth_service.send_mail", lambda to, subject, body: sent.append((to, subject, body)))
+    monkeypatch.setattr("app.service.auth_service.send_mail", lambda to, subject, body, **_kw: sent.append((to, subject, body)))
     return sent
 
 

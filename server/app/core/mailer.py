@@ -17,8 +17,8 @@ def mail_configured() -> bool:
     return bool(s.smtp_host and (s.smtp_from or s.smtp_user))
 
 
-def send_mail(to: str, subject: str, body: str) -> None:
-    """寄出純文字信；失敗丟出 MailError（訊息可給管理員看，不含密碼）。"""
+def send_mail(to: str, subject: str, body: str, html: str | None = None) -> None:
+    """寄出純文字信（可附帶 HTML 版型）；失敗丟出 MailError（訊息可給管理員看，不含密碼）。"""
     s = get_settings()
     if not mail_configured():
         raise MailError("尚未設定寄信（CLURE_SMTP_HOST、CLURE_SMTP_FROM）")
@@ -27,6 +27,8 @@ def send_mail(to: str, subject: str, body: str) -> None:
     msg["From"] = formataddr(("Aster 記帳", s.smtp_from or s.smtp_user))
     msg["To"] = to
     msg.set_content(body)
+    if html:
+        msg.add_alternative(html, subtype="html")
     try:
         ctx = ssl.create_default_context()
         if s.smtp_security == "ssl":

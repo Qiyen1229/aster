@@ -50,7 +50,7 @@ def test_google_register_needs_profile_setup_and_email_verify_code(api, monkeypa
     monkeypatch.setattr(s, "smtp_password", "app-pw")
     sent = {}
 
-    def fake_send_mail(*, to: str, subject: str, body: str) -> None:
+    def fake_send_mail(*, to: str, subject: str, body: str, **_kw: object) -> None:
         sent["to"] = to
         sent["body"] = body
 

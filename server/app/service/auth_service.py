@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import logging
 import re
 import secrets
@@ -97,12 +98,27 @@ class AuthService:
         if self.users.get_by_email(email):
             raise ServiceError(409, "此 Email 已被使用")
         code = f"{secrets.randbelow(1_000_000):06d}"
+        body = (
+            "您好：\n\n"
+            "感謝您註冊 Aster 記帳。請於註冊頁面輸入以下 6 位數驗證碼以完成信箱驗證：\n\n"
+            f"{code}\n\n"
+            "此驗證碼於 10 分鐘內有效，請勿轉傳或提供給他人。\n"
+            "若您並未進行註冊操作，請忽略本信件。\n\n"
+            "——\n此為系統自動發送之通知信件，請勿直接回覆。"
+        )
+        email_html = self._render_email_html(
+            eyebrow="帳號註冊驗證",
+            heading="請輸入您的註冊驗證碼",
+            greeting="您好：",
+            lead="感謝您註冊 <strong>Aster 記帳</strong>。請於註冊頁面輸入以下 6 位數驗證碼以完成信箱驗證：",
+            code=code,
+            notes=[
+                "此驗證碼於 <strong>10 分鐘</strong> 內有效，請勿轉傳或提供給他人。",
+                "若您並未進行註冊操作，請直接忽略本信件。",
+            ],
+        )
         try:
-            send_mail(
-                to=email,
-                subject="Aster 記帳：註冊信箱驗證碼",
-                body=f"你的註冊驗證碼為：{code}\n\n此驗證碼於 10 分鐘內有效。若非本人操作，請忽略這封信。",
-            )
+            send_mail(to=email, subject="【Aster 記帳】註冊信箱驗證碼", body=body, html=email_html)
         except MailError as e:
             log.warning("寄送註冊驗證碼失敗 email=%s err=%s", mask_email(email), e)
             raise ServiceError(502, "驗證碼寄送失敗，請稍後再試") from e
@@ -474,16 +490,94 @@ class AuthService:
         self.audit.record("auth.reset_request", client, user_id=user.id)
         self.db.commit()
         link = f"{self.settings.public_url.rstrip('/')}/reset-password?token={token}"
+        mins = self.settings.reset_token_minutes
         body = (
-            f"{user.username} 你好，\n\n有人（希望是你）要求重設 Aster 記帳的密碼。\n"
-            f"請在 {self.settings.reset_token_minutes} 分鐘內點下面的連結設定新密碼：\n\n{link}\n\n"
-            "連結只能使用一次。如果不是你要求的，請忽略這封信，你的密碼不會改變。\n"
+            f"{user.username} 您好：\n\n"
+            "我們收到您（或有人使用此帳號資訊）提出的密碼重設申請。請於瀏覽器開啟以下連結設定新的登入密碼：\n\n"
+            f"{link}\n\n"
+            f"安全提醒：\n"
+            f"• 此重設連結將於 {mins} 分鐘後失效，且僅限使用一次。\n"
+            "• 若您並未提出此申請，請直接忽略本信件，您的帳號與密碼將不會受到任何變更。\n\n"
+            "——\n此為系統自動發送之通知信件，請勿直接回覆。"
+        )
+        email_html = self._render_email_html(
+            eyebrow="帳號安全通知",
+            heading="重設您的帳號密碼",
+            greeting=f"{html.escape(user.username)} 您好：",
+            lead="我們收到您（或有人使用此帳號資訊）提出的密碼重設申請。請點擊下方按鈕以設定新的登入密碼：",
+            cta_label="重設密碼",
+            cta_url=link,
+            notes=[
+                f"此重設連結將於 <strong>{mins} 分鐘</strong> 後失效，且<strong>僅限使用一次</strong>。",
+                "若您並未提出此申請，請直接忽略本信件，您的帳號與密碼將不會受到任何變更。",
+            ],
+            fallback_url=link,
         )
         try:
-            send_mail(user.email, "Aster 記帳：重設密碼", body)
+            send_mail(user.email, "【Aster 記帳】重設您的帳號密碼", body, html=email_html)
         except MailError as e:
             log.warning("重設密碼信寄送失敗 user_id=%s：%s", user.id, e)
             raise ServiceError(502, "寄信失敗，請稍後再試或聯絡管理員") from e
+
+    @staticmethod
+    def _render_email_html(
+        *,
+        eyebrow: str,
+        heading: str,
+        greeting: str,
+        lead: str,
+        notes: list[str],
+        cta_label: str | None = None,
+        cta_url: str | None = None,
+        fallback_url: str | None = None,
+        code: str | None = None,
+    ) -> str:
+        cta_block = ""
+        if cta_label and cta_url:
+            safe_url = html.escape(cta_url, quote=True)
+            cta_block = (
+                '<div style="margin:24px 0;text-align:center;">'
+                f'<a href="{safe_url}" style="display:inline-block;padding:12px 28px;border-radius:10px;'
+                'background-color:#d4a853;color:#141414;font-weight:700;font-size:15px;'
+                f'text-decoration:none;letter-spacing:0.5px;">{html.escape(cta_label)}</a>'
+                "</div>"
+            )
+        code_block = ""
+        if code:
+            code_block = (
+                '<div style="margin:22px 0;padding:16px;border-radius:10px;background-color:#f6f5f2;'
+                'border:1px solid #e6e2d8;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;'
+                f'font-size:28px;font-weight:700;letter-spacing:6px;color:#18181b;">{html.escape(code)}</div>'
+            )
+        fallback_block = ""
+        if fallback_url:
+            safe_fb = html.escape(fallback_url, quote=True)
+            fallback_block = (
+                '<p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#71717a;word-break:break-all;">'
+                "如果上方按鈕無法點擊，請複製以下網址並貼至瀏覽器開啟：<br>"
+                f'<a href="{safe_fb}" style="color:#8a6a24;">{safe_fb}</a>'
+                "</p>"
+            )
+        note_items = "".join(f'<li style="margin:4px 0;">{n}</li>' for n in notes)
+        return (
+            "<!doctype html><html><body style=\"margin:0;padding:24px 12px;background-color:#f4f4f5;"
+            "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Noto Sans TC',sans-serif;color:#18181b;\">"
+            '<div style="max-width:520px;margin:0 auto;background-color:#ffffff;border-radius:14px;'
+            'border:1px solid #e4e4e7;padding:28px 24px;">'
+            f'<div style="font-size:12px;font-weight:600;color:#8a6a24;letter-spacing:0.6px;">Aster 記帳 · {html.escape(eyebrow)}</div>'
+            f'<h1 style="margin:8px 0 18px;font-size:20px;line-height:1.35;color:#18181b;">{html.escape(heading)}</h1>'
+            f'<p style="margin:0 0 12px;font-size:15px;line-height:1.7;color:#27272a;">{greeting}</p>'
+            f'<p style="margin:0 0 12px;font-size:15px;line-height:1.7;color:#27272a;">{lead}</p>'
+            f"{cta_block}{code_block}"
+            '<div style="margin:18px 0 0;padding:12px 14px;border-radius:10px;background-color:#fafafa;border:1px solid #f0f0f2;">'
+            '<div style="font-size:12px;font-weight:700;color:#52525b;margin-bottom:4px;">安全提醒</div>'
+            f'<ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.6;color:#52525b;">{note_items}</ul>'
+            "</div>"
+            f"{fallback_block}"
+            '<hr style="border:none;border-top:1px solid #f0f0f2;margin:22px 0 14px;">'
+            '<p style="margin:0;font-size:12px;color:#a1a1aa;">此為系統自動發送之通知信件，請勿直接回覆。</p>'
+            "</div></body></html>"
+        )
 
     def reset_password(self, req: ResetPasswordRequest, client: ClientInfo) -> None:
         now = utcnow()

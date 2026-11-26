@@ -106,6 +106,14 @@ export default function AuthGate() {
     })();
   }, [signedIn, userId, data.phase]);
 
+  if (location.pathname === '/reset-password') {
+    return (
+      <Suspense fallback={<Splash />}>
+        <ResetPasswordPage />
+      </Suspense>
+    );
+  }
+
   if (AUTH_ENABLED && status === 'loading') return <Splash />;
 
   if (AUTH_ENABLED && status === 'unreachable') {
