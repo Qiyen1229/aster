@@ -14,6 +14,7 @@ import { TravelScopeBanner } from '@/app/TravelScopeBanner';
 import { useSettings } from '@/stores/settings';
 import { Icon } from '@/ui/Icon';
 import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
+import { CustomDateInput } from '@/ui/form';
 import { LedgerRow } from './LedgerRow';
 import { FilterSheet, filterCount } from './FilterSheet';
 import { categoryChildren, matchFilter } from '@/db/repo/plan';
@@ -146,9 +147,9 @@ export default function LedgerPage() {
 
       {unit === 'custom' ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '12px 0' }}>
-          <input type="date" className="input" style={{ flex: 1, minWidth: 0 }} value={custom.start} max={custom.end} onChange={(e) => setCustom((c) => ({ ...c, start: e.target.value }))} aria-label="開始日期" />
+          <CustomDateInput className="input" style={{ flex: 1, minWidth: 0 }} title="開始日期" aria-label="開始日期" value={custom.start} max={custom.end} onChange={(v) => setCustom((c) => ({ ...c, start: v }))} />
           <span className="muted">–</span>
-          <input type="date" className="input" style={{ flex: 1, minWidth: 0 }} value={custom.end} min={custom.start} onChange={(e) => setCustom((c) => ({ ...c, end: e.target.value }))} aria-label="結束日期" />
+          <CustomDateInput className="input" style={{ flex: 1, minWidth: 0 }} title="結束日期" aria-label="結束日期" value={custom.end} min={custom.start} onChange={(v) => setCustom((c) => ({ ...c, end: v }))} />
         </div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '10px 0' }}>

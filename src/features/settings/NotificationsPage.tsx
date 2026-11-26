@@ -10,7 +10,7 @@ import { checkNotificationSupport, isIOS, notificationSupport, notify, requestPe
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
 import { Switch } from '@/ui/controls';
-import { DateField } from '@/ui/form';
+import { CustomSelect, DateField } from '@/ui/form';
 import { NotifTabs } from './NotifTabs';
 import { Icon } from '@/ui/Icon';
 import type { NotifySettings } from '@/db/repo/settings';
@@ -115,14 +115,14 @@ export default function NotificationsPage() {
         {row('每日記帳提醒', 'daily', '設定時間後若當天沒有記帳')}
         {n.daily && <DateField label="提醒時間" type="time" value={n.dailyTime} onChange={(v) => set({ dailyTime: v || '21:00' })} />}
         {row('信用卡繳款提醒', 'cardDue')}
-        {n.cardDue && <div className="field"><span className="label">提前天數</span><select value={n.cardDueDays} onChange={(e) => set({ cardDueDays: Number(e.target.value) })}>{[1, 2, 3, 5, 7].map((d) => <option key={d} value={d}>{d} 天</option>)}</select></div>}
+        {n.cardDue && <div className="field"><span className="label">提前天數</span><CustomSelect title="提前天數" value={String(n.cardDueDays)} onChange={(val) => set({ cardDueDays: Number(val) })} options={[1, 2, 3, 5, 7].map((d) => ({ value: String(d), label: `${d} 天` }))} /></div>}
         {row('預算警示', 'budget')}
         {row('訂閱與週期帳目', 'subscription')}
         {row('到價提醒', 'priceAlert')}
         {row('每週摘要', 'weekly')}
         {row('每月月報', 'monthly')}
         {row('備份提醒', 'backup')}
-        {n.backup && <div className="field"><span className="label">每隔</span><select value={n.backupDays} onChange={(e) => set({ backupDays: Number(e.target.value) })}>{[7, 14, 30, 60].map((d) => <option key={d} value={d}>{d === 7 ? '每週（7 天）' : `${d} 天`}</option>)}</select></div>}
+        {n.backup && <div className="field"><span className="label">每隔</span><CustomSelect title="備份提醒間隔" value={String(n.backupDays)} onChange={(val) => set({ backupDays: Number(val) })} options={[7, 14, 30, 60].map((d) => ({ value: String(d), label: d === 7 ? '每週（7 天）' : `${d} 天` }))} /></div>}
       </div>
       <button className="btn tinted" onClick={async () => {
         await notify('🔔 測試通知', '如果你看到這則通知，代表設定成功', '/', 'daily_log', `test:${Date.now()}`);

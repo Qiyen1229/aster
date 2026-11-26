@@ -15,6 +15,7 @@ import { useSettings } from '@/stores/settings';
 import { useUI, ask } from '@/stores/ui';
 import { Sheet } from '@/ui/Sheet';
 import { Switch } from '@/ui/controls';
+import { CustomDateInput, CustomSelect } from '@/ui/form';
 import { CatIcon, iconEmoji, EMOJI_TO_LUCIDE } from '@/ui/Icon';
 
 const ACCOUNT_ICONS: { key: string; label: string }[] = [
@@ -130,9 +131,14 @@ function Inner({ onClose, account }: { onClose: () => void; account?: Account })
         <div className="field"><label htmlFor="acc-name">名稱</label><input id="acc-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={`例如：${info.label === '信用卡' ? '國泰 CUBE 卡' : info.label === '銀行' ? '台新 Richart' : info.label}`} maxLength={30} /></div>
         <div className="field">
           <label htmlFor="acc-cur">幣別</label>
-          <select id="acc-cur" value={currency} onChange={(e) => setCurrency(e.target.value)} disabled={!!account}>
-            {Object.values(CURRENCIES).map((c) => <option key={c.code} value={c.code}>{c.code} {c.name}</option>)}
-          </select>
+          <CustomSelect
+            id="acc-cur"
+            title="幣別"
+            value={currency}
+            disabled={!!account}
+            onChange={setCurrency}
+            options={Object.values(CURRENCIES).map((c) => ({ value: c.code, label: `${c.code} ${c.name}` }))}
+          />
         </div>
         <div className="field">
           <label htmlFor="acc-init">{isLiability ? '期初欠款' : '期初餘額'}</label>
@@ -195,22 +201,36 @@ function Inner({ onClose, account }: { onClose: () => void; account?: Account })
             <div className="field"><label htmlFor="cc-limit">信用額度</label><input id="cc-limit" inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0" /></div>
             <div className="field">
               <label htmlFor="cc-st">結帳日</label>
-              <select id="cc-st" value={statementDay} onChange={(e) => setStatementDay(Number(e.target.value))}>
-                {Array.from({ length: 31 }, (_, i) => <option key={i} value={i + 1}>每月 {i + 1} 日{i === 30 ? '（月底）' : ''}</option>)}
-              </select>
+              <CustomSelect
+                id="cc-st"
+                title="結帳日"
+                value={String(statementDay)}
+                onChange={(val) => setStatementDay(Number(val))}
+                options={Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `每月 ${i + 1} 日${i === 30 ? '（月底）' : ''}` }))}
+              />
             </div>
             <div className="field">
               <label htmlFor="cc-due">繳款日</label>
-              <select id="cc-due" value={dueDay} onChange={(e) => setDueDay(Number(e.target.value))}>
-                {Array.from({ length: 31 }, (_, i) => <option key={i} value={i + 1}>每月 {i + 1} 日</option>)}
-              </select>
+              <CustomSelect
+                id="cc-due"
+                title="繳款日"
+                value={String(dueDay)}
+                onChange={(val) => setDueDay(Number(val))}
+                options={Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `每月 ${i + 1} 日` }))}
+              />
             </div>
             <div className="field">
               <label htmlFor="cc-pay">扣繳帳戶</label>
-              <select id="cc-pay" value={autoPay} onChange={(e) => setAutoPay(e.target.value)}>
-                <option value="">（未設定）</option>
-                {allAccounts.filter((a) => ['bank', 'cash', 'epay', 'stored'].includes(a.type) && a.currency === currency).map((a) => <option key={a.id} value={a.id}>{iconEmoji(a.icon)} {a.name}</option>)}
-              </select>
+              <CustomSelect
+                id="cc-pay"
+                title="扣繳帳戶"
+                value={autoPay}
+                onChange={setAutoPay}
+                options={[
+                  { value: '', label: '（未設定）' },
+                  ...allAccounts.filter((a) => ['bank', 'cash', 'epay', 'stored'].includes(a.type) && a.currency === currency).map((a) => ({ value: a.id, label: `${iconEmoji(a.icon)} ${a.name}` })),
+                ]}
+              />
             </div>
           </div>
           <p className="muted" style={{ fontSize: '0.78rem', margin: '4px 8px 0' }}>扣繳帳戶用在「現金流預測」：繳款日從這個帳戶扣卡費。</p>
@@ -226,9 +246,13 @@ function Inner({ onClose, account }: { onClose: () => void; account?: Account })
               <>
                 <div className="field">
                   <label htmlFor="ln-kind">種類</label>
-                  <select id="ln-kind" value={loanKind} onChange={(e) => setLoanKind(e.target.value as LoanInfo['kind'])}>
-                    {(Object.keys(LOAN_KIND_LABEL) as LoanInfo['kind'][]).map((k) => <option key={k} value={k}>{LOAN_KIND_LABEL[k]}</option>)}
-                  </select>
+                  <CustomSelect
+                    id="ln-kind"
+                    title="貸款種類"
+                    value={loanKind}
+                    onChange={(val) => setLoanKind(val as LoanInfo['kind'])}
+                    options={(Object.keys(LOAN_KIND_LABEL) as LoanInfo['kind'][]).map((k) => ({ value: k, label: LOAN_KIND_LABEL[k] }))}
+                  />
                 </div>
                 <div className="field"><label htmlFor="ln-p">原始貸款金額</label><input id="ln-p" inputMode="decimal" value={loanPrincipal} onChange={(e) => setLoanPrincipal(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0" /></div>
                 <div className="field"><label htmlFor="ln-apr">年利率（%）</label><input id="ln-apr" inputMode="decimal" value={loanApr} onChange={(e) => setLoanApr(e.target.value.replace(/[^0-9.]/g, ''))} /></div>
@@ -237,7 +261,7 @@ function Inner({ onClose, account }: { onClose: () => void; account?: Account })
                   <input id="ln-term" inputMode="numeric" value={loanTerm} onChange={(e) => setLoanTerm(e.target.value.replace(/\D/g, ''))} />
                   <span className="muted">{Number(loanTerm) ? `${(Number(loanTerm) / 12).toFixed(1)} 年` : ''}</span>
                 </div>
-                <div className="field"><label htmlFor="ln-first">第一期還款日</label><input id="ln-first" type="date" value={loanFirst} onChange={(e) => setLoanFirst(e.target.value)} /></div>
+                <div className="field"><label htmlFor="ln-first">第一期還款日</label><CustomDateInput id="ln-first" title="第一期還款日" value={loanFirst} onChange={setLoanFirst} /></div>
               </>
             )}
           </div>

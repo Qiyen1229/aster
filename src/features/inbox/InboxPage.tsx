@@ -12,14 +12,16 @@ import { shortDate } from '@/domain/nlp';
 import { todayKey } from '@/domain/period';
 import { deleteTransactions, deleteTransfers } from '@/db/repo/ledger';
 import {
-  ackInbox, bookInboxEntries, mergeDuplicate, loadInbox, markDuplicates, SOURCE_LABEL, useInboxCount,
+  ackInbox, bookInboxEntries, inboxPrefix4, mergeDuplicate, loadInbox, markDuplicates, SOURCE_LABEL, useInboxCount,
   type InboxEntry,
 } from '@/services/inbox';
+import { saveSetting } from '@/db/repo/settings';
 import { aiEnabledLocally, aiParseText } from '@/services/ai';
 import { fallbackAccount, resolveDraft } from '@/services/quickentry';
 import { snackUndo, useUI, askInput } from '@/stores/ui';
 import { useSettings } from '@/stores/settings';
 import { EmptyState, SkeletonRows } from '@/ui/controls';
+import { SwipeRow } from '@/ui/SwipeRow';
 import { AiMark, CatIcon, Icon } from '@/ui/Icon';
 import { bookForecast, confirmRulePending, loadForecast, registerForecast, skipForecast, skipRulePending, type ForecastData } from '@/services/forecast';
 import type { ForecastItem } from '@/domain/forecast';
@@ -103,6 +105,44 @@ export default function InboxPage() {
       snack(`已封鎖「${word}」並清除通知`);
       await reload();
     } catch (err) { snack(`已封鎖「${word}」，但通知尚未清除：${(err as Error).message}`); }
+  };
+
+  /** 左滑：自動取前 4 字加入白名單 */
+  const whitelistBySwipe = async (e: InboxEntry) => {
+    const word = inboxPrefix4(e.item, e.drafts[0]?.note);
+    if (!word) { snack('這則通知沒有可辨識的來源名稱'); return; }
+    const st = useSettings.getState();
+    const prev = st.inbox.whitelist ?? [];
+    const exists = prev.some((x) => x.normalize('NFKC').toLowerCase() === word.normalize('NFKC').toLowerCase());
+    if (!exists) {
+      const next = { ...st.inbox, whitelist: [...prev, word] };
+      st.set('inbox', next);
+      await saveSetting('inbox', next);
+    }
+    snackUndo(`已將「${word}」加入白名單（前 4 字自動相符）`, async () => {
+      const cur = useSettings.getState();
+      const restored = { ...cur.inbox, whitelist: (cur.inbox.whitelist ?? []).filter((x) => x !== word) };
+      cur.set('inbox', restored);
+      await saveSetting('inbox', restored);
+    });
+  };
+
+  /** 右滑：自動取前 4 字加入黑名單並清除通知 */
+  const blacklistBySwipe = async (e: InboxEntry) => {
+    const word = inboxPrefix4(e.item, e.drafts[0]?.note);
+    if (!word) { await blockItem(e); return; }
+    const st = useSettings.getState();
+    const prev = st.inbox.blacklist ?? [];
+    if (!prev.some((x) => x.normalize('NFKC').toLowerCase() === word.normalize('NFKC').toLowerCase())) {
+      const next = { ...st.inbox, blacklist: [...prev, word] };
+      st.set('inbox', next);
+      await saveSetting('inbox', next);
+    }
+    try {
+      await ackInbox([e.item.id]);
+      setEntries((l) => l?.filter((x) => x.item.id !== e.item.id) ?? null);
+      snack(`已將「${word}」加入黑名單（前 4 字自動封鎖）並清除通知`);
+    } catch (err) { snack(`已將「${word}」加入黑名單，但通知尚未清除：${(err as Error).message}`); }
   };
 
   /** 規則看不懂的簡訊／通知：請 AI 解析成草稿（扣 1 點額度）。解析結果只改在畫面上，確認記帳才會寫入帳本 */
@@ -203,74 +243,97 @@ export default function InboxPage() {
         <EmptyState emoji="📭" title="收件匣是空的" text="捷徑送來的消費通知與預計扣款會出現在這裡核對記帳。" />
       ) : (
         <>
+          <p className="muted" style={{ fontSize: '0.76rem', margin: '0 4px 6px' }}>
+            左滑加入白名單、右滑加入黑名單（自動擷取前 4 字作為相符標準）
+          </p>
           <div className="list">
             {entries.map((e) => {
               const src = SOURCE_LABEL[e.item.source] ?? SOURCE_LABEL.other;
               if (!e.drafts.length) {
                 return (
-                  <div key={e.item.id} className="row inbox-row">
-                    <span className="cat-icon sm" aria-hidden="true"><CatIcon icon={src.icon} size={16} /></span>
-                    <span className="row-main">
-                      <span className="row-title">{e.item.merchant || e.item.text.slice(0, 40) || '（沒有內容）'}</span>
-                      <span className="row-sub" style={{ whiteSpace: 'normal' }}>{src.label} · {e.review || '看不懂金額，請手動記'}</span>
-                    </span>
-                    <span className="inbox-actions">
-                      {aiEnabledLocally() && (e.item.text || e.item.merchant) && <button className="pill accent-pill" disabled={aiBusyId === e.item.id} onClick={() => void aiParse(e)}>{aiBusyId === e.item.id ? '解析中…' : <><AiMark /> Cilo 解析</>}</button>}
-                      <button className="pill" onClick={() => setRuleDraft(blankRule('expense', '', e.item.merchant || e.item.text.slice(0, 60)))}>存為規則</button>
-                      <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
-                      <button className="pill" onClick={() => edit(e)}>手動記</button>
-                      <button className="pill" onClick={() => void skip(e)} aria-label="略過">略過</button>
-                    </span>
-                  </div>
+                  <SwipeRow
+                    key={e.item.id}
+                    flat
+                    action={{ label: '白名單', icon: 'shieldCheck', tone: 'accent' }}
+                    leftAction={{ label: '黑名單', icon: 'close', tone: 'danger' }}
+                    onDelete={() => void whitelistBySwipe(e)}
+                    onEdit={() => void blacklistBySwipe(e)}
+                  >
+                    <div className="row inbox-row">
+                      <span className="cat-icon sm" aria-hidden="true"><CatIcon icon={src.icon} size={16} /></span>
+                      <span className="row-main">
+                        <span className="row-title">{e.item.merchant || e.item.text.slice(0, 40) || '（沒有內容）'}</span>
+                        <span className="row-sub" style={{ whiteSpace: 'normal' }}>{src.label} · {e.review || '看不懂金額，請手動記'}</span>
+                      </span>
+                      <span className="inbox-actions">
+                        {aiEnabledLocally() && (e.item.text || e.item.merchant) && <button className="pill accent-pill" disabled={aiBusyId === e.item.id} onClick={() => void aiParse(e)}>{aiBusyId === e.item.id ? '解析中…' : <><AiMark /> Cilo 解析</>}</button>}
+                        <button className="pill" onClick={() => setRuleDraft(blankRule('expense', '', e.item.merchant || e.item.text.slice(0, 60)))}>存為規則</button>
+                        <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
+                        <button className="pill" onClick={() => edit(e)}>手動記</button>
+                        <button className="pill" onClick={() => void skip(e)} aria-label="略過">略過</button>
+                      </span>
+                    </div>
+                  </SwipeRow>
                 );
               }
-              return e.drafts.map((d, i) => {
-                const c = d.categoryId ? catMap.get(d.categoryId) : undefined;
-                const acc = accMap.get(d.accountId);
-                const cur = d.currency ?? acc?.currency ?? 'TWD';
-                return (
-                  <div key={`${e.item.id}-${i}`} className="row inbox-row">
-                    <span className="cat-icon sm" style={{ ['--c' as string]: c?.color }} aria-hidden="true"><CatIcon icon={d.kind === 'transfer' ? 'repeat' : c?.icon ?? src.icon} size={16} /></span>
-                    <span className="row-main">
-                      <span className="row-title">{d.note || c?.name || src.label}</span>
-                      <span className="row-sub">{src.icon} {shortDate(d.date, today)} · {c?.name ?? '轉帳'} · {acc?.name ?? '?'}{e.item.card ? `（${e.item.card}）` : ''}</span>
-                    </span>
-                    <span className={`num ${d.kind === 'income' ? 'pos' : 'neg'}`}>{formatMoney(toMinor(d.amount, cur), cur)}</span>
-                    {i === e.drafts.length - 1 && e.review && (
-                      <p className="inbox-dup strong" role="note">⚠️ {e.review}</p>
-                    )}
-                    {i === e.drafts.length - 1 && e.dup && (
-                      <p className={`inbox-dup ${e.dup.level}`} role="note">
-                        {e.dup.level === 'strong' ? '⚠️ 很可能重複：' : 'ℹ️ 金額相同：'}
-                        {e.dup.from === 'ledger' ? `帳本裡已有 ${e.dup.label}` : `和 ${e.dup.label}是同一次消費？`}
-                      </p>
-                    )}
-                    {i === e.drafts.length - 1 && (
-                      <span className="inbox-actions">
-                        {e.dup?.level === 'strong' ? (
-                          <>
-                            <button className="pill accent-pill" onClick={() => void merge(e)}>合併（不重複記）</button>
-                            <button className="pill" disabled={busy} onClick={() => void book([e])}>仍要記帳</button>
-                            <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
-                            <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
-                            <button className="pill" onClick={() => edit(e)}>編輯</button>
-                            <button className="pill" onClick={() => void skip(e)}>略過</button>
-                          </>
-                        ) : (
-                          <>
-                            <button className="pill accent-pill" disabled={busy} onClick={() => void book([e])}>記帳</button>
-                            {e.dup && <button className="pill" onClick={() => void merge(e)}>合併</button>}
-                            <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
-                            <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
-                            <button className="pill" onClick={() => edit(e)}>編輯</button>
-                            <button className="pill" onClick={() => void skip(e)}>略過</button>
-                          </>
+              return (
+                <SwipeRow
+                  key={e.item.id}
+                  flat
+                  action={{ label: '白名單', icon: 'shieldCheck', tone: 'accent' }}
+                  leftAction={{ label: '黑名單', icon: 'close', tone: 'danger' }}
+                  onDelete={() => void whitelistBySwipe(e)}
+                  onEdit={() => void blacklistBySwipe(e)}
+                >
+                  {e.drafts.map((d, i) => {
+                    const c = d.categoryId ? catMap.get(d.categoryId) : undefined;
+                    const acc = accMap.get(d.accountId);
+                    const cur = d.currency ?? acc?.currency ?? 'TWD';
+                    return (
+                      <div key={`${e.item.id}-${i}`} className="row inbox-row">
+                        <span className="cat-icon sm" style={{ ['--c' as string]: c?.color }} aria-hidden="true"><CatIcon icon={d.kind === 'transfer' ? 'repeat' : c?.icon ?? src.icon} size={16} /></span>
+                        <span className="row-main">
+                          <span className="row-title">{d.note || c?.name || src.label}</span>
+                          <span className="row-sub">{src.icon} {shortDate(d.date, today)} · {c?.name ?? '轉帳'} · {acc?.name ?? '?'}{e.item.card ? `（${e.item.card}）` : ''}</span>
+                        </span>
+                        <span className={`num ${d.kind === 'income' ? 'pos' : 'neg'}`}>{formatMoney(toMinor(d.amount, cur), cur)}</span>
+                        {i === e.drafts.length - 1 && e.review && (
+                          <p className="inbox-dup strong" role="note">⚠️ {e.review}</p>
                         )}
-                      </span>
-                    )}
-                  </div>
-                );
-              });
+                        {i === e.drafts.length - 1 && e.dup && (
+                          <p className={`inbox-dup ${e.dup.level}`} role="note">
+                            {e.dup.level === 'strong' ? '⚠️ 很可能重複：' : 'ℹ️ 金額相同：'}
+                            {e.dup.from === 'ledger' ? `帳本裡已有 ${e.dup.label}` : `和 ${e.dup.label}是同一次消費？`}
+                          </p>
+                        )}
+                        {i === e.drafts.length - 1 && (
+                          <span className="inbox-actions">
+                            {e.dup?.level === 'strong' ? (
+                              <>
+                                <button className="pill accent-pill" onClick={() => void merge(e)}>合併（不重複記）</button>
+                                <button className="pill" disabled={busy} onClick={() => void book([e])}>仍要記帳</button>
+                                <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
+                                <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
+                                <button className="pill" onClick={() => edit(e)}>編輯</button>
+                                <button className="pill" onClick={() => void skip(e)}>略過</button>
+                              </>
+                            ) : (
+                              <>
+                                <button className="pill accent-pill" disabled={busy} onClick={() => void book([e])}>記帳</button>
+                                {e.dup && <button className="pill" onClick={() => void merge(e)}>合併</button>}
+                                <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
+                                <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
+                                <button className="pill" onClick={() => edit(e)}>編輯</button>
+                                <button className="pill" onClick={() => void skip(e)}>略過</button>
+                              </>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </SwipeRow>
+              );
             })}
           </div>
           {ready.length > 1 && <button className="btn" disabled={busy} onClick={() => void book(ready)}>全部記帳（{ready.reduce((n, e) => n + e.drafts.length, 0)} 筆）</button>}

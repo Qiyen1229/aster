@@ -20,11 +20,13 @@ interface Props {
   flat?: boolean;
   /** 左滑超過門檻後，不是原地消失，而是整列「縮起來」（高度、間距、透明度一起收到 0）再呼叫 onDelete；用在「隱藏」這類動作 */
   collapse?: boolean;
-  /** 左滑時露出的動作文字與圖示（預設是紅色的「刪除」＋垃圾桶）；給了就改成中性色 */
-  action?: { label: string; icon: IconName };
+  /** 左滑時露出的動作文字與圖示（預設是紅色的「刪除」＋垃圾桶）；可指定 tone */
+  action?: { label: string; icon: IconName; tone?: 'neutral' | 'accent' | 'danger' };
+  /** 右滑時露出的動作文字與圖示（預設是主題色的「編輯」） */
+  leftAction?: { label: string; icon: IconName; tone?: 'accent' | 'danger' };
 }
 
-export function SwipeRow({ children, onTap, onEdit, onDelete, onLongPress, disabled, flat, collapse, action }: Props) {
+export function SwipeRow({ children, onTap, onEdit, onDelete, onLongPress, disabled, flat, collapse, action, leftAction }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const st = useRef<{ x0: number; y0: number; dx: number; mode: 'idle' | 'h' | 'v'; timer?: number; long: boolean } | null>(null);
@@ -113,8 +115,8 @@ export function SwipeRow({ children, onTap, onEdit, onDelete, onLongPress, disab
 
   return (
     <div className={flat ? 'swipe flat' : 'swipe'} ref={wrap}>
-      {onEdit && <div className="swipe-action left" aria-hidden="true"><Icon name="edit" />編輯</div>}
-      {onDelete && <div className={`swipe-action right${action ? ' neutral' : ''}`} aria-hidden="true">{action?.label ?? '刪除'}<Icon name={action?.icon ?? 'trash'} /></div>}
+      {onEdit && <div className={`swipe-action left${leftAction?.tone === 'danger' ? ' danger' : ''}`} aria-hidden="true"><Icon name={leftAction?.icon ?? 'edit'} />{leftAction?.label ?? '編輯'}</div>}
+      {onDelete && <div className={`swipe-action right${action ? (action.tone ? ` ${action.tone}` : ' neutral') : ''}`} aria-hidden="true">{action?.label ?? '刪除'}<Icon name={action?.icon ?? 'trash'} /></div>}
       <div ref={ref} className="swipe-content" onPointerDown={down} onPointerMove={move} onPointerUp={up}
         onPointerCancel={() => { if (st.current) clearTimeout(st.current.timer); st.current = null; set(0, true); }}
         onContextMenu={(e) => { if (onLongPress) { e.preventDefault(); onLongPress(); } }}

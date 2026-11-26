@@ -17,6 +17,7 @@ import { useSettings } from '@/stores/settings';
 import { useUI, ask, askInput } from '@/stores/ui';
 import type { AccentKey, ThemePalette } from '@/db/repo/settings';
 import { Segmented, Switch } from '@/ui/controls';
+import { CustomSelect } from '@/ui/form';
 import { Icon, type IconName } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { usePullToRefresh } from '@/ui/PullToRefresh';
@@ -263,32 +264,58 @@ function PrefsSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
       <div className="list">
         <div className="field">
           <label htmlFor="s-base">主幣別</label>
-          <select id="s-base" value={s.baseCurrency} onChange={(e) => {
-            s.set('baseCurrency', e.target.value);
-            useUI.getState().showSnack({ text: '已變更主幣別，建議重算舊帳目的換算金額', actionLabel: '前往', onAction: () => navigate('/settings/health'), duration: 6000 });
-            void refreshRates(e.target.value).catch(() => undefined);
-          }}>
-            {Object.values(CURRENCIES).map((c) => <option key={c.code} value={c.code}>{c.code} {c.name}</option>)}
-          </select>
+          <CustomSelect
+            id="s-base"
+            title="主幣別"
+            value={s.baseCurrency}
+            onChange={(val) => {
+              s.set('baseCurrency', val);
+              useUI.getState().showSnack({ text: '已變更主幣別，建議重算舊帳目的換算金額', actionLabel: '前往', onAction: () => navigate('/settings/health'), duration: 6000 });
+              void refreshRates(val).catch(() => undefined);
+            }}
+            options={Object.values(CURRENCIES).map((c) => ({ value: c.code, label: `${c.code} ${c.name}` }))}
+          />
         </div>
         <div className="field">
           <label htmlFor="s-msd">記帳月起算</label>
-          <select id="s-msd" value={s.monthStartDay} onChange={(e) => s.set('monthStartDay', Number(e.target.value))}>
-            {Array.from({ length: 28 }, (_, i) => <option key={i} value={i + 1}>每月 {i + 1} 日</option>)}
-            <option value={31}>每月最後一天</option>
-          </select>
+          <CustomSelect
+            id="s-msd"
+            title="記帳月起算"
+            value={String(s.monthStartDay)}
+            onChange={(val) => s.set('monthStartDay', Number(val))}
+            options={[
+              ...Array.from({ length: 28 }, (_, i) => ({ value: String(i + 1), label: `每月 ${i + 1} 日` })),
+              { value: '31', label: '每月最後一天' },
+            ]}
+          />
         </div>
         <div className="field">
           <label htmlFor="s-ws">一週起始</label>
-          <select id="s-ws" value={s.weekStart} onChange={(e) => s.set('weekStart', Number(e.target.value) as 0 | 1)}>
-            <option value={0}>週日</option><option value={1}>週一</option>
-          </select>
+          <CustomSelect
+            id="s-ws"
+            title="一週起始"
+            value={String(s.weekStart)}
+            onChange={(val) => s.set('weekStart', Number(val) as 0 | 1)}
+            options={[
+              { value: '0', label: '週日' },
+              { value: '1', label: '週一' },
+            ]}
+          />
         </div>
         <div className="field">
           <label htmlFor="s-dec">小數位數</label>
-          <select id="s-dec" value={String(s.decimals)} onChange={(e) => s.set('decimals', e.target.value === 'auto' ? 'auto' : (Number(e.target.value) as 0 | 1 | 2))}>
-            <option value="auto">自動（有零頭才顯示）</option><option value="0">0 位</option><option value="1">1 位</option><option value="2">2 位</option>
-          </select>
+          <CustomSelect
+            id="s-dec"
+            title="小數位數"
+            value={String(s.decimals)}
+            onChange={(val) => s.set('decimals', val === 'auto' ? 'auto' : (Number(val) as 0 | 1 | 2))}
+            options={[
+              { value: 'auto', label: '自動（有零頭才顯示）' },
+              { value: '0', label: '0 位' },
+              { value: '1', label: '1 位' },
+              { value: '2', label: '2 位' },
+            ]}
+          />
         </div>
         <div className="field"><span className="label" style={{ flex: 1 }}>千分位逗號</span><Switch checked={s.thousands} onChange={(v) => s.set('thousands', v)} label="千分位" /></div>
         <Row icon="globe" tint="#0A84FF" label="幣別與即時匯率" onClick={() => navTo('/settings/fx')}
@@ -536,19 +563,16 @@ export default function SettingsPage() {
               />
               {travelProjects.length > 1 && s.travelModeProjectId && (
                 <div style={{ marginTop: 8 }}>
-                  <select
-                    className="select"
+                  <CustomSelect
+                    className="input"
+                    title="旅遊專案"
                     value={s.travelModeProjectId}
-                    onChange={(e) => {
+                    onChange={(val) => {
                       haptic('selection');
-                      s.set('travelModeProjectId', e.target.value);
+                      s.set('travelModeProjectId', val);
                     }}
-                    style={{ width: '100%', padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--sep)', background: 'var(--surface-2)', color: 'var(--text)' }}
-                  >
-                    {travelProjects.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
+                    options={travelProjects.map((p) => ({ value: p.id, label: p.name }))}
+                  />
                 </div>
               )}
               {s.travelModeProjectId && (

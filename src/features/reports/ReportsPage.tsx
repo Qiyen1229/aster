@@ -22,6 +22,7 @@ import { netWorthSeries } from '@/services/networth';
 import { useAccounts, useCategories, useProjects, useTags } from '@/app/hooks';
 import { useSettings } from '@/stores/settings';
 import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
+import { CustomDateInput } from '@/ui/form';
 import { CatIcon, Icon, iconEmoji } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { LedgerRow } from '../ledger/LedgerRow';
@@ -345,9 +346,9 @@ export default function ReportsPage() {
       <Segmented value={unit} onChange={(u) => { setUnit(u); setDrill(null); }} options={[{ value: 'month', label: '月' }, { value: 'year', label: '年' }, { value: 'custom', label: '自訂' }]} ariaLabel="期間" />
       {unit === 'custom' ? (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '12px 0' }}>
-          <input type="date" className="input" style={{ flex: 1, minWidth: 0 }} value={custom.start} max={custom.end} onChange={(e) => setCustom((c) => ({ ...c, start: e.target.value }))} aria-label="開始" />
+          <CustomDateInput className="input" style={{ flex: 1, minWidth: 0 }} title="開始日期" aria-label="開始" value={custom.start} max={custom.end} onChange={(v) => setCustom((c) => ({ ...c, start: v }))} />
           <span className="muted">–</span>
-          <input type="date" className="input" style={{ flex: 1, minWidth: 0 }} value={custom.end} min={custom.start} onChange={(e) => setCustom((c) => ({ ...c, end: e.target.value }))} aria-label="結束" />
+          <CustomDateInput className="input" style={{ flex: 1, minWidth: 0 }} title="結束日期" aria-label="結束" value={custom.end} min={custom.start} onChange={(v) => setCustom((c) => ({ ...c, end: v }))} />
         </div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '8px 0' }}>

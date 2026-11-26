@@ -2039,8 +2039,10 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
 .swipe-content.animating { transition: transform 280ms var(--ease); }
 .swipe-action { opacity: 0; transition: opacity 240ms var(--ease); position: absolute; top: 0; bottom: 0; left: 0; right: 0; display: flex; align-items: center; padding: 0 22px; color: var(--on-danger, #fff); font-weight: 600; gap: 6px; }
 .swipe-action.left { background: var(--accent); color: var(--on-accent); }
+.swipe-action.left.danger { background: var(--danger); color: var(--on-danger, #fff); }
 .swipe-action.right { background: var(--danger); justify-content: flex-end; }
 .swipe-action.right.neutral { background: var(--surface-3); color: var(--text-2); }
+.swipe-action.right.accent { background: var(--accent); color: var(--on-accent); }
 .swipe[data-active] .swipe-action { opacity: 1; }
 .swipe[data-dir='r'] .swipe-action.right, .swipe[data-dir='l'] .swipe-action.left { visibility: hidden; }
 .swipe-action svg { width: 22px; height: 22px; }
@@ -3447,6 +3449,49 @@ html.voice-holding .sheet, html.voice-holding .sheet-backdrop { pointer-events: 
 
 /* 清單列裡的小型下拉選單（分類選擇等）：全域把 select 的原生外觀拿掉了，這裡補回圓角底色與箭頭空間 */
 .mini-select { max-width: 124px; min-height: 34px; padding: 0 8px; border: 0; border-radius: 10px; background: var(--surface-2); color: var(--text); font-size: 0.85rem; text-overflow: ellipsis; }
+
+/* 自製下拉按鈕（取代原生 <select>） */
+.custom-select-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.custom-select-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.custom-select-btn.input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  min-height: 44px;
+  font-size: 16px;
+  color: var(--text);
+}
+.custom-select-btn.mini-select {
+  background: var(--surface-2);
+  padding: 0 8px;
+  min-height: 34px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+}
+.custom-select-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.custom-select-caret {
+  flex: 0 0 auto;
+  color: var(--text-2);
+}
 
 /* 自製確認視窗：置中圓角卡片，彈簧縮放進場；層級高於彈窗（.sheet 約 60～70） */
 .dlg-wrap { position: fixed; inset: 0; z-index: 310; display: grid; place-items: center; padding: 24px; }

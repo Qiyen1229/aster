@@ -10,6 +10,7 @@ import { addWatch, removeWatch, updateAlerts } from '@/db/repo/invest';
 import { updateAllQuotes } from '@/services/startup';
 import { useUI } from '@/stores/ui';
 import { EmptyState, SkeletonRows, Switch } from '@/ui/controls';
+import { CustomSelect } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
 import { PullToRefresh } from '@/ui/PullToRefresh';
 import { Sheet } from '@/ui/Sheet';
@@ -82,9 +83,18 @@ function AlertEditor({ item, onClose }: { item: WatchItem; onClose: () => void }
         ))}
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <select className="input" style={{ width: 100 }} value={op} onChange={(e) => setOp(e.target.value as '>=' | '<=')} aria-label="條件">
-          <option value=">=">站上</option><option value="<=">跌破</option>
-        </select>
+        <CustomSelect
+          className="input"
+          style={{ width: 100 }}
+          title="觸發條件"
+          aria-label="條件"
+          value={op}
+          onChange={(val) => setOp(val as '>=' | '<=')}
+          options={[
+            { value: '>=', label: '站上' },
+            { value: '<=', label: '跌破' },
+          ]}
+        />
         <input className="input num" inputMode="decimal" placeholder="價格" value={price} onChange={(e) => setPrice(e.target.value.replace(/[^0-9.]/g, ''))} />
         <button className="btn small" disabled={!Number(price)} onClick={() => { setAlerts([...alerts, { op, priceDec: price, enabled: true }]); setPrice(''); }}>加入</button>
       </div>

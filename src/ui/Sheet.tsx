@@ -128,7 +128,7 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
       const root = sheetRef.current;
       if (!root) return;
       if (root.contains(document.activeElement)) return;
-      const isCoarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
+      const isCoarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)')?.matches;
       const first = root.querySelector<HTMLElement>(FOCUSABLE_SEL);
       const isFormControl = first instanceof HTMLInputElement || first instanceof HTMLTextAreaElement || first instanceof HTMLSelectElement;
       const target = isCoarse || isFormControl || !first ? root : first;
@@ -141,7 +141,7 @@ export function Sheet({ open, onClose, title, left, right, full, variant, childr
       if (i >= 0) stack.splice(i, 1);
       unlockScroll();
       window.removeEventListener('keydown', onKey);
-      const isCoarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
+      const isCoarse = typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)')?.matches;
       const wasInput = prevFocus instanceof HTMLInputElement || prevFocus instanceof HTMLTextAreaElement || prevFocus instanceof HTMLSelectElement;
       if (!isCoarse && !wasInput) {
         window.setTimeout(() => prevFocus?.isConnected && prevFocus.focus?.({ preventScroll: true }), 0);

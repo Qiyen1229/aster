@@ -14,7 +14,7 @@ import { deleteRule } from '@/services/autocat';
 import { useSettings } from '@/stores/settings';
 import { ask, askInput, useUI } from '@/stores/ui';
 import { EmptyState, Segmented } from '@/ui/controls';
-import { AccountField, SwitchField } from '@/ui/form';
+import { AccountField, CustomSelect, SwitchField } from '@/ui/form';
 import { Icon, iconEmoji } from '@/ui/Icon';
 import { blankRule, RULE_MATCH_LABEL, RuleEditorSheet, ruleTargetSummary, type RuleDraft } from './RuleEditorSheet';
 
@@ -238,18 +238,20 @@ export default function InboxWhitelistPage() {
                 {Object.entries(cfg.cardMap).map(([card, id]) => (
                   <div key={card} className="field">
                     <span className="label" style={{ flex: 1 }}>{card}</span>
-                    <select
-                      value={accMap.has(id) ? id : ''}
+                    <CustomSelect
+                      title={`${card} 對應的帳戶`}
                       aria-label={`${card} 對應的帳戶`}
-                      onChange={(e) => {
+                      value={accMap.has(id) ? id : ''}
+                      onChange={(val) => {
                         const map = { ...cfg.cardMap };
-                        if (e.target.value) map[card] = e.target.value; else delete map[card];
+                        if (val) map[card] = val; else delete map[card];
                         update({ cardMap: map });
                       }}
-                    >
-                      <option value="">（不指定，自動判斷）</option>
-                      {accounts.filter((a) => a.type !== 'loan').map((a) => <option key={a.id} value={a.id}>{iconEmoji(a.icon)} {a.name}</option>)}
-                    </select>
+                      options={[
+                        { value: '', label: '（不指定，自動判斷）' },
+                        ...accounts.filter((a) => a.type !== 'loan').map((a) => ({ value: a.id, label: `${iconEmoji(a.icon)} ${a.name}` })),
+                      ]}
+                    />
                   </div>
                 ))}
               </div>

@@ -12,6 +12,7 @@ import type { StatementEntry } from '@/services/ai';
 import type { ParsedRow } from '@/services/importer';
 import { snackUndo, useUI } from '@/stores/ui';
 import { Switch } from '@/ui/controls';
+import { CustomSelect } from '@/ui/form';
 
 interface Props {
   /** 二選一：CSV 解析後的列，或 AI 讀截圖得到的明細（金額依選定帳戶的幣別換算） */
@@ -104,9 +105,13 @@ export function ReconcilePanel({ csvRows, aiEntries, printedTotal, defaultAccoun
       <div className="card glass">
         <div className="field" style={{ padding: 0 }}>
           <span className="label">對帳的帳戶</span>
-          <select value={accountId} onChange={(e) => { setAccountId(e.target.value); setApplied(null); setOffMissing(new Set()); setOffVar(new Set()); setVerified(false); setActual(''); }} aria-label="對帳的帳戶">
-            {accounts.list.map((a) => <option key={a.id} value={a.id}>{a.name}（{a.currency}）</option>)}
-          </select>
+          <CustomSelect
+            title="對帳的帳戶"
+            aria-label="對帳的帳戶"
+            value={accountId}
+            onChange={(val) => { setAccountId(val); setApplied(null); setOffMissing(new Set()); setOffVar(new Set()); setVerified(false); setActual(''); }}
+            options={accounts.list.map((a) => ({ value: a.id, label: `${a.name}（${a.currency}）` }))}
+          />
         </div>
         <p style={{ margin: '10px 0 4px', fontWeight: 600 }}>{allGood ? '✅ 全部吻合，沒有要補的' : summarizeReport(report, money)}</p>
         <p className="row-sub" style={{ whiteSpace: 'normal' }}>帳單 {rows.length} 筆，日期容差 ±3 天，金額與商家名稱一起比對。{applied ? `　已補齊 ${applied} 筆。` : ''}</p>
@@ -146,10 +151,17 @@ export function ReconcilePanel({ csvRows, aiEntries, printedTotal, defaultAccoun
                 <div key={m.id} className="row" style={{ gap: 8 }}>
                   <Switch label={`補記 ${m.text}`} checked={!offMissing.has(m.id)} onChange={() => toggle(offMissing, setOffMissing, m.id)} />
                   <span className="row-main"><span className="row-title">{m.text || '（無說明）'}</span><span className="row-sub" style={{ display: 'block' }}>{m.date}</span></span>
-                  <select className="mini-select" aria-label={`${m.text} 的分類`} value={val} onChange={(e) => setCatPick((p) => ({ ...p, [m.id]: e.target.value }))}>
-                    {!val && <option value="">選分類</option>}
-                    {kindCats(k).map((c) => <option key={c.id} value={c.id}>{categoryLabel(cats.map, c.id)}</option>)}
-                  </select>
+                  <CustomSelect
+                    className="mini-select"
+                    title="選擇分類"
+                    aria-label={`${m.text} 的分類`}
+                    value={val}
+                    onChange={(v) => setCatPick((p) => ({ ...p, [m.id]: v }))}
+                    options={[
+                      ...(!val ? [{ value: '', label: '選分類' }] : []),
+                      ...kindCats(k).map((c) => ({ value: c.id, label: categoryLabel(cats.map, c.id) })),
+                    ]}
+                  />
                   <span className="num">{k === 'income' ? '+' : '-'}{money(m.amountMinor)}</span>
                 </div>
               );

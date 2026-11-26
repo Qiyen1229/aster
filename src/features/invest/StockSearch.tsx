@@ -6,6 +6,7 @@ import type { Stock } from '@/db/types';
 import { ensureStock } from '@/db/repo/invest';
 import { searchStocks, type StockMeta } from '@/services/quotes/search';
 import { Icon } from '@/ui/Icon';
+import { CustomSelect } from '@/ui/form';
 
 export const MARKET_LABEL: Record<string, string> = { TWSE: '上市', TPEX: '上櫃', EMERGING: '興櫃', US: '美股', HK: '港股' };
 
@@ -57,16 +58,26 @@ export function StockSearch({ onPick, autoFocus = defaultAutoFocus }: { onPick: 
       {manual && (
         <div className="list" style={{ marginTop: 10 }}>
           <div className="field"><span className="label">市場</span>
-            <select value={m.market} onChange={(e) => { const mk = e.target.value as StockMeta['market']; setM({ ...m, market: mk, currency: mk === 'US' ? 'USD' : mk === 'HK' ? 'HKD' : 'TWD' }); }}>
-              {Object.entries(MARKET_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
+            <CustomSelect
+              title="市場"
+              value={m.market}
+              onChange={(val) => { const mk = val as StockMeta['market']; setM({ ...m, market: mk, currency: mk === 'US' ? 'USD' : mk === 'HK' ? 'HKD' : 'TWD' }); }}
+              options={Object.entries(MARKET_LABEL).map(([k, v]) => ({ value: k, label: v }))}
+            />
           </div>
           <div className="field"><span className="label">代號</span><input autoComplete="off" autoCorrect="off" spellCheck={false} value={m.symbol} onChange={(e) => setM({ ...m, symbol: e.target.value.toUpperCase().trim() })} /></div>
           <div className="field"><span className="label">名稱</span><input autoComplete="off" autoCorrect="off" spellCheck={false} value={m.name} onChange={(e) => setM({ ...m, name: e.target.value })} /></div>
           <div className="field"><span className="label">類型</span>
-            <select value={m.assetType} onChange={(e) => setM({ ...m, assetType: e.target.value as StockMeta['assetType'] })}>
-              <option value="stock">股票</option><option value="etf">ETF</option><option value="bond_etf">債券 ETF</option>
-            </select>
+            <CustomSelect
+              title="類型"
+              value={m.assetType}
+              onChange={(val) => setM({ ...m, assetType: val as StockMeta['assetType'] })}
+              options={[
+                { value: 'stock', label: '股票' },
+                { value: 'etf', label: 'ETF' },
+                { value: 'bond_etf', label: '債券 ETF' },
+              ]}
+            />
           </div>
           <button className="row accent" disabled={!m.symbol || !m.name} onClick={() => void pick(m)}>建立並選取</button>
         </div>

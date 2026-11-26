@@ -12,6 +12,7 @@ import { getAccessToken, isBearerMode } from '@/services/api';
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
 import { EmptyState, Segmented, Switch } from '@/ui/controls';
+import { CustomSelect } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
 import type { InvestSettings, QuoteSettings } from '@/db/repo/settings';
 
@@ -123,9 +124,12 @@ export default function InvestSettingsPage() {
       <div className="section-title">更新</div>
       <div className="list">
         <div className="field"><span className="label">盤中自動刷新</span>
-          <select value={q.refreshSec} onChange={(e) => setQ({ refreshSec: Number(e.target.value) })}>
-            {[0, 30, 60, 120, 300].map((n) => <option key={n} value={n}>{n ? `每 ${n} 秒` : '關閉'}</option>)}
-          </select>
+          <CustomSelect
+            title="盤中自動刷新"
+            value={String(q.refreshSec)}
+            onChange={(val) => setQ({ refreshSec: Number(val) })}
+            options={[0, 30, 60, 120, 300].map((n) => ({ value: String(n), label: n ? `每 ${n} 秒` : '關閉' }))}
+          />
         </div>
       </div>
 

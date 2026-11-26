@@ -8,7 +8,7 @@ import { api, ApiError } from '@/services/api';
 import { useAuth } from '@/stores/auth';
 import { useUI, ask, askInput } from '@/stores/ui';
 import { EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
-import { DateField, SwitchField } from '@/ui/form';
+import { CustomSelect, DateField, SwitchField } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { exportErrorLogsToFile } from '@/services/errorLog';
@@ -299,9 +299,17 @@ function CreateUserSheet({ open, onClose, onCreated }: { open: boolean; onClose:
         <label htmlFor="cu-email">Email（忘記密碼時會寄到這裡，請確認收得到信）</label>
         <input id="cu-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={254} required />
         <label htmlFor="cu-role">角色</label>
-        <select id="cu-role" value={role} onChange={(e) => setRole(e.target.value as 'user' | 'admin')}>
-          <option value="user">一般使用者</option><option value="admin">管理員</option>
-        </select>
+        <CustomSelect
+          id="cu-role"
+          className="input"
+          title="角色"
+          value={role}
+          onChange={(val) => setRole(val as 'user' | 'admin')}
+          options={[
+            { value: 'user', label: '一般使用者' },
+            { value: 'admin', label: '管理員' },
+          ]}
+        />
         <label htmlFor="cu-pw">初始密碼（留空＝自動產生臨時密碼）</label>
         <input id="cu-pw" className="input" type="text" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" maxLength={128} placeholder="至少 8 字元，含英文與數字" />
         {error && <p className="auth-error" role="alert">{error}</p>}
@@ -474,17 +482,29 @@ function Audit() {
     <>
       <div className="list">
         <div className="field"><span className="label">動作</span>
-          <select value={action} onChange={(e) => { setAction(e.target.value); reset(); }}>
-            <option value="">全部</option>
-            <option value="auth.">認證（全部）</option>
-            <option value="admin.">管理操作（全部）</option>
-            {Object.entries(ACTION_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
+          <CustomSelect
+            title="篩選動作"
+            value={action}
+            onChange={(val) => { setAction(val); reset(); }}
+            options={[
+              { value: '', label: '全部' },
+              { value: 'auth.', label: '認證（全部）' },
+              { value: 'admin.', label: '管理操作（全部）' },
+              ...Object.entries(ACTION_LABEL).map(([k, v]) => ({ value: k, label: v })),
+            ]}
+          />
         </div>
         <div className="field"><span className="label">結果</span>
-          <select value={result} onChange={(e) => { setResult(e.target.value as 'all' | 'ok' | 'fail'); reset(); }}>
-            <option value="all">全部</option><option value="ok">成功</option><option value="fail">失敗</option>
-          </select>
+          <CustomSelect
+            title="篩選結果"
+            value={result}
+            onChange={(val) => { setResult(val as 'all' | 'ok' | 'fail'); reset(); }}
+            options={[
+              { value: 'all', label: '全部' },
+              { value: 'ok', label: '成功' },
+              { value: 'fail', label: '失敗' },
+            ]}
+          />
         </div>
         <DateField label="開始日期" value={from} max={to || undefined} onChange={(v) => { setFrom(v); reset(); }} />
         <DateField label="結束日期" value={to} min={from || undefined} onChange={(v) => { setTo(v); reset(); }} />

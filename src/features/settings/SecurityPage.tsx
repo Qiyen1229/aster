@@ -9,6 +9,7 @@ import { biometricAvailable, disableBiometric, disableLock, registerBiometric, s
 import { useSettings } from '@/stores/settings';
 import { useUI, ask } from '@/stores/ui';
 import { Switch } from '@/ui/controls';
+import { CustomSelect } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { PinPad } from '@/app/LockScreen';
@@ -55,9 +56,18 @@ export default function SecurityPage() {
               }} />
             </div>
             <div className="field"><span className="label">自動上鎖</span>
-              <select value={s.lock.autoLockSec} onChange={(e) => s.set('lock', { ...s.lock, autoLockSec: Number(e.target.value) })}>
-                <option value={0}>立即</option><option value={30}>30 秒後</option><option value={60}>1 分鐘後</option><option value={300}>5 分鐘後</option><option value={900}>15 分鐘後</option>
-              </select>
+              <CustomSelect
+                title="自動上鎖"
+                value={String(s.lock.autoLockSec)}
+                onChange={(val) => s.set('lock', { ...s.lock, autoLockSec: Number(val) })}
+                options={[
+                  { value: '0', label: '立即' },
+                  { value: '30', label: '30 秒後' },
+                  { value: '60', label: '1 分鐘後' },
+                  { value: '300', label: '5 分鐘後' },
+                  { value: '900', label: '15 分鐘後' },
+                ]}
+              />
             </div>
             <div className="field"><span className="label" style={{ flex: 1 }}>PIN 連錯 {WIPE_AT} 次清除本機資料</span>
               <Switch checked={!!s.lock.wipeAfterFails} label="連錯清除" onChange={async (v) => {

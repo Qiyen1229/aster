@@ -3,11 +3,14 @@
  */
 import { LabelHint } from './Hint';
 import { iconEmoji } from './Icon';
-import { useId, useRef, type ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import type { Account, Category, CategoryKind } from '@/db/types';
 import { buildTree } from '@/db/repo/categories';
 import { CURRENCIES, currencyInfo } from '@/domain/money';
 import { Switch } from './controls';
+import { CustomDateInput, CustomSelect, type SelectOption } from './CustomSelect';
+
+export { CustomDateInput, CustomSelect, type SelectOption };
 
 export function FieldRow({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
@@ -47,18 +50,10 @@ export function AmountField({ label, value, onChange, currency, allowNegative, p
 
 export function DateField({ label, value, onChange, min, max, type = 'date' }: { label: string; value: string; onChange: (v: string) => void; min?: string; max?: string; type?: 'date' | 'time' | 'month' }) {
   const id = useId();
-  const inputRef = useRef<HTMLInputElement>(null);
   return (
-    <div className="field" onClick={(e) => {
-      if (e.target === inputRef.current) return;
-      if (e.target instanceof HTMLElement && e.target.closest('label')) return;
-      const el = inputRef.current;
-      if (!el) return;
-      try { el.showPicker?.(); } catch { /* ignore */ }
-      el.focus();
-    }}>
+    <div className="field">
       <label htmlFor={id}>{label}</label>
-      <input ref={inputRef} id={id} type={type} value={value} min={min} max={max} onChange={(e) => onChange(e.target.value)} />
+      <CustomDateInput id={id} type={type === 'time' ? 'time' : 'date'} value={value} min={min} max={max} onChange={onChange} aria-label={label} />
     </div>
   );
 }
@@ -70,12 +65,7 @@ export function SelectField<T extends string | number>({ label, value, onChange,
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <select id={id} value={String(value)} onChange={(e) => {
-        const o = options.find((x) => String(x.value) === e.target.value);
-        if (o) onChange(o.value);
-      }}>
-        {options.map((o) => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}
-      </select>
+      <CustomSelect id={id} title={label} value={value} onChange={onChange} options={options} />
     </div>
   );
 }
@@ -94,13 +84,14 @@ export function AccountField({ label = '帳戶', value, onChange, accounts, allo
 }) {
   const id = useId();
   const list = accounts.filter((a) => !a.archived && (!filter || filter(a)));
+  const opts: SelectOption<string>[] = [
+    ...(allowEmpty ? [{ value: '', label: emptyLabel }] : []),
+    ...list.map((a) => ({ value: a.id, label: `${iconEmoji(a.icon)} ${a.name}（${a.currency}）` })),
+  ];
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
-        {allowEmpty && <option value="">{emptyLabel}</option>}
-        {list.map((a) => <option key={a.id} value={a.id}>{iconEmoji(a.icon)} {a.name}（{a.currency}）</option>)}
-      </select>
+      <CustomSelect id={id} title={label} value={value} onChange={onChange} options={opts} />
     </div>
   );
 }
@@ -110,18 +101,20 @@ export function CategoryField({ label = '分類', value, onChange, categories, k
 }) {
   const id = useId();
   const tree = buildTree(categories, kind);
+  const opts: SelectOption<string>[] = [
+    ...(allowEmpty ? [{ value: '', label: emptyLabel }] : []),
+    ...tree.flatMap(({ main, subs }) => {
+      const grp = `${iconEmoji(main.icon)} ${main.name}`;
+      return [
+        { value: main.id, label: `${iconEmoji(main.icon)} ${main.name}（全部）`, group: grp },
+        ...subs.map((s) => ({ value: s.id, label: `${iconEmoji(s.icon)} ${s.name}`, group: grp })),
+      ];
+    }),
+  ];
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
-        {allowEmpty && <option value="">{emptyLabel}</option>}
-        {tree.map(({ main, subs }) => (
-          <optgroup key={main.id} label={`${iconEmoji(main.icon)} ${main.name}`}>
-            <option value={main.id}>{iconEmoji(main.icon)} {main.name}（全部）</option>
-            {subs.map((s) => <option key={s.id} value={s.id}>　{iconEmoji(s.icon)} {s.name}</option>)}
-          </optgroup>
-        ))}
-      </select>
+      <CustomSelect id={id} title={label} value={value} onChange={onChange} options={opts} />
     </div>
   );
 }

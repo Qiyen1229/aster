@@ -377,15 +377,14 @@ describe('v4.1.56 鍵盤偏移、Sheet 焦點保護、聯絡人自動填寫與 C
     expect(searchInput.getAttribute('autocomplete')).toBe('off');
     expect(searchInput.getAttribute('autocorrect')).toBe('off');
 
-    const dateInput = host.querySelector<HTMLInputElement>('input[type="date"]')!;
-    const showPickerSpy = vi.fn();
-    Object.defineProperty(dateInput, 'showPicker', { value: showPickerSpy, configurable: true });
-    const fieldRow = dateInput.closest<HTMLElement>('.field')!;
+    expect(host.querySelector('input[type="date"]')).toBeNull();
+    const dateBtn = host.querySelector<HTMLButtonElement>('button.custom-select-btn')!;
+    expect(dateBtn).toBeTruthy();
+    expect(dateBtn.textContent).toContain('2026-11-23');
     await act(async () => {
-      fieldRow.click();
+      dateBtn.click();
     });
-    expect(showPickerSpy).toHaveBeenCalledTimes(1);
-    expect(document.activeElement).toBe(dateInput);
+    expect(document.body.querySelector('.sheet')).toBeTruthy();
   });
 
   it('AddSheet 日期與時間膠囊為自訂選擇器按鈕，備註輸入框具 autoComplete="off"', async () => {

@@ -123,7 +123,28 @@ export function matchesWhitelist(it: Pick<InboxRaw, 'text' | 'merchant'> & { car
       if (colon) names.push(colon[1].trim());
     }
   }
-  return names.some((name) => whitelist.some((w) => w.trim().length > 0 && name.normalize('NFKC').toLowerCase() === w.trim().normalize('NFKC').toLowerCase()));
+  return names.some((name) => {
+    const normName = name.normalize('NFKC').toLowerCase();
+    return whitelist.some((w) => {
+      const nw = w.trim().normalize('NFKC').toLowerCase();
+      if (!nw) return false;
+      return normName === nw || (nw.length >= 2 && normName.startsWith(nw));
+    });
+  });
+}
+
+/** 抓取收件匣通知前 4 個字作為白／黑名單自動相符標準（優先來源／LINE 發送者，其次商家／摘要／內文） */
+export function inboxPrefix4(it: Pick<InboxRaw, 'text' | 'merchant'> & { card?: string }, draftNote?: string): string {
+  let raw = '';
+  if (isLineChat(it.card ?? '')) {
+    const first = (it.text ?? '').normalize('NFKC').split('\n').map((s) => s.trim()).find(Boolean) ?? '';
+    const colon = first.match(/^([^:：]{1,30})[:：]/);
+    raw = colon ? colon[1].trim() : first;
+  } else {
+    raw = (it.card || it.merchant || draftNote || it.text || '').trim();
+  }
+  const cleaned = raw.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  return Array.from(cleaned).slice(0, 4).join('').trim();
 }
 
 /** 黑名單比對：發送者／商家／通知內容任一命中即自動略過並清除 */

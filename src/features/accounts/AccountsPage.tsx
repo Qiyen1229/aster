@@ -20,6 +20,7 @@ import { useSettings } from '@/stores/settings';
 import { useUI, ask } from '@/stores/ui';
 import { ExplainButton } from '@/ui/Explain';
 import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
+import { CustomSelect } from '@/ui/form';
 import { CatIcon, Icon, iconEmoji } from '@/ui/Icon';
 import { AccountSheet } from './AccountSheet';
 import { lazy, Suspense } from 'react';
@@ -184,9 +185,13 @@ function LoanPanel({ account }: { account: Account }) {
         <div className="list">
           <div className="field">
             <label htmlFor="loan-from">扣款帳戶</label>
-            <select id="loan-from" value={fromId} onChange={(e) => { setFrom(e.target.value); void updateAccount(account.id, { loan: { ...loan, payFromAccountId: e.target.value } }); }}>
-              {payers.map((a) => <option key={a.id} value={a.id}>{iconEmoji(a.icon)} {a.name}</option>)}
-            </select>
+            <CustomSelect
+              id="loan-from"
+              title="扣款帳戶"
+              value={fromId}
+              onChange={(val) => { setFrom(val); void updateAccount(account.id, { loan: { ...loan, payFromAccountId: val } }); }}
+              options={payers.map((a) => ({ value: a.id, label: `${iconEmoji(a.icon)} ${a.name}` }))}
+            />
           </div>
           <button className="row accent" disabled={busy} onClick={async () => {
             const date = st.next && st.next.date <= todayKey() ? st.next.date : todayKey();

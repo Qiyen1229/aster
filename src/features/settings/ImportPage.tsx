@@ -9,7 +9,7 @@ import {
 } from '@/services/importer';
 import { uid } from '@/db/schema';
 import { categoryLabel, useAccounts, useCategories } from '@/app/hooks';
-import { SwitchField } from '@/ui/form';
+import { CustomSelect, SwitchField } from '@/ui/form';
 import { useSettings } from '@/stores/settings';
 import { askInput, useUI } from '@/stores/ui';
 import { Icon } from '@/ui/Icon';
@@ -181,10 +181,15 @@ export default function ImportPage() {
             {(Object.keys(FIELD_LABELS) as FieldKey[]).map((k) => (
               <div key={k} className="field">
                 <span className="label">{FIELD_LABELS[k]}</span>
-                <select value={mapping[k] ?? ''} onChange={(e) => setMapping((m) => ({ ...m, [k]: e.target.value === '' ? undefined : Number(e.target.value) }))}>
-                  <option value="">（不使用）</option>
-                  {header.map((h, i) => <option key={i} value={i}>{h || `第 ${i + 1} 欄`}（例：{(body[0]?.[i] ?? '').slice(0, 12)}）</option>)}
-                </select>
+                <CustomSelect
+                  title={FIELD_LABELS[k]}
+                  value={mapping[k] === undefined ? '' : String(mapping[k])}
+                  onChange={(val) => setMapping((m) => ({ ...m, [k]: val === '' ? undefined : Number(val) }))}
+                  options={[
+                    { value: '', label: '（不使用）' },
+                    ...header.map((h, i) => ({ value: String(i), label: `${h || `第 ${i + 1} 欄`}（例：${(body[0]?.[i] ?? '').slice(0, 12)}）` })),
+                  ]}
+                />
               </div>
             ))}
             {mapping.account === undefined && (
