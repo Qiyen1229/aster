@@ -7,9 +7,10 @@
  * - 其他剩下的字當成關鍵字比對備註與商家（「全聯」「咖啡」）
  */
 import { findAccounts, findCategory, parseCnNumber, toHalfWidth, type NlpAccount, type NlpCategory } from './nlp';
+import { matchCategory } from './nlp-entities';
 import { accountingMonth, addDays, addMonths, daysInMonth, pad2, weekRange, yearRange, type DateKey, type Range } from './period';
 
-export type Metric = 'sum' | 'count' | 'avg' | 'avgDaily' | 'max' | 'topCategory' | 'topMerchant';
+export type Metric = 'sum' | 'count' | 'avg' | 'avgDaily' | 'interval' | 'max' | 'topCategory' | 'topMerchant';
 
 export interface NlQuery {
   range: Range;
@@ -33,7 +34,7 @@ export interface QueryContext {
   categories: NlpCategory[];
 }
 
-const QUESTION_RE = /多少|幾次|幾筆|幾天|幾趟|最多|最少|最大|最貴|最高|哪|平均|總共|一共|花了|花在|賺了|收入|支出|開銷|花費|累計/;
+const QUESTION_RE = /多少|幾次|幾筆|幾天|幾趟|多久|隔多久|每隔|間隔|頻率|週期|最多|最少|最大|最貴|最高|哪|平均|總共|一共|花了|花在|賺了|收入|支出|開銷|花費|累計/;
 
 /** 常見說法 → 分類名稱（只有分類存在時才會用） */
 const SYNONYMS: [RegExp, string[]][] = [
@@ -49,7 +50,7 @@ const SYNONYMS: [RegExp, string[]][] = [
 
 const INCOME_RE = /收入|賺|領到|領了|進帳|入帳|薪水|薪資|獎金|股利|配息|利息收入/;
 /** 問句裡不是關鍵字的字 */
-const STOP_RE = /都花到哪裡?|花到哪裡?|花在哪裡?|去哪裡?|在哪裡?|哪裡|哪家|哪間|哪|我|你|的|了|在|跟|和|與|共|總共|一共|多少錢?|幾次|幾筆|幾天|幾趟|次數|筆數|錢|花費?|花掉|花在|開銷|支出|收入|賺了?|領了?|吃了?|喝了?|買了?|去了?|搭了?|用了?|付了?|嗎|呢|啊|吧|平均|每天|一天|每日|每筆|一筆|最大|最貴|最高|最多|最少|最常|哪裡|哪家|哪間|哪一類|哪個分類|哪一個|哪個|哪些|什麼|都|是|有|到|上|囉|喔|[?？!！,，。.、\s]/g;
+const STOP_RE = /都花到哪裡?|花到哪裡?|花在哪裡?|去哪裡?|在哪裡?|哪裡|哪家|哪間|哪|我|你|的|了|在|跟|和|與|共|總共|一共|多少錢?|幾次|幾筆|幾天|幾趟|次數|筆數|多久|隔多久|每隔|間隔|頻率|週期|一次|每|錢|花費?|花掉|花在|開銷|支出|收入|賺了?|領了?|吃了?|喝了?|買了?|去了?|搭了?|用了?|付了?|嗎|呢|啊|吧|平均|每天|一天|每日|每筆|一筆|最大|最貴|最高|最多|最少|最常|哪裡|哪家|哪間|哪一類|哪個分類|哪一個|哪個|哪些|什麼|都|是|有|到|上|囉|喔|[?？!！,，。.、\s]/g;
 
 const fmtMD = (d: DateKey) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
 
@@ -109,6 +110,7 @@ function findRange(text: string, ctx: QueryContext): RangeHit {
 }
 
 function findMetric(text: string): Metric {
+  if (/多久|隔多久|每隔|間隔|頻率|週期|幾天.{0,3}一次|幾週.{0,3}一次|幾個月.{0,3}一次/.test(text)) return 'interval';
   if (/花最多|花在哪|都花到|哪一類|哪個分類|什麼最多|錢都去哪|花在什麼/.test(text)) return 'topCategory';
   if (/哪裡|哪家|哪間|在哪|最常去/.test(text)) return 'topMerchant';
   if (/最大|最貴|最高|最多的一筆|最大筆/.test(text)) return 'max';
@@ -137,15 +139,22 @@ export function looksLikeAiQuestion(text: string): boolean {
 export function parseQuery(input: string, ctx: QueryContext): NlQuery | null {
   const text = toHalfWidth(input).trim();
   if (!text || !isQuestion(text)) return null;
-  const r = findRange(text, ctx);
+  let r = findRange(text, ctx);
   let rest = r.match ? text.replace(r.match, ' ') : text;
   const metric = findMetric(rest);
+  // 頻率／間隔問句若未指定期間，預設查最近一年以確保有足夠樣本
+  if (metric === 'interval' && !r.match) {
+    const start = addDays(ctx.today, -365);
+    r = { match: '', range: { start, end: ctx.today }, label: '近一年', prev: { start: addDays(start, -365), end: addDays(start, -1) }, prevLabel: '前一年' };
+  }
+  // 把「加一次油」「剪一次髮」「吃一次」等拆開的動賓詞合併，才能通用命中分類與關鍵字
+  rest = rest.replace(/([加剪看吃喝買去搭洗充繳])\s*一次/g, '$1');
 
   // 帳戶
   const accHits = findAccounts(rest, ctx.accounts);
   for (const h of accHits) if (h.term) rest = rest.replace(new RegExp(h.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), ' ');
 
-  // 分類：常見說法 → 分類名稱，否則直接比對分類名稱
+  // 分類：常見說法 → 分類名稱，否則直接比對分類名稱與全行業店家詞庫
   let cats: NlpCategory[] = [];
   let catLabel: string | undefined;
   for (const [re, names] of SYNONYMS) {
@@ -163,6 +172,14 @@ export function parseQuery(input: string, ctx: QueryContext): NlQuery | null {
   if (!cats.length) {
     const c = findCategory(rest, ctx.categories);
     if (c) { cats = [c]; catLabel = c.name; rest = rest.replace(c.name, ' '); }
+  }
+  if (!cats.length) {
+    const mc = matchCategory(rest, ctx.categories);
+    if (mc) {
+      cats = [mc.category];
+      catLabel = mc.category.name;
+      if (mc.generic) rest = rest.replace(mc.term, ' ');
+    }
   }
   const kind: 'expense' | 'income' = cats[0]?.kind ?? (INCOME_RE.test(text) ? 'income' : 'expense');
   const keyword = rest.replace(STOP_RE, ' ').replace(/\s+/g, ' ').trim();

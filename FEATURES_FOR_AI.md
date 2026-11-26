@@ -2,7 +2,7 @@
 
 > 目的：讓接手的 AI（或新開發者）**不用逐檔翻程式碼**就知道「這個 App 能做什麼、每個功能怎麼運作、規則是什麼、程式在哪」。
 > 與 [Agent.md](Agent.md)（由來、心路歷程、技術棧、架構、部署、檔案地圖）互補：那份偏「精神、脈絡與架構」，這份偏「細部功能規格」。
-> 版本：**4.1.58**（2026-11-25）。分支 `main`。逐版細節見 [CHANGELOG.md](CHANGELOG.md)；設計文件見 `docs/`。
+> 版本：**4.1.59**（2026-11-26）。分支 `main`。逐版細節見 [CHANGELOG.md](CHANGELOG.md)；設計文件見 `docs/`。
 > 慣例：金額內部一律用**整數最小單位**（TWD 的 1 元 = 100），不要用浮點數；使用者可見文字一律**繁體中文（台灣用語）**。
 > 
 > Avoid unnecessary secondary labels and descriptions. Let the layout do the explaining.

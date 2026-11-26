@@ -511,10 +511,25 @@ export function ChatPanel({ onLeave, autoFocus }: { onLeave?: () => void; autoFo
     <div className="chat-wrap">
       <div ref={listRef} className="chat-list" role="log" aria-live="polite">
         {!msgs.length && (
-          <div style={{ margin: 8 }}>
-            {chips.length > 0 && <div className="ask-examples" style={{ marginBottom: 6 }}>{chips.slice(0, 3).map((c) => <button key={c.label} className="pill ctx-chip" disabled={busy} onClick={() => pickChip(c)}>{c.label}</button>)}</div>}
-            <div className="ask-examples">{VIEW_CHIPS.slice(0, 3).map((x) => <button key={x} className="pill view-chip" disabled={busy} onClick={() => go(x)}>{x}</button>)}</div>
-            <div className="ask-examples" style={{ marginTop: 6 }}>{CHAT_EXAMPLES.slice(0, Math.max(2, MAX_CHIPS - Math.min(chips.length, 3) - 3)).map((x) => <button key={x} className="pill" disabled={busy} onClick={() => go(x)}>{x}</button>)}</div>
+          <div className="chat-welcome">
+            <div className="chat-welcome-head">
+              <div className="chat-welcome-title">Cilo 一站整合式財務助手</div>
+              <div className="chat-welcome-sub">一句話記帳、查帳與消費週期分析、預算整理與收據辨識都在這裡</div>
+            </div>
+            {chips.length > 0 && (
+              <div className="chat-welcome-group">
+                <div className="chat-welcome-label">目前頁面建議</div>
+                <div className="ask-examples">{chips.slice(0, 3).map((c) => <button key={c.label} className="pill ctx-chip" disabled={busy} onClick={() => pickChip(c)}>{c.label}</button>)}</div>
+              </div>
+            )}
+            <div className="chat-welcome-group">
+              <div className="chat-welcome-label">分析與週期</div>
+              <div className="ask-examples">{VIEW_CHIPS.slice(0, 3).map((x) => <button key={x} className="pill view-chip" disabled={busy} onClick={() => go(x)}>{x}</button>)}</div>
+            </div>
+            <div className="chat-welcome-group">
+              <div className="chat-welcome-label">試試這樣問或記帳</div>
+              <div className="ask-examples">{CHAT_EXAMPLES.slice(0, Math.max(2, MAX_CHIPS - Math.min(chips.length, 3) - 3)).map((x) => <button key={x} className="pill" disabled={busy} onClick={() => go(x)}>{x}</button>)}</div>
+            </div>
           </div>
         )}
         {msgs.map((m) => m.role === 'user' ? (
@@ -527,7 +542,14 @@ export function ChatPanel({ onLeave, autoFocus }: { onLeave?: () => void; autoFo
                 <div style={{ whiteSpace: 'pre-wrap' }}>{m.text}{m.streaming && <span className="stream-caret" aria-hidden="true" />}</div>
                 {m.sub && <div className="row-sub" style={{ whiteSpace: 'normal' }}>{m.sub}</div>}
                 {m.link && <button className="btn small tinted" style={{ marginTop: 6 }} onClick={() => { onLeave?.(); navigate(m.link!.to); }}>{m.link.label}</button>}
-                {!!m.followups?.length && <div className="ask-examples" style={{ marginTop: 6 }}>{m.followups.map((f) => <button key={f} className="pill" disabled={busy} onClick={() => go(f)}>{f}</button>)}</div>}
+                {!!m.followups?.length && (
+                  <div className="chat-followups">
+                    <span className="chat-followups-label">接續建議</span>
+                    <div className="ask-examples">
+                      {m.followups.map((f) => <button key={f} className="pill chat-followup-chip" disabled={busy} onClick={() => go(f)}>{f}</button>)}
+                    </div>
+                  </div>
+                )}
               </>
             )}
             {m.kind === 'entries' && <EntriesBubble m={m} />}
@@ -572,7 +594,7 @@ export function ChatPanel({ onLeave, autoFocus }: { onLeave?: () => void; autoFo
 export function AiChatSheet() {
   const { open, msgs, setOpen, clear } = useChat();
   return (
-    <Sheet open={open} onClose={() => setOpen(false)} title="對話" full variant="rise"
+    <Sheet open={open} onClose={() => setOpen(false)} title="Cilo 助手" full variant="rise"
       right={msgs.length ? <button className="accent" onClick={clear}>清除</button> : undefined}>
       <ChatPanel onLeave={() => setOpen(false)} autoFocus />
     </Sheet>

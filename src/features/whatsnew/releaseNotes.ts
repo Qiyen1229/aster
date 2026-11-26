@@ -25,6 +25,21 @@ export interface ReleaseNote {
 /** 新的在前 */
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '4.1.59', date: '2026-11-26',
+    features: [
+      {
+        title: '消費分析',
+        intro: '問 Cilo「平均多久加一次油」、「多久剪一次髮」或「多久吃一次某店家」時，本機即可直接算出平均間隔天數、最短最長週期、每次均額與下次推估日期，不扣 AI 額度。',
+        howto: '打開 Cilo 助手或搜尋查帳輸入',
+      },
+      {
+        title: 'Cilo 介面升級',
+        intro: '重新整理一站整合式 AI 歡迎頁與分區快捷提示，並為回覆下方的接續建議問題加上獨立圓角框線，閱讀與點擊更清晰俐落。',
+        howto: '開啟 Cilo 助手即可體驗',
+      },
+    ],
+  },
+  {
     version: '4.1.58', date: '2026-11-25',
     features: [
       {

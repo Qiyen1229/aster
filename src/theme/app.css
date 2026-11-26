@@ -3280,9 +3280,28 @@ html.voice-holding .sheet, html.voice-holding .sheet-backdrop { pointer-events: 
 .chat-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .sheet-body:has(> .chat-wrap) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
 .chat-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px 2px 10px; }
-.chat-msg { max-width: 88%; padding: 10px 14px; border-radius: 18px; word-break: break-word; }
+.chat-msg { max-width: 88%; padding: 12px 14px; border-radius: 18px; word-break: break-word; line-height: 1.5; }
 .chat-msg.me { align-self: flex-end; background: var(--accent); color: var(--on-accent); border-bottom-right-radius: 6px; }
-.chat-msg.ai { align-self: flex-start; background: var(--surface-2); border-bottom-left-radius: 6px; }
+.chat-msg.ai { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--glass-border); border-bottom-left-radius: 6px; }
+.chat-msg.ai .row-sub { margin-top: 6px; font-size: 0.74rem; color: var(--text-3); }
+.chat-followups { margin-top: 10px; padding-top: 9px; border-top: 0.5px solid var(--sep); }
+.chat-followups-label { display: block; font-size: 0.72rem; font-weight: 600; color: var(--text-3); margin-bottom: 6px; letter-spacing: 0.2px; }
+.chat-followup-chip {
+  background: var(--surface) !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--glass-border)) !important;
+  color: var(--text) !important;
+  font-size: 0.8rem !important;
+  padding: 6px 12px !important;
+  min-height: 32px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.chat-welcome { display: grid; gap: 12px; margin: 6px 4px 12px; padding: 14px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--glass-border); }
+.chat-welcome-head { display: grid; gap: 3px; }
+.chat-welcome-title { font-size: 1rem; font-weight: 700; color: var(--text); }
+.chat-welcome-sub { font-size: 0.8rem; color: var(--text-2); line-height: 1.45; }
+.chat-welcome-group { display: grid; gap: 6px; }
+.chat-welcome-label { font-size: 0.72rem; font-weight: 600; color: var(--text-3); }
+.chat-welcome .pill { border: 1px solid var(--glass-border); }
 .chat-input { display: flex; gap: 8px; padding-top: 8px; border-top: 1px solid var(--separator, rgba(127,127,127,.2)); }
 .chat-input input { flex: 1; min-width: 0; background: var(--surface-2); border: 0; border-radius: 999px; padding: 0 16px; min-height: 44px; color: var(--text); font-size: 1rem; outline: 0; }
 

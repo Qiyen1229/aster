@@ -7,7 +7,7 @@ import { countsInStats, statAmount } from '@/domain/ledger';
 import { formatMoney } from '@/domain/money';
 import { normText } from '@/domain/rules';
 import { parseFollowUp, parseQuery, rangeText, type FollowUp, type NlQuery } from '@/domain/nlquery';
-import { eachDay, todayKey } from '@/domain/period';
+import { addDays, eachDay, todayKey } from '@/domain/period';
 import { pctChange } from '@/domain/reports';
 import { useSettings } from '@/stores/settings';
 import { parseContext } from './quickentry';
@@ -69,6 +69,35 @@ export async function answerQuestion(q: NlQuery): Promise<QueryAnswer> {
       const end = q.range.end > todayKey() ? todayKey() : q.range.end;
       const days = Math.max(1, eachDay({ start: q.range.start, end }).length);
       return { query: q, answer: `${subject}平均每天${q.kind === 'income' ? '收入' : '花'} ${money(Math.round(total / days))}（${days} 天共 ${money(total)}）。`, items };
+    }
+    case 'interval': {
+      const asc = [...items].sort((a, b) => a.date.localeCompare(b.date) || a.ts - b.ts);
+      const dates = [...new Set(asc.map((t) => t.date))];
+      const avgAmt = Math.round(total / items.length);
+      if (dates.length < 2) {
+        return {
+          query: q,
+          items,
+          answer: `${subject}目前只有 ${items.length} 筆紀錄（${rangeText({ start: asc[0].date, end: asc[0].date })}，${money(total)}），至少需要 2 天以上紀錄才能算出平均週期。`,
+        };
+      }
+      const diffDays = (b: string, a: string) => Math.round((new Date(`${b}T00:00:00`).getTime() - new Date(`${a}T00:00:00`).getTime()) / 86400000);
+      const gaps: number[] = [];
+      for (let i = 1; i < dates.length; i++) gaps.push(Math.max(1, diffDays(dates[i], dates[i - 1])));
+      const avgGap = gaps.reduce((s, x) => s + x, 0) / gaps.length;
+      const avgStr = Number.isInteger(avgGap) ? String(avgGap) : avgGap.toFixed(1);
+      const minGap = Math.min(...gaps);
+      const maxGap = Math.max(...gaps);
+      const lastDate = dates[dates.length - 1];
+      const ago = Math.max(0, diffDays(todayKey(), lastDate));
+      const nextDate = addDays(lastDate, Math.round(avgGap));
+      const fmtD = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
+      return {
+        query: q,
+        items,
+        answer: `${subject}共有 ${items.length} 筆（平均每次 ${money(avgAmt)}，合計 ${money(total)}）：平均約每 ${avgStr} 天一次。`,
+        detail: `最短間隔 ${minGap} 天、最長 ${maxGap} 天；上次是 ${fmtD(lastDate)}（${ago === 0 ? '今天' : `${ago} 天前`}），推估下次約在 ${fmtD(nextDate)} 前後。`,
+      };
     }
     case 'max': {
       const top = items.reduce((a, b) => (statAmount(b) > statAmount(a) ? b : a));
