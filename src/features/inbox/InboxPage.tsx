@@ -5,8 +5,10 @@
  * （iPhone 捷徑設定已獨立至「設定」→「加入 iPhone 捷徑」）
  */
 import { useCallback, useEffect, useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
-import { useAccounts, useCategories } from '@/app/hooks';
+import { categoryLabel, useAccounts, useCategories } from '@/app/hooks';
+import { db } from '@/db/schema';
 import { formatMoney, fromMinor, toMinor } from '@/domain/money';
 import { shortDate } from '@/domain/nlp';
 import { todayKey } from '@/domain/period';
@@ -21,6 +23,7 @@ import { fallbackAccount, resolveDraft } from '@/services/quickentry';
 import { snackUndo, useUI, askInput } from '@/stores/ui';
 import { useSettings } from '@/stores/settings';
 import { EmptyState, SkeletonRows } from '@/ui/controls';
+import { CustomSelect } from '@/ui/form';
 import { SwipeRow } from '@/ui/SwipeRow';
 import { AiMark, CatIcon, Icon } from '@/ui/Icon';
 import { bookForecast, confirmRulePending, loadForecast, registerForecast, skipForecast, skipRulePending, type ForecastData } from '@/services/forecast';
@@ -31,14 +34,28 @@ const snack = (text: string, duration?: number) => useUI.getState().showSnack({ 
 
 export default function InboxPage() {
   const navigate = useNavigate();
-  const { map: accMap } = useAccounts();
-  const { map: catMap } = useCategories();
+  const { list: accounts, map: accMap } = useAccounts();
+  const { all: categories, map: catMap } = useCategories();
   const count = useInboxCount((s) => s.n);
   const [entries, setEntries] = useState<InboxEntry[] | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
   const today = todayKey();
+
+  const recentAuto = useLiveQuery(async () => {
+    const rows = await db.transactions.where('id').startsWith('inbox-').toArray();
+    return rows.filter((t) => !t.deletedAt).sort((a, b) => b.createdAt - a.createdAt).slice(0, 10);
+  }, [], []);
+
+  const updateDraft = (itemId: number, idx: number, patch: { categoryId?: string; accountId?: string }) => {
+    setEntries((prev) => prev?.map((entry) => (
+      entry.item.id !== itemId ? entry : {
+        ...entry,
+        drafts: entry.drafts.map((d, di) => (di === idx ? { ...d, ...patch } : d)),
+      }
+    )) ?? null);
+  };
 
   // 預計扣款：週期帳目的待確認 + 看起來是固定扣款、預計日到了的項目（本機推算）
   const [fc, setFc] = useState<ForecastData | null>(null);
@@ -294,7 +311,31 @@ export default function InboxPage() {
                         <span className="cat-icon sm" style={{ ['--c' as string]: c?.color }} aria-hidden="true"><CatIcon icon={d.kind === 'transfer' ? 'repeat' : c?.icon ?? src.icon} size={16} /></span>
                         <span className="row-main">
                           <span className="row-title">{d.note || c?.name || src.label}</span>
-                          <span className="row-sub">{src.icon} {shortDate(d.date, today)} · {c?.name ?? '轉帳'} · {acc?.name ?? '?'}{e.item.card ? `（${e.item.card}）` : ''}</span>
+                          <span className="row-sub">{src.icon} {shortDate(d.date, today)}{e.item.card ? ` · ${e.item.card}` : ''}</span>
+                          <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                            {d.kind !== 'transfer' && (
+                              <CustomSelect<string>
+                                className="mini-select"
+                                title="快速切換分類"
+                                aria-label="快速切換分類"
+                                value={d.categoryId ?? ''}
+                                onChange={(val) => updateDraft(e.item.id, i, { categoryId: val })}
+                                options={categories
+                                  .filter((cat) => !cat.archived && !cat.deletedAt && cat.kind === (d.kind === 'income' ? 'income' : 'expense'))
+                                  .map((cat) => ({ value: cat.id, label: categoryLabel(catMap, cat.id) }))}
+                              />
+                            )}
+                            <CustomSelect<string>
+                              className="mini-select"
+                              title="快速切換帳戶"
+                              aria-label="快速切換帳戶"
+                              value={d.accountId}
+                              onChange={(val) => updateDraft(e.item.id, i, { accountId: val })}
+                              options={accounts
+                                .filter((a) => !a.archived && !a.deletedAt && a.type !== 'loan' && a.type !== 'brokerage')
+                                .map((a) => ({ value: a.id, label: a.name }))}
+                            />
+                          </span>
                         </span>
                         <span className={`num ${d.kind === 'income' ? 'pos' : 'neg'}`}>{formatMoney(toMinor(d.amount, cur), cur)}</span>
                         {i === e.drafts.length - 1 && e.review && (
@@ -337,6 +378,31 @@ export default function InboxPage() {
             })}
           </div>
           {ready.length > 1 && <button className="btn" disabled={busy} onClick={() => void book(ready)}>全部記帳（{ready.reduce((n, e) => n + e.drafts.length, 0)} 筆）</button>}
+        </>
+      )}
+
+      {recentAuto.length > 0 && (
+        <>
+          <div className="section-title">近期已自動入帳（{recentAuto.length}）</div>
+          <div className="list">
+            {recentAuto.map((t) => {
+              const c = t.categoryId ? catMap.get(t.categoryId) : undefined;
+              const acc = accMap.get(t.accountId);
+              return (
+                <div key={t.id} className="row inbox-row">
+                  <span className="cat-icon sm" style={{ ['--c' as string]: c?.color }} aria-hidden="true"><CatIcon icon={c?.icon ?? 'sparkles'} size={16} /></span>
+                  <span className="row-main">
+                    <span className="row-title">{t.note || t.merchant || c?.name || '自動記帳'}</span>
+                    <span className="row-sub">{shortDate(t.date, today)} · {c?.name ?? '未分類'} · {acc?.name ?? '?'}</span>
+                  </span>
+                  <span className={`num ${t.type === 'income' ? 'pos' : 'neg'}`}>{formatMoney(t.amountMinor, t.currency)}</span>
+                  <span className="inbox-actions">
+                    <button className="pill" onClick={() => useUI.getState().editTx(t.id)}>編輯</button>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </>
       )}
       <RuleEditorSheet

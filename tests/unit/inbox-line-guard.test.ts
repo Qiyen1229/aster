@@ -28,9 +28,11 @@ describe('LINE 誤記防護', () => {
     expect(isTrustedLineNotice('【國泰世華】本月帳單已產生')).toBe(false);
   });
 
-  it('非官方 LINE：有金額 → 留在收件匣確認；沒金額 → 丟掉', () => {
+  it('非官方 LINE：有金額 → 留在收件匣確認；沒金額 → 丟掉；官方無金額摘要 → 留收件匣補填', () => {
     expect(judgeNotice(n('LINE', '晚餐 500 你先幫我付'), true).trust).toBe('review');
     expect(judgeNotice(n('LINE', '今天好冷喔'), false).trust).toBe('drop');
+    expect(judgeNotice(n('LINE', '中國信託：你有一筆入帳'), false).trust).toBe('review');
+    expect(judgeNotice(n('LINE', '中國信託\n存款入帳通知'), false).trust).toBe('review');
   });
 
   it('官方 LINE 通知與非 LINE 來源照舊', () => {

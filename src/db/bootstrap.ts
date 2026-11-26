@@ -10,6 +10,17 @@ import { ensureOtherSubcategories } from './repo/categories';
 
 export async function bootstrap() {
   await db.open();
+  // 快速路徑：已完成初始化且分類表非空時，跳過讀寫交易以免啟動期與同步搶鎖
+  const [booted, catCount] = await Promise.all([
+    db.meta.get('seed:inc-salary-pocket'),
+    db.categories.count(),
+  ]);
+  if (booted && catCount > 0) {
+    try {
+      if (navigator.storage?.persist && !(await navigator.storage.persisted())) void navigator.storage.persist().catch(() => undefined);
+    } catch { /* 不支援則略過 */ }
+    return loadSettings();
+  }
   // 預設分類：全新資料庫才建立全部；之後只補上程式需要的系統分類（避免使用者刪掉的預設分類又跑回來，
   // 也避免新裝置的預設值經同步覆蓋其他裝置的修改）
   let isFresh = false;

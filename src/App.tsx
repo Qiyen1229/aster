@@ -27,17 +27,11 @@ const AddSheet = lazy(() => loadAddSheet().then((m) => ({ default: m.AddSheet })
 function AddSheetHost() {
   const used = useUI((s) => s.add.seq > 0);
   useEffect(() => {
-    const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };
-    const run = () => {
-      void loadAddSheet().catch(() => undefined);
-      // 預先載入主導覽分頁，切換標籤時不經 Suspense 骨架閃爍與二次掛載
-      void loadAccountsPage().catch(() => undefined);
-      void loadPlanPage().catch(() => undefined);
-      void loadReportsPage().catch(() => undefined);
-      void loadSettingsPage().catch(() => undefined);
-    };
-    if (w.requestIdleCallback) w.requestIdleCallback(run);
-    else setTimeout(run, 1500);
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number };
+    // 只預載最常開啟的記帳面板；其他分頁改為切換時再載入，降低 iOS 啟動期記憶體尖峰與閃退風險
+    const run = () => { void loadAddSheet().catch(() => undefined); };
+    if (w.requestIdleCallback) w.requestIdleCallback(run, { timeout: 3000 });
+    else setTimeout(run, 2000);
   }, []);
   return used ? <Suspense fallback={null}><AddSheet /></Suspense> : null;
 }
@@ -317,7 +311,7 @@ export default function App() {
     let stop: (() => void) | undefined;
     const t = setTimeout(() => {
       void import('./services/startup').then((m) => { void m.runStartupTasks(); stop = m.startAutoRefresh(); });
-    }, 600);
+    }, 800);
     return () => { clearTimeout(t); stop?.(); };
   }, [onboarded]);
   useEffect(() => installAutoLock(), []);

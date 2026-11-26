@@ -79,24 +79,38 @@ export function isPaymentRelayCard(card: string): boolean {
   return /^(?:line\s*(?:錢包|pay)|apple\s*pay|google\s*pay|samsung\s*pay)$/i.test(app);
 }
 
-/** LINE 訊息是否為重點官方帳號的交易通知（支援多行與單行「發送者：內容」，發送者名稱＋交易字眼＋官方格式三者缺一不可） */
-export function isTrustedLineNotice(text: string): boolean {
+function parseLineSenderAndBody(text: string): { sender: string; body: string } | null {
   const norm = text.normalize('NFKC');
   const lines = norm.split('\n').map((s) => s.trim()).filter(Boolean);
-  if (!lines.length) return false;
-  let sender = '';
-  let body = '';
+  if (!lines.length) return null;
   if (lines.length >= 2) {
     const colon = lines[0].match(/^([^:：]{1,30})[:：]\s*(.+)$/);
-    sender = (colon ? colon[1] : lines[0]).trim().toLowerCase();
-    body = colon ? `${colon[2]}\n${lines.slice(1).join('\n')}` : lines.slice(1).join('\n');
-  } else {
-    const colon = lines[0].match(/^([^:：]{1,30})[:：]\s*(.+)$/);
-    if (!colon) return false;
-    sender = colon[1].trim().toLowerCase();
-    body = colon[2];
+    return {
+      sender: (colon ? colon[1] : lines[0]).trim().toLowerCase(),
+      body: colon ? `${colon[2]}\n${lines.slice(1).join('\n')}` : lines.slice(1).join('\n'),
+    };
   }
-  return LINE_OFFICIAL_SENDERS.some((n) => sender === n.normalize('NFKC').toLowerCase()) && TXN_WORDS.test(body) && OFFICIAL_STYLE.test(body);
+  const colon = lines[0].match(/^([^:：]{1,30})[:：]\s*(.+)$/);
+  if (!colon) return null;
+  return { sender: colon[1].trim().toLowerCase(), body: colon[2] };
+}
+
+function isOfficialLineSender(sender: string): boolean {
+  return LINE_OFFICIAL_SENDERS.some((n) => sender === n.normalize('NFKC').toLowerCase());
+}
+
+/** LINE 訊息是否為重點官方帳號的交易通知（支援多行與單行「發送者：內容」，發送者名稱＋交易字眼＋官方格式三者缺一不可） */
+export function isTrustedLineNotice(text: string): boolean {
+  const parsed = parseLineSenderAndBody(text);
+  if (!parsed) return false;
+  return isOfficialLineSender(parsed.sender) && TXN_WORDS.test(parsed.body) && OFFICIAL_STYLE.test(parsed.body);
+}
+
+/** 官方帳號的交易動作摘要通知（例如 LINE 卡片在 iOS 只顯示「中國信託：你有一筆入帳」，沒有金額） */
+export function isOfficialLineActionNotice(text: string): boolean {
+  const parsed = parseLineSenderAndBody(text);
+  if (!parsed) return false;
+  return isOfficialLineSender(parsed.sender) && TXN_WORDS.test(parsed.body);
 }
 
 export type NoticeVerdict = { trust: 'ok' } | { trust: 'review'; reason: string } | { trust: 'drop' };
@@ -161,6 +175,9 @@ export function judgeNotice(it: Pick<InboxRaw, 'source' | 'card' | 'text' | 'mer
   if (matchesWhitelist(it, whitelist)) return { trust: 'ok' };
   if (it.source !== 'notify' || !isLineChat(it.card ?? '')) return { trust: 'ok' };
   if (isTrustedLineNotice(it.text ?? '')) return { trust: 'ok' };
+  if (!hasDrafts && isOfficialLineActionNotice(it.text ?? '')) {
+    return { trust: 'review', reason: '官方帳號通知未含金額（例如 LINE 卡片只顯示「你有一筆入帳」），請點「手動記」補填金額' };
+  }
   return hasDrafts ? { trust: 'review', reason: '這是 LINE 聊天訊息（不是官方帳號的消費通知），確認真的是消費再記' } : { trust: 'drop' };
 }
 

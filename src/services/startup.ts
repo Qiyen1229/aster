@@ -51,8 +51,8 @@ export async function loadTwHolidays(): Promise<void> {
   await db.meta.put({ key: 'twHolidays', value: { at: Date.now(), dates: [...new Set([...(cached?.dates ?? []), ...dates])] } });
 }
 
-/** 瀏覽器閒置時才執行（不支援就稍後執行） */
-const idle = (fn: () => void) => ('requestIdleCallback' in window ? (window as unknown as { requestIdleCallback: (f: () => void, o?: { timeout: number }) => void }).requestIdleCallback(fn, { timeout: 8000 }) : setTimeout(fn, 2500));
+/** 讓出主執行緒一段時間，避免大量啟動任務同時擠在 iOS WebView 造成卡頓或記憶體尖峰 */
+const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 let started = false;
 export async function runStartupTasks() {
@@ -63,29 +63,30 @@ export async function runStartupTasks() {
   };
   const base = useSettings.getState().baseCurrency;
   let created = 0, pending = 0;
+  // Stage 1：體感最優先（週期／分期補帳、輕量監聽、收件匣與預計扣款）
   await step('recurring', async () => { const r = await processRecurring(); created += r.created; pending += r.pending; });
   await step('installments', async () => { created += await processInstallments(); });
   if (created || pending) {
     notifyUser({ text: [created ? `已自動入帳 ${created} 筆週期／分期帳目` : '', pending ? `${pending} 筆待確認` : ''].filter(Boolean).join('，') });
   }
-  // 監看帳目變動的 hook 先裝好（很輕、不等網路）：啟動期間新記的帳不會漏掉
   void step('newTxWatcher', () => import('./insights').then((m) => m.installNewTxWatcher()));
   void step('pushRefresh', () => import('./push').then((m) => m.installPushRefresh()));
-  // 兩條互不相干的路並行：①網路（匯率、休市日 → 股價 → 每日快照；快照要用新的價格與匯率）②本機提醒檢查
+  await Promise.all([
+    step('forecast', () => import('./forecast').then((m) => m.refreshForecastCount())),
+    step('inbox', () => import('./inbox').then((m) => m.refreshInbox())),
+  ]);
+
+  // Stage 2：錯開 1.2 秒後再跑本機提醒與市場網路更新（匯率、休市日 → 股價 → 每日快照）
+  await pause(1200);
   const network = (async () => {
     await Promise.all([step('fx', () => refreshRatesIfStale(base)), step('holidays', () => loadTwHolidays())]);
     await step('quotes', () => updateAllQuotes({ silent: true }));
     await step('snapshot', () => takeSnapshot());
   })();
-  const local = step('reminders', () => runReminderChecks());
-  // 比較重的偵測全部排到瀏覽器閒置時，而且一個接一個做（不同時搶主執行緒）：發票對獎 → 除息前提醒 → 異常與預算預警（有 10 分鐘快取）
-  idle(() => void (async () => {
-    await step('invoicePrize', () => import('./invoicePrize').then((m) => m.checkPrizesOnStartup()));
-    await step('taxplan', () => import('./taxplan').then((m) => m.notifyUpcomingDividends()));
-    await step('insights', () => import('./insights').then((m) => m.runInsights({ notifyNew: true })));
-  })());
-  await Promise.all([network, local]);
-  // 對外通道與背景推播排程、電子發票載具、收件匣：都是網路請求，彼此獨立，並行進行
+  await Promise.all([network, step('reminders', () => runReminderChecks())]);
+
+  // Stage 3：再錯開 1 秒後處理推播排程與電子發票載具
+  await pause(1000);
   await Promise.all([
     (async () => {
       await step('outgoing', () => import('./outgoing').then((m) => m.refreshOutgoingActive()));
@@ -97,11 +98,15 @@ export async function runStartupTasks() {
         notifyUser({ text: `電子發票：新記 ${r.created} 筆${r.matched ? `、對到 ${r.matched} 筆手動記帳` : ''}${r.usedDefault ? `（${r.usedDefault} 筆記到預設帳戶）` : ''}` });
       }
     }),
-    // 預計扣款：只更新收件匣的數字（本機推算）
-    step('forecast', () => import('./forecast').then((m) => m.refreshForecastCount())),
-    // 自動記帳收件匣（iPhone 捷徑送來的 Apple Pay、簡訊、Siri）
-    step('inbox', () => import('./inbox').then((m) => m.refreshInbox())),
   ]);
+
+  // Stage 4：較重的本機掃描（發票對獎 → 除息提醒 → 異常偵測）依序執行並讓出主執行緒，避免與網路任務撞車
+  await pause(1500);
+  await step('invoicePrize', () => import('./invoicePrize').then((m) => m.checkPrizesOnStartup()));
+  await pause(120);
+  await step('taxplan', () => import('./taxplan').then((m) => m.notifyUpcomingDividends()));
+  await pause(120);
+  await step('insights', () => import('./insights').then((m) => m.runInsights({ notifyNew: true })));
 }
 
 /**

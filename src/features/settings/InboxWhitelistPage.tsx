@@ -74,6 +74,26 @@ export default function InboxWhitelistPage() {
     snack(`已更新為「${trimmed}」`);
   };
 
+  const editBlacklist = async (oldWord: string, idx: number) => {
+    const next = await askInput({
+      title: '編輯黑名單關鍵字',
+      placeholder: '封鎖發送者或關鍵字，如：停車折抵、小明',
+      defaultValue: oldWord,
+      required: true,
+      maxLength: 40,
+      confirmText: '儲存',
+    });
+    if (!next) return;
+    const trimmed = next.trim().slice(0, 40);
+    if (!trimmed || trimmed === oldWord) return;
+    if (blacklist.some((x, i) => i !== idx && x.toLowerCase() === trimmed.toLowerCase())) {
+      snack('黑名單裡已經有相同的關鍵字了');
+      return;
+    }
+    update({ blacklist: blacklist.map((x, i) => (i === idx ? trimmed : x)) });
+    snack(`已更新為「${trimmed}」`);
+  };
+
   const remove = (n: string) => update({ whitelist: list.filter((x) => x !== n) });
 
   return (
@@ -190,7 +210,10 @@ export default function InboxWhitelistPage() {
                     <span className="row-title">{b}</span>
                     <span className="row-sub">命中時自動忽略，不跳審核通知</span>
                   </span>
-                  <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => update({ blacklist: blacklist.filter((x) => x !== b) })}>移除</button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" className="pill" onClick={() => void editBlacklist(b, idx)}>編輯</button>
+                    <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => update({ blacklist: blacklist.filter((x) => x !== b) })}>移除</button>
+                  </div>
                 </div>
               ))}
             </div>
