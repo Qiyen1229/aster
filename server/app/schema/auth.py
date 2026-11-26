@@ -44,11 +44,23 @@ def check_email_domain(email: str) -> None:
             raise ValueError("這個 Email 的網域不存在或無法收信，請確認拼字") from e
 
 
+class RegisterCodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    email: str = Field(min_length=3, max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        return normalize_email(v)
+
+
 class RegisterRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     username: str = Field(min_length=3, max_length=32)
     email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=8, max_length=128)
+    verification_code: str | None = Field(default=None, max_length=12)
+    verification_token: str | None = Field(default=None, max_length=1024)
 
     @field_validator("username")
     @classmethod
@@ -109,6 +121,30 @@ class ChangePasswordRequest(BaseModel):
         return validate_password_strength(v)
 
 
+class SetupProfileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    username: str = Field(min_length=3, max_length=32)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("username")
+    @classmethod
+    def _username(cls, v: str) -> str:
+        if not USERNAME_RE.match(v):
+            raise ValueError("使用者名稱只能使用英文、數字、底線、點與連字號（3–32 字元）")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def _password(cls, v: str) -> str:
+        return validate_password_strength(v)
+
+    @model_validator(mode="after")
+    def _not_same(self) -> "SetupProfileRequest":
+        if self.password.lower() == self.username.lower():
+            raise ValueError("密碼不可與使用者名稱相同")
+        return self
+
+
 class UserPublic(BaseModel):
     """回傳給使用者本人的資料。"""
     model_config = ConfigDict(from_attributes=True)
@@ -117,6 +153,7 @@ class UserPublic(BaseModel):
     email: str
     role: str
     must_change_password: bool
+    needs_profile_setup: bool = False
     created_at: datetime
     last_login_at: datetime | None
     totp_enabled: bool = False

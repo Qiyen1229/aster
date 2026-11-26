@@ -32,10 +32,13 @@ function useRegistrationOpen(): boolean | null {
   return open;
 }
 
-/** 伺服器是否已設定第三方登入（如 Google OAuth） */
-function useAuthProviders(): { google: boolean } {
-  const [p, setP] = useState({ google: false });
-  useEffect(() => { void api<{ google: boolean }>('/auth/providers').then(setP, () => setP({ google: false })); }, []);
+/** 伺服器是否已設定第三方登入與註冊信箱驗證碼 */
+function useAuthProviders(): { google: boolean; email_verify: boolean } {
+  const [p, setP] = useState({ google: false, email_verify: false });
+  useEffect(() => {
+    void api<{ google: boolean; email_verify?: boolean }>('/auth/providers')
+      .then((r) => setP({ google: !!r.google, email_verify: !!r.email_verify }), () => setP({ google: false, email_verify: false }));
+  }, []);
   return p;
 }
 
@@ -155,11 +158,16 @@ export function LoginPage() {
 
 export function RegisterPage() {
   const registrationOpen = useRegistrationOpen();
+  const { email_verify: emailVerify } = useAuthProviders();
   const register = useAuth((s) => s.register);
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [verifyCode, setVerifyCode] = useState('');
+  const [verifyToken, setVerifyToken] = useState('');
+  const [codeMsg, setCodeMsg] = useState('');
+  const [codeBusy, setCodeBusy] = useState(false);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState(params.get('oauth_error') || '');
@@ -168,16 +176,33 @@ export function RegisterPage() {
   const userOk = /^[A-Za-z0-9_.-]{3,32}$/.test(username);
   const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
 
+  const sendCode = async () => {
+    if (!emailOk) return setError('請先輸入正確的 Email');
+    setCodeBusy(true);
+    setError('');
+    setCodeMsg('');
+    try {
+      const r = await api<{ token: string; message: string }>('/auth/register-code', { method: 'POST', body: { email: email.trim() } });
+      setVerifyToken(r.token);
+      setCodeMsg(r.message);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setCodeBusy(false);
+    }
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!userOk) return setError('使用者名稱只能使用英文、數字、底線、點與連字號（3–32 字元）');
     if (!emailOk) return setError('Email 格式不正確');
+    if (emailVerify && (!verifyToken || verifyCode.trim().length < 6)) return setError('請先取得並輸入 6 位數信箱驗證碼');
     if (issues.length) return setError(`密碼${issues.join('、')}`);
     if (password !== confirm) return setError('兩次輸入的密碼不一致');
     setBusy(true);
     setError('');
     try {
-      await register(username.trim(), email.trim(), password);
+      await register(username.trim(), email.trim(), password, emailVerify ? verifyCode.trim() : undefined, emailVerify ? verifyToken : undefined);
       navigate('/', { replace: true });
     } catch (err) {
       setError(errorText(err));
@@ -201,7 +226,21 @@ export function RegisterPage() {
         <input id="reg-user" className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username"
           autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={32} required autoFocus placeholder="英數、底線、點、連字號" />
         <label htmlFor="reg-email">Email</label>
-        <input id="reg-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" maxLength={254} required />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input id="reg-email" className="input" style={{ flex: 1, minWidth: 0 }} type="email" value={email} onChange={(e) => { setEmail(e.target.value); setVerifyToken(''); setCodeMsg(''); }} autoComplete="email" maxLength={254} required />
+          {emailVerify && (
+            <button type="button" className="btn secondary" style={{ width: 'auto', flexShrink: 0, padding: '0 12px', minHeight: 44 }} disabled={codeBusy || !emailOk} onClick={() => void sendCode()}>
+              {codeBusy ? '寄送中…' : verifyToken ? '重寄驗證碼' : '寄送驗證碼'}
+            </button>
+          )}
+        </div>
+        {emailVerify && (
+          <>
+            <label htmlFor="reg-code">信箱驗證碼</label>
+            <input id="reg-code" className="input num" inputMode="numeric" maxLength={6} placeholder="輸入信箱收到的 6 位數" value={verifyCode} onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))} required />
+            {codeMsg && <p className="muted" role="status" style={{ margin: 0, fontSize: '0.82rem' }}>✉️ {codeMsg}</p>}
+          </>
+        )}
         <label htmlFor="reg-pw">密碼</label>
         <PasswordInput id="reg-pw" value={password} onChange={setPassword} autoComplete="new-password" placeholder="至少 8 字元，含英文與數字" />
         {password && (
@@ -214,6 +253,59 @@ export function RegisterPage() {
         {error && <p className="auth-error" role="alert">{error}</p>}
         <button className="btn" type="submit" disabled={busy}>{busy ? '建立中…' : '註冊'}</button>
         <GoogleAuthButton mode="register" />
+      </form>
+    </AuthShell>
+  );
+}
+
+export function SetupProfilePage() {
+  const user = useAuth((s) => s.user);
+  const setupProfile = useAuth((s) => s.setupProfile);
+  const logout = useAuth((s) => s.logout);
+  const [username, setUsername] = useState(user?.username ?? '');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const issues = passwordIssues(password, username);
+  const userOk = /^[A-Za-z0-9_.-]{3,32}$/.test(username);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!userOk) return setError('使用者名稱只能使用英文、數字、底線、點與連字號（3–32 字元）');
+    if (issues.length) return setError(`密碼${issues.join('、')}`);
+    if (password !== confirm) return setError('兩次輸入的密碼不一致');
+    setBusy(true);
+    setError('');
+    try {
+      await setupProfile(username.trim(), password);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <AuthShell title="設定帳號名稱與密碼" subtitle={`已透過 Google 驗證（${user?.email ?? ''}），請建立你的登入資訊`}>
+      <form onSubmit={submit} className="auth-form" noValidate>
+        <label htmlFor="sp-user">使用者名稱</label>
+        <input id="sp-user" className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username"
+          autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={32} required autoFocus placeholder="英數、底線、點、連字號" />
+        <label htmlFor="sp-pw">設定密碼</label>
+        <PasswordInput id="sp-pw" value={password} onChange={setPassword} autoComplete="new-password" placeholder="至少 8 字元，含英文與數字" />
+        {password && (
+          <ul className="pw-rules" aria-live="polite">
+            {['至少 8 個字元', '需包含英文字母與數字', ...(username ? ['不可與使用者名稱相同'] : [])].map((r) => (
+              <li key={r} className={issues.includes(r) ? '' : 'ok'}>{issues.includes(r) ? '○' : '✓'} {r}</li>
+            ))}
+          </ul>
+        )}
+        <label htmlFor="sp-pw2">確認密碼</label>
+        <PasswordInput id="sp-pw2" value={confirm} onChange={setConfirm} autoComplete="new-password" />
+        {error && <p className="auth-error" role="alert">{error}</p>}
+        <button className="btn" type="submit" disabled={busy}>{busy ? '儲存中…' : '完成設定並進入'}</button>
+        <button className="btn secondary" type="button" onClick={() => void logout(true)}>登出</button>
       </form>
     </AuthShell>
   );

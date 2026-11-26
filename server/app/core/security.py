@@ -1,6 +1,8 @@
 """密碼雜湊（Argon2id）、JWT 簽發與驗證、隨機權杖。"""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 import string
 import uuid
@@ -96,3 +98,33 @@ def generate_temporary_password(length: int = 14) -> str:
 
 def new_csrf_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def create_email_verify_token(email: str, code: str) -> str:
+    s = get_settings()
+    secret = s.resolved_jwt_secret()
+    now = utcnow()
+    exp = now + timedelta(minutes=10)
+    digest = hashlib.sha256(f"{email.lower()}:{code}:{secret}".encode("utf-8")).hexdigest()
+    payload = {
+        "type": "email_verify",
+        "email": email.lower(),
+        "code_hash": digest,
+        "exp": int(exp.replace(tzinfo=timezone.utc).timestamp()),
+    }
+    return jwt.encode(payload, secret, algorithm=s.jwt_algorithm)
+
+
+def verify_email_code(token: str | None, email: str, code: str | None) -> bool:
+    if not token or not code:
+        return False
+    s = get_settings()
+    secret = s.resolved_jwt_secret()
+    try:
+        payload = jwt.decode(token, secret, algorithms=[s.jwt_algorithm], options={"require": ["exp", "type", "email", "code_hash"]})
+    except jwt.PyJWTError:
+        return False
+    if payload.get("type") != "email_verify" or payload.get("email") != email.lower():
+        return False
+    expected = hashlib.sha256(f"{email.lower()}:{code.strip()}:{secret}".encode("utf-8")).hexdigest()
+    return hmac.compare_digest(str(payload.get("code_hash")), expected)

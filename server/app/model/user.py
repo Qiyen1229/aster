@@ -36,3 +36,7 @@ class User(Base):
     totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     totp_last_step: Mapped[int] = mapped_column(Integer, default=0)  # 最後一次通過的 30 秒週期：同一個碼不能用兩次
     totp_recovery: Mapped[str] = mapped_column(Text, default="")  # 備援碼的 SHA-256（逗號分隔），用掉就刪
+
+    @property
+    def needs_profile_setup(self) -> bool:
+        return self.password_changed_at is None

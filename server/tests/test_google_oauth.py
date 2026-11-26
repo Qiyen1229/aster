@@ -16,12 +16,57 @@ def _enable_google(monkeypatch) -> None:
 def test_providers_flag(api, monkeypatch):
     r = api.get("/api/auth/providers")
     assert r.status_code == 200
-    assert r.json() == {"google": False}
+    assert r.json() == {"google": False, "email_verify": False}
 
     _enable_google(monkeypatch)
     r2 = api.get("/api/auth/providers")
     assert r2.status_code == 200
-    assert r2.json() == {"google": True}
+    assert r2.json() == {"google": True, "email_verify": False}
+
+
+def test_google_register_needs_profile_setup_and_email_verify_code(api, monkeypatch):
+    _enable_google(monkeypatch)
+    start = api.get("/api/auth/google/start?mode=register", follow_redirects=False)
+    state = parse_qs(urlparse(start.headers["location"]).query)["state"][0]
+    monkeypatch.setattr(
+        "app.api.auth.exchange_google_code",
+        lambda code, redirect_uri: {"email": "bob@gmail.com", "name": "Bob"},
+    )
+    cb = api.get(f"/api/auth/google/callback?code=c1&state={state}", follow_redirects=False)
+    assert cb.status_code == 302
+    me = api.get("/api/auth/me").json()
+    assert me["needs_profile_setup"] is True
+
+    done = api.post("/api/auth/setup-profile", json={"username": "bob_custom", "password": "Password123"})
+    assert done.status_code == 200
+    assert done.json()["username"] == "bob_custom"
+    assert done.json()["needs_profile_setup"] is False
+
+    # 測試 SMTP 啟用時，傳統註冊需要信箱驗證碼
+    api.post("/api/auth/logout")
+    s = get_settings()
+    monkeypatch.setattr(s, "smtp_host", "smtp.gmail.com")
+    monkeypatch.setattr(s, "smtp_user", "sender@gmail.com")
+    monkeypatch.setattr(s, "smtp_password", "app-pw")
+    sent = {}
+
+    def fake_send_mail(*, to: str, subject: str, body: str) -> None:
+        sent["to"] = to
+        sent["body"] = body
+
+    monkeypatch.setattr("app.service.auth_service.send_mail", fake_send_mail)
+    rc = api.post("/api/auth/register-code", json={"email": "carol@gmail.com"})
+    assert rc.status_code == 200
+    token = rc.json()["token"]
+    import re
+    code = re.search(r"(\d{6})", sent["body"]).group(1)
+
+    bad_reg = api.post("/api/auth/register", json={"username": "carol", "email": "carol@gmail.com", "password": "Password123", "verification_code": "000000", "verification_token": token})
+    assert bad_reg.status_code == 400
+
+    ok_reg = api.post("/api/auth/register", json={"username": "carol", "email": "carol@gmail.com", "password": "Password123", "verification_code": code, "verification_token": token})
+    assert ok_reg.status_code == 201
+    assert ok_reg.json()["needs_profile_setup"] is False
 
 
 def test_google_start_and_callback_register_then_login(api, monkeypatch):

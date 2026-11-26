@@ -16,8 +16,8 @@ from app.core.google_oauth import (
 from app.core.mailer import mail_configured
 from app.core.request_info import ClientInfo
 from app.model import User
-from app.schema.auth import (BearerAuthResponse, ChangePasswordRequest, ForgotPasswordRequest, LoginRequest, MessageResponse, RefreshTokenRequest, RegisterRequest, ResetPasswordRequest, SessionOut,
-                             TotpDisableRequest, TotpEnabled, PasswordCheckRequest, TotpEnableRequest, TotpSetup, TotpStatus, UserPublic)
+from app.schema.auth import (BearerAuthResponse, ChangePasswordRequest, ForgotPasswordRequest, LoginRequest, MessageResponse, RefreshTokenRequest, RegisterCodeRequest, RegisterRequest, ResetPasswordRequest, SessionOut,
+                             SetupProfileRequest, TotpDisableRequest, TotpEnabled, PasswordCheckRequest, TotpEnableRequest, TotpSetup, TotpStatus, UserPublic)
 from app.service.app_settings import registration_open
 from app.service.auth_service import AuthService, IssuedTokens
 from app.service.errors import ServiceError
@@ -48,9 +48,21 @@ def registration(db: Session = Depends(get_db)) -> dict[str, bool]:
     return {"open": registration_open(db)}
 
 
-@router.get("/providers", summary="可用的第三方登入方式（如 Google OAuth）")
+@router.get("/providers", summary="可用的第三方登入與註冊驗證方式")
 def providers() -> dict[str, bool]:
-    return {"google": google_configured()}
+    return {"google": google_configured(), "email_verify": mail_configured()}
+
+
+@router.post("/register-code", summary="寄送註冊信箱驗證碼")
+def register_code(body: RegisterCodeRequest, client: ClientInfo = Depends(get_client), db: Session = Depends(get_db)) -> dict[str, str]:
+    rate_limit(register_limiter, client.ip)
+    token = AuthService(db).send_register_code(body.email, client)
+    return {"token": token, "message": "驗證碼已寄出，請至信箱查看（10 分鐘內有效）"}
+
+
+@router.post("/setup-profile", response_model=UserPublic, summary="Google 註冊後設定帳號名稱與密碼")
+def setup_profile(body: SetupProfileRequest, client: ClientInfo = Depends(get_client), user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
+    return AuthService(db).setup_profile(user, body, client)
 
 
 @router.get("/google/start", summary="跳轉 Google 帳號登入／註冊")

@@ -24,6 +24,7 @@ const RegisterPage = lazy(() => import('../features/auth/AuthPages').then((m) =>
 const ForgotPasswordPage = lazy(() => import('../features/auth/AuthPages').then((m) => ({ default: m.ForgotPasswordPage })));
 const ResetPasswordPage = lazy(() => import('../features/auth/AuthPages').then((m) => ({ default: m.ResetPasswordPage })));
 const ForceChangePasswordPage = lazy(() => import('../features/auth/AuthPages').then((m) => ({ default: m.ForceChangePasswordPage })));
+const SetupProfilePage = lazy(() => import('../features/auth/AuthPages').then((m) => ({ default: m.SetupProfilePage })));
 const PrivacyPage = lazy(() => import('../features/legal/LegalPages').then((m) => ({ default: m.PrivacyPage })));
 const TermsPage = lazy(() => import('../features/legal/LegalPages').then((m) => ({ default: m.TermsPage })));
 
@@ -182,6 +183,9 @@ export default function AuthGate() {
 
   if (AUTH_ENABLED && status === 'authed' && user?.must_change_password) {
     return <Suspense fallback={<Splash />}><ForceChangePasswordPage /></Suspense>;
+  }
+  if (AUTH_ENABLED && status === 'authed' && user?.needs_profile_setup) {
+    return <Suspense fallback={<Splash />}><SetupProfilePage /></Suspense>;
   }
 
   // 已登入時造訪 /login、/register → 回首頁

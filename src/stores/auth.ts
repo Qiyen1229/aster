@@ -17,6 +17,7 @@ export interface AuthUser {
   email: string;
   role: 'user' | 'admin';
   must_change_password: boolean;
+  needs_profile_setup?: boolean;
   created_at: string;
   last_login_at: string | null;
   totp_enabled?: boolean;
@@ -47,7 +48,8 @@ interface AuthState {
   user: AuthUser | null;
   init: () => Promise<void>;
   login: (identifier: string, password: string, totp?: string) => Promise<AuthUser>;
-  register: (username: string, email: string, password: string) => Promise<AuthUser>;
+  register: (username: string, email: string, password: string, verificationCode?: string, verificationToken?: string) => Promise<AuthUser>;
+  setupProfile: (username: string, password: string) => Promise<AuthUser>;
   logout: (force?: boolean) => Promise<void>;
   changePassword: (current: string, next: string, totp?: string) => Promise<void>;
 }
@@ -93,10 +95,26 @@ export const useAuth = create<AuthState>((set, get) => ({
     return user;
   },
 
-  register: async (username, email, password) => {
-    const user = await api<AuthUser>('/auth/register', { method: 'POST', body: { username, email, password } });
+  register: async (username, email, password, verificationCode, verificationToken) => {
+    const user = await api<AuthUser>('/auth/register', {
+      method: 'POST',
+      body: {
+        username,
+        email,
+        password,
+        ...(verificationCode ? { verification_code: verificationCode } : {}),
+        ...(verificationToken ? { verification_token: verificationToken } : {}),
+      },
+    });
     saveSession(user);
     set({ status: 'authed', user });
+    return user;
+  },
+
+  setupProfile: async (username, password) => {
+    const user = await api<AuthUser>('/auth/setup-profile', { method: 'POST', body: { username, password } });
+    saveSession(user);
+    set({ user });
     return user;
   },
 

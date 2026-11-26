@@ -16,13 +16,13 @@ from app.core.config import get_settings
 from app.core.logging import mask_email
 from app.core.request_info import ClientInfo
 from app.core import secretbox, totp
-from app.core.security import create_token, decode_token, hash_password, needs_rehash, utcnow, verify_password
+from app.core.security import create_email_verify_token, create_token, decode_token, hash_password, needs_rehash, utcnow, verify_email_code, verify_password
 from app.core.mailer import MailError, mail_configured, send_mail
 from app.model import ROLE_ADMIN, ROLE_USER, PasswordReset, RefreshToken, User
 from sqlalchemy import select
 from app.repository.token_repository import TokenRepository
 from app.repository.user_repository import UserRepository
-from app.schema.auth import ChangePasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, SessionOut, check_email_domain
+from app.schema.auth import ChangePasswordRequest, LoginRequest, RegisterRequest, ResetPasswordRequest, SessionOut, SetupProfileRequest, check_email_domain
 from app.service import app_settings
 from app.service.audit_service import AuditService
 from app.service.errors import ServiceError
@@ -85,9 +85,38 @@ class AuthService:
             self.db.execute(text("BEGIN IMMEDIATE"))
 
     # ───── 註冊 ─────
+    def send_register_code(self, email: str, client: ClientInfo) -> str:
+        if not app_settings.registration_open(self.db, self.settings):
+            raise ServiceError(403, "目前未開放註冊，請聯絡管理員")
+        if not mail_configured():
+            raise ServiceError(503, "伺服器尚未設定寄信功能")
+        try:
+            check_email_domain(email)
+        except ValueError as e:
+            raise ServiceError(422, str(e)) from e
+        if self.users.get_by_email(email):
+            raise ServiceError(409, "此 Email 已被使用")
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        try:
+            send_mail(
+                to=email,
+                subject="Aster 記帳：註冊信箱驗證碼",
+                body=f"你的註冊驗證碼為：{code}\n\n此驗證碼於 10 分鐘內有效。若非本人操作，請忽略這封信。",
+            )
+        except MailError as e:
+            log.warning("寄送註冊驗證碼失敗 email=%s err=%s", mask_email(email), e)
+            raise ServiceError(502, "驗證碼寄送失敗，請稍後再試") from e
+        self.audit.record("auth.register_code", client, detail={"email": mask_email(email)})
+        self.db.commit()
+        return create_email_verify_token(email, code)
+
     def register(self, req: RegisterRequest, client: ClientInfo) -> tuple[User, IssuedTokens]:
         if not app_settings.registration_open(self.db, self.settings):
             raise ServiceError(403, "目前未開放註冊，請聯絡管理員")
+        if mail_configured() and not verify_email_code(req.verification_token, req.email, req.verification_code):
+            self.audit.record("auth.register", client, success=False, detail={"reason": "bad_email_code"})
+            self.db.commit()
+            raise ServiceError(400, "信箱驗證碼不正確或已過期，請重新取得")
         if self.users.get_by_username(req.username) or self.users.get_by_email(req.email):
             self.audit.record("auth.register", client, success=False, detail={"reason": "duplicate"})
             self.db.commit()
@@ -156,13 +185,25 @@ class AuthService:
         username = self._unique_google_username(norm_email)
         user = self.users.add(User(
             username=username, email=norm_email, password_hash=hash_password(secrets.token_urlsafe(32)),
-            role=role, password_changed_at=now, last_login_at=now, last_seen_at=now,
+            role=role, password_changed_at=None, last_login_at=now, last_seen_at=now,
         ))
         tokens = self.issue_tokens(user, client)
         self.audit.record("auth.google", client, user_id=user.id, detail={"action": "register", "role": role})
         self.db.commit()
         log.info("Google 註冊 id=%s email=%s role=%s", user.id, mask_email(user.email), role)
         return user, tokens
+
+    def setup_profile(self, user: User, req: SetupProfileRequest, client: ClientInfo) -> User:
+        """Google 註冊後初次補齊使用者名稱與密碼。"""
+        if req.username != user.username and self.users.get_by_username(req.username) is not None:
+            raise ServiceError(409, "此使用者名稱已被使用")
+        now = utcnow()
+        user.username = req.username
+        user.password_hash = hash_password(req.password)
+        user.password_changed_at = now
+        self.audit.record("auth.setup_profile", client, user_id=user.id)
+        self.db.commit()
+        return user
 
     # ───── 登入 ─────
     def login(self, req: LoginRequest, client: ClientInfo) -> tuple[User, IssuedTokens]:
