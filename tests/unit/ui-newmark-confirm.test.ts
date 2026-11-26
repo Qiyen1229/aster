@@ -28,4 +28,11 @@ describe('自製確認視窗', () => {
     useUI.getState().closeConfirm(false);
     expect(await c).toBe(false);
   });
+
+  it('overlays.tsx 將 ConfirmHost、InputHost、SnackbarHost 以 createPortal 掛載至 document.body，不受 #root inert 鎖死', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const code = readFileSync(join(process.cwd(), 'src/app/overlays.tsx'), 'utf8');
+    expect((code.match(/createPortal\(node,\s*document\.body\)/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
 });

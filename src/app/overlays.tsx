@@ -4,6 +4,7 @@
 import { Capacitor } from '@capacitor/core';
 import { ICON_192 } from '@/ui/assets';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useUI } from '@/stores/ui';
 import { useSettings } from '@/stores/settings';
 import { useLock } from '@/services/lock';
@@ -20,7 +21,7 @@ export function SnackbarHost() {
     return () => clearTimeout(t);
   }, [snack, dismiss]);
   if (!snack) return null;
-  return (
+  const node = (
     <div className="snackbar-wrap" aria-live="polite">
       <div className="snackbar" key={snack.id} role="status">
         <span>{snack.text}</span>
@@ -33,6 +34,7 @@ export function SnackbarHost() {
       </div>
     </div>
   );
+  return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }
 
 /**
@@ -67,7 +69,7 @@ export function ConfirmHost() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [c, close, locked]);
   if (!c || locked) return null;
-  return (
+  const node = (
     <div className="dlg-wrap" key={c.id}>
       <div className="dlg-backdrop" onClick={() => close(false)} aria-hidden="true" />
       <div ref={dlgRef} className="dlg" role="alertdialog" aria-modal="true" aria-labelledby={`dlg-t-${c.id}`} aria-describedby={c.message ? `dlg-m-${c.id}` : undefined}>
@@ -82,6 +84,7 @@ export function ConfirmHost() {
       </div>
     </div>
   );
+  return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }
 
 export function ActionSheetHost() {
@@ -134,7 +137,7 @@ export function InputHost() {
   if (!r || locked) return null;
   const text = value.trim();
   const ok = !r.required || !!text;
-  return (
+  const node = (
     <div className="dlg-wrap" key={r.id}>
       <div className="dlg-backdrop" onClick={() => close(null)} aria-hidden="true" />
       <form ref={formRef} className="dlg" role="dialog" aria-modal="true" aria-labelledby={`dlg-t-${r.id}`} onSubmit={(e) => { e.preventDefault(); if (ok) close(text); }}>
@@ -152,6 +155,7 @@ export function InputHost() {
       </form>
     </div>
   );
+  return typeof document !== 'undefined' ? createPortal(node, document.body) : node;
 }
 
 /** Service Worker 更新提示：「有新版本，點擊更新」（鎖定中維持掛載以保留 SW 註冊，僅隱藏橫幅） */
