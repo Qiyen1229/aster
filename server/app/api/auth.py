@@ -1,13 +1,18 @@
 """認證路由：註冊、登入、刷新、登出、目前使用者、變更密碼。"""
 from __future__ import annotations
 
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, Body, Depends, Request, Response
-from fastapi.responses import Response as PlainResponse
+from fastapi.responses import RedirectResponse, Response as PlainResponse
 from sqlalchemy.orm import Session
 
 from app.api.cookies import clear_auth_cookies, read_bearer_token, read_refresh, set_auth_cookies
 from app.api.deps import get_client, get_current_user, get_db, get_optional_user, login_account_limiter, login_ip_limiter, rate_limit, register_limiter, reset_account_limiter, reset_ip_limiter
 from app.core.config import get_settings
+from app.core.google_oauth import (
+    build_google_auth_url, create_oauth_state, exchange_google_code, google_configured, resolve_redirect_uri, sanitize_next_path, verify_oauth_state,
+)
 from app.core.mailer import mail_configured
 from app.core.request_info import ClientInfo
 from app.model import User
@@ -15,6 +20,7 @@ from app.schema.auth import (BearerAuthResponse, ChangePasswordRequest, ForgotPa
                              TotpDisableRequest, TotpEnabled, PasswordCheckRequest, TotpEnableRequest, TotpSetup, TotpStatus, UserPublic)
 from app.service.app_settings import registration_open
 from app.service.auth_service import AuthService, IssuedTokens
+from app.service.errors import ServiceError
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -40,6 +46,60 @@ def _respond(response: Response, request: Request, tokens: IssuedTokens, user: U
 @router.get("/registration", summary="是否開放註冊（登入頁決定要不要顯示註冊連結）")
 def registration(db: Session = Depends(get_db)) -> dict[str, bool]:
     return {"open": registration_open(db)}
+
+
+@router.get("/providers", summary="可用的第三方登入方式（如 Google OAuth）")
+def providers() -> dict[str, bool]:
+    return {"google": google_configured()}
+
+
+@router.get("/google/start", summary="跳轉 Google 帳號登入／註冊")
+def google_start(request: Request, next: str = "/", mode: str = "login", client: ClientInfo = Depends(get_client)) -> RedirectResponse:
+    rate_limit(login_ip_limiter, client.ip)
+    if not google_configured():
+        raise ServiceError(503, "尚未設定 Google 帳號登入")
+    state = create_oauth_state(next_path=next, mode=mode)
+    redirect_uri = resolve_redirect_uri(request)
+    return RedirectResponse(build_google_auth_url(redirect_uri, state), status_code=302)
+
+
+@router.get("/google/callback", name="google_callback", summary="Google OAuth 回呼處理")
+def google_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    client: ClientInfo = Depends(get_client),
+    db: Session = Depends(get_db),
+) -> RedirectResponse:
+    parsed_state = verify_oauth_state(state)
+    fail_page = "/register" if (parsed_state or {}).get("mode") == "register" else "/login"
+
+    def fail_redirect(msg: str) -> RedirectResponse:
+        return RedirectResponse(f"{fail_page}?{urlencode({'oauth_error': msg})}", status_code=302)
+
+    if error:
+        return fail_redirect("已取消 Google 驗證" if error == "access_denied" else "Google 驗證失敗")
+    if not parsed_state or not code:
+        return fail_redirect("Google 驗證已過期或無效，請再試一次")
+    if not google_configured():
+        return fail_redirect("尚未設定 Google 帳號登入")
+
+    try:
+        info = exchange_google_code(code, resolve_redirect_uri(request))
+        user, tokens = AuthService(db).login_or_register_google(email=info["email"], client=client)
+    except ServiceError as exc:
+        return fail_redirect(exc.message)
+
+    target = sanitize_next_path(parsed_state.get("next"))
+    resp = RedirectResponse(target, status_code=302)
+    resp.headers["Cache-Control"] = "no-store"
+    set_auth_cookies(
+        resp, request,
+        access=tokens.access_token, access_exp=tokens.access_expires,
+        refresh=tokens.refresh_token, refresh_exp=tokens.refresh_expires, user_id=user.id,
+    )
+    return resp
 
 
 @router.post("/register", response_model=UserPublic | BearerAuthResponse, status_code=201, summary="註冊")

@@ -3493,6 +3493,29 @@ html.voice-holding .sheet, html.voice-holding .sheet-backdrop { pointer-events: 
   color: var(--text-2);
 }
 
+/* Google OAuth 分隔線與按鈕 */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 0.82rem;
+  margin: 4px 0;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.btn-google {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
 /* 自製確認視窗：置中圓角卡片，彈簧縮放進場；層級高於彈窗（.sheet 約 60～70） */
 .dlg-wrap { position: fixed; inset: 0; z-index: 310; display: grid; place-items: center; padding: 24px; }
 .dlg-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.42); animation: dlg-fade 200ms ease both; }

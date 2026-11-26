@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -107,6 +108,60 @@ class AuthService:
         self.audit.record("auth.register", client, user_id=user.id, detail={"role": role})
         self.db.commit()
         log.info("使用者註冊 id=%s email=%s role=%s", user.id, mask_email(user.email), role)
+        return user, tokens
+
+    def _unique_google_username(self, email: str) -> str:
+        base = re.sub(r"[^A-Za-z0-9_.-]", "", email.split("@", 1)[0])[:24]
+        if len(base) < 3:
+            base = f"user_{base}" if base else "aster_user"
+        candidate = base
+        while self.users.get_by_username(candidate) is not None:
+            candidate = f"{base[:24]}_{secrets.token_hex(3)}"
+        return candidate
+
+    def login_or_register_google(self, *, email: str, client: ClientInfo) -> tuple[User, IssuedTokens]:
+        """Google OAuth 驗證成功後登入既有帳號，或依註冊設定建立新帳號。"""
+        norm_email = email.strip().lower()
+        now = utcnow()
+        user = self.users.get_by_email(norm_email)
+        if user is not None:
+            if not user.is_active:
+                self.audit.record("auth.google", client, success=False, user_id=user.id, detail={"reason": "inactive"})
+                self.db.commit()
+                raise ServiceError(403, "此帳號已停用，請聯絡管理員")
+            user.failed_login_count = 0
+            user.locked_until = None
+            user.last_login_at = now
+            user.last_seen_at = now
+            tokens = self.issue_tokens(user, client)
+            self.audit.record("auth.google", client, user_id=user.id, detail={"action": "login"})
+            self.db.commit()
+            return user, tokens
+
+        if not app_settings.registration_open(self.db, self.settings):
+            self.audit.record("auth.google", client, success=False, detail={"reason": "registration_closed"})
+            self.db.commit()
+            raise ServiceError(403, "目前未開放註冊，請聯絡管理員")
+        self._acquire_write_lock(1001)
+        user = self.users.get_by_email(norm_email)
+        if user is not None:
+            if not user.is_active:
+                raise ServiceError(403, "此帳號已停用，請聯絡管理員")
+            user.last_login_at = now
+            user.last_seen_at = now
+            tokens = self.issue_tokens(user, client)
+            self.db.commit()
+            return user, tokens
+        role = ROLE_ADMIN if self.settings.first_user_admin and self.users.count() == 0 else ROLE_USER
+        username = self._unique_google_username(norm_email)
+        user = self.users.add(User(
+            username=username, email=norm_email, password_hash=hash_password(secrets.token_urlsafe(32)),
+            role=role, password_changed_at=now, last_login_at=now, last_seen_at=now,
+        ))
+        tokens = self.issue_tokens(user, client)
+        self.audit.record("auth.google", client, user_id=user.id, detail={"action": "register", "role": role})
+        self.db.commit()
+        log.info("Google 註冊 id=%s email=%s role=%s", user.id, mask_email(user.email), role)
         return user, tokens
 
     # ───── 登入 ─────

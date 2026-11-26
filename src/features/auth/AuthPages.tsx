@@ -5,7 +5,7 @@
 import { ICON_192 } from '@/ui/assets';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { api, ApiError } from '@/services/api';
+import { api, ApiError, getApiOrigin } from '@/services/api';
 import { useAuth } from '@/stores/auth';
 import { Icon } from '@/ui/Icon';
 
@@ -30,6 +30,37 @@ function useRegistrationOpen(): boolean | null {
   const [open, setOpen] = useState<boolean | null>(null);
   useEffect(() => { void api<{ open: boolean }>('/auth/registration').then((r) => setOpen(r.open), () => setOpen(true)); }, []);
   return open;
+}
+
+/** 伺服器是否已設定第三方登入（如 Google OAuth） */
+function useAuthProviders(): { google: boolean } {
+  const [p, setP] = useState({ google: false });
+  useEffect(() => { void api<{ google: boolean }>('/auth/providers').then(setP, () => setP({ google: false })); }, []);
+  return p;
+}
+
+function GoogleAuthButton({ mode, next }: { mode: 'login' | 'register'; next?: string }) {
+  const { google } = useAuthProviders();
+  if (!google) return null;
+  const start = () => {
+    const origin = getApiOrigin();
+    const qs = new URLSearchParams({ mode, next: next && next.startsWith('/') ? next : '/' });
+    window.location.href = `${origin}/api/auth/google/start?${qs.toString()}`;
+  };
+  return (
+    <>
+      <div className="auth-divider"><span>或</span></div>
+      <button type="button" className="btn secondary btn-google" onClick={start}>
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z" />
+          <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z" />
+          <path fill="#FBBC05" d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z" />
+          <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z" />
+        </svg>
+        <span>{mode === 'register' ? '使用 Google 帳號註冊' : '使用 Google 帳號登入'}</span>
+      </button>
+    </>
+  );
 }
 
 function PasswordInput({ id, value, onChange, autoComplete, placeholder }: { id: string; value: string; onChange: (v: string) => void; autoComplete: string; placeholder?: string }) {
@@ -66,7 +97,7 @@ export function LoginPage() {
   const location = useLocation();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(params.get('expired') ? '登入已過期，請重新登入' : '');
+  const [error, setError] = useState(params.get('oauth_error') || (params.get('expired') ? '登入已過期，請重新登入' : ''));
   const [busy, setBusy] = useState(false);
   /** 密碼對了、帳號有開雙因素驗證：多出一個輸入驗證碼的步驟 */
   const [needTotp, setNeedTotp] = useState(false);
@@ -115,6 +146,7 @@ export function LoginPage() {
         )}
         {error && <p className="auth-error" role="alert">{error}</p>}
         <button className="btn" type="submit" disabled={busy || !identifier || !password || (needTotp && !totp)}>{busy ? '登入中…' : needTotp ? '驗證並登入' : '登入'}</button>
+        <GoogleAuthButton mode="login" next={(location.state as { from?: string } | null)?.from} />
         <Link to="/forgot-password" className="accent" style={{ textAlign: 'center', fontSize: '0.9rem' }}>忘記密碼？</Link>
       </form>
     </AuthShell>
@@ -125,11 +157,12 @@ export function RegisterPage() {
   const registrationOpen = useRegistrationOpen();
   const register = useAuth((s) => s.register);
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(params.get('oauth_error') || '');
   const [busy, setBusy] = useState(false);
   const issues = passwordIssues(password, username);
   const userOk = /^[A-Za-z0-9_.-]{3,32}$/.test(username);
@@ -180,6 +213,7 @@ export function RegisterPage() {
         <PasswordInput id="reg-pw2" value={confirm} onChange={setConfirm} autoComplete="new-password" />
         {error && <p className="auth-error" role="alert">{error}</p>}
         <button className="btn" type="submit" disabled={busy}>{busy ? '建立中…' : '註冊'}</button>
+        <GoogleAuthButton mode="register" />
       </form>
     </AuthShell>
   );
