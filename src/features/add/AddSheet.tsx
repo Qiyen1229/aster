@@ -167,7 +167,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
     } else if (mounted) {
       setPhase('closing');
-      const t = window.setTimeout(() => setMounted(false), 240);
+      const t = window.setTimeout(() => setMounted(false), 185);
       return () => window.clearTimeout(t);
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -175,7 +175,11 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   useEffect(() => {
     if (!mounted || !open) return;
     const unlockScroll = lockBodyScroll();
-    const releaseFocus = activateModalFocus(screenRef.current);
+    let releaseFocus = () => {};
+    // 等開啟滑入動畫結束後再將 #root 設為 inert，避免首幀重算整個背景 DOM 造成卡頓
+    const focusTrapTimer = window.setTimeout(() => {
+      releaseFocus = activateModalFocus(screenRef.current);
+    }, 230);
     const prevFocus = document.activeElement as HTMLElement | null;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !document.querySelector('.sheet, .dlg-wrap')) {
@@ -184,8 +188,9 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    const t = window.setTimeout(() => screenRef.current?.focus({ preventScroll: true }), 300);
+    const t = window.setTimeout(() => screenRef.current?.focus({ preventScroll: true }), 260);
     return () => {
+      window.clearTimeout(focusTrapTimer);
       unlockScroll();
       releaseFocus();
       window.removeEventListener('keydown', onKeyDown);
@@ -585,7 +590,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
     let alive = true;
     const t = setTimeout(() => {
       void recentNoteSuggestions(note, mode, txCurrency).then((r) => { if (alive) setNoteSugs(r); }).catch(() => undefined);
-    }, 150);
+    }, 260);
     return () => { alive = false; clearTimeout(t); };
   }, [note, mode, txCurrency, editing, pins]);
   useEffect(() => {

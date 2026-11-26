@@ -72,6 +72,18 @@ export default function HomeInbox() {
     }
   };
 
+  const edit = (e: InboxEntry) => {
+    const d = e.drafts[0];
+    const base = { inboxId: String(e.item.id), inboxCard: e.item.card || undefined };
+    if (e.drafts.length > 1) useUI.getState().openAdd({ ...base, quickText: e.item.text });
+    else if (d) {
+      useUI.getState().openAdd({
+        ...base, mode: d.kind, amount: String(d.amount), currency: d.currency, date: d.date, time: d.time, accountId: d.accountId, toAccountId: d.toAccountId,
+        categoryId: d.categoryId, note: d.note, tagIds: d.tagIds.length ? d.tagIds : undefined, merchant: e.item.merchant || undefined,
+      });
+    } else useUI.getState().openAdd({ ...base, note: (e.item.merchant || e.item.text).slice(0, 200) });
+  };
+
   const list = entries ?? [];
   const shown = list.slice(0, SHOW);
 
@@ -87,24 +99,20 @@ export default function HomeInbox() {
             const d = e.drafts[0];
             const acc = d ? accMap.get(d.accountId) : undefined;
             const cur = d ? d.currency ?? acc?.currency ?? 'TWD' : 'TWD';
-            const simple = !!d && e.drafts.length === 1 && e.dup?.level !== 'strong';
             const title = d?.note || e.item.merchant || e.item.text.slice(0, 30) || '（沒有內容）';
             return (
               <div key={e.item.id} className="row inbox-row">
                 <span className="row-main">
                   <span className="row-title">{title}</span>
                   <span className="row-sub" style={{ whiteSpace: 'normal' }}>
-                    {d ? `${shortDate(d.date, today)} · ${acc?.name ?? '?'}` : '看不懂金額，請點進去處理'}
+                    {d ? `${shortDate(d.date, today)} · ${acc?.name ?? '?'}` : '看不懂金額，請點「入帳」或「編輯」補填'}
                     {e.review ? ' · ⚠️ LINE 聊天，請確認' : e.dup ? ' · ⚠️ 可能重複' : ''}
                   </span>
                 </span>
                 {d && <span className={`num ${d.kind === 'income' ? 'pos' : 'neg'}`}>{formatMoney(toMinor(d.amount, cur), cur)}</span>}
                 <span className="inbox-actions">
-                  {simple ? (
-                    <button className="pill accent-pill" disabled={busy} onClick={() => void book(e)}>記帳</button>
-                  ) : (
-                    <button className="pill accent-pill" onClick={() => navigate('/inbox')}>處理</button>
-                  )}
+                  <button className="pill accent-pill" disabled={busy} onClick={() => (d ? void book(e) : edit(e))}>入帳</button>
+                  <button className="pill" disabled={busy} onClick={() => edit(e)}>編輯</button>
                   <button className="pill" disabled={busy} onClick={() => void skip(e)}>略過</button>
                 </span>
               </div>

@@ -21,6 +21,7 @@ from app.service.inbox_service import MAX_PENDING, is_noise_notification
 log = logging.getLogger("aster.email_inbox")
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
+_FOOTER_NOISE_RE = re.compile(r"(?:Google\s*LLC|1600\s*Amphitheatre\s*Parkway|Mountain\s*View,\s*CA\s*\d{5})", re.IGNORECASE)
 
 
 def imap_configured() -> bool:
@@ -70,6 +71,7 @@ def extract_email_text(msg: Message) -> tuple[str, str, str]:
                 plain = raw
 
     body = plain.strip() if plain.strip() else _WS_RE.sub(" ", _TAG_RE.sub(" ", html_fallback)).strip()
+    body = _FOOTER_NOISE_RE.sub("", body).strip()
     return sender, subject, body[:1000]
 
 

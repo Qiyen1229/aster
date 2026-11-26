@@ -21,6 +21,13 @@ def test_noise_filter_keeps_transfer_with_security_phrase():
     )
     assert is_noise_notification(tx_with_phrase) is False
 
+    google_alert_email = HookItem(
+        source="email",
+        text="Google 帳戶安全快訊：已授權 Aster 登入。Google LLC, 1600 Amphitheatre Parkway, Mountain View, CA 94043",
+        merchant="Google",
+    )
+    assert is_noise_notification(google_alert_email) is True
+
 
 def test_extract_email_text_and_poll_imap(monkeypatch, api):
     # 建立使用者成為收件目標

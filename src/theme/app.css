@@ -2133,34 +2133,24 @@ html:not(.is-desktop).kb-open .dlg-wrap {
   display: flex; flex-direction: column;
   background: var(--bg);
   overscroll-behavior: contain;
-  contain: layout style paint;
   backface-visibility: hidden;
-  transform-origin: var(--add-ox, 50%) var(--add-oy, calc(100% - var(--safe-b) - 36px));
   opacity: 0;
   transition:
-    transform 300ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 160ms ease-out;
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 150ms ease-out;
   will-change: transform, opacity;
 }
-@supports (transition-timing-function: linear(0, 1)) {
-  .add-screen {
-    --add-spring: linear(0, 0.36 10%, 0.72 22%, 0.94 36%, 1.015 52%, 1.006 68%, 0.999 84%, 1);
-    transition:
-      transform 340ms var(--add-spring),
-      opacity 150ms ease-out;
-  }
-}
 @media (prefers-reduced-motion: no-preference) {
-  .add-screen { transform: translate3d(0, 0, 0) scale(0.2); }
-  .add-screen.open { transform: translate3d(0, 0, 0) scale(1); }
-  .add-screen.closing { transform: translate3d(0, 0, 0) scale(0.2); }
+  .add-screen { transform: translate3d(0, 24px, 0); }
+  .add-screen.open { transform: translate3d(0, 0, 0); }
+  .add-screen.closing { transform: translate3d(0, 24px, 0); }
 }
 .add-screen.open { opacity: 1; }
 .add-screen.closing {
   opacity: 0;
   transition:
-    transform 210ms cubic-bezier(0.4, 0, 1, 1),
-    opacity 180ms ease-in;
+    transform 170ms cubic-bezier(0.4, 0, 1, 1),
+    opacity 140ms ease-in;
   pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -3117,7 +3107,7 @@ button.row:active, a.row:active { transform: scale(0.985); transition-duration: 
 .inbox-row .row-sub { display: block; white-space: normal; }
 .inbox-dup { width: 100%; margin: 0; font-size: 0.8rem; line-height: 1.4; color: var(--text-2); }
 .inbox-dup.strong { color: var(--warning); }
-.inbox-actions { display: flex; gap: 6px; width: 100%; justify-content: flex-end; }
+.inbox-actions { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; justify-content: flex-end; }
 .inbox-actions .pill { height: 32px; }
 .accent-pill { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 .inbox-token code, .inbox-guides code { font-size: 0.8rem; word-break: break-all; background: var(--surface-2); padding: 1px 5px; border-radius: 6px; }

@@ -51,6 +51,10 @@ _ACTUAL_TX_RE = re.compile(
 
 
 _NOISE_EXEMPT_RE = re.compile(r"(?:免|無需|不需|不須)(?:輸入|使用)?(?:驗證碼|動態密碼|安全碼|驗證密碼|OTP)", re.IGNORECASE)
+_EMAIL_CURRENCY_AMT_RE = re.compile(
+    r"(?:NT\$|NTD|TWD|USD|JPY|EUR|HKD|新台幣|新臺幣|台幣|臺幣|\$)\s*[\d,]+|[\d,]+(?:\.\d+)?\s*元",
+    re.IGNORECASE,
+)
 
 
 def is_noise_notification(body: HookItem) -> bool:
@@ -65,6 +69,8 @@ def is_noise_notification(body: HookItem) -> bool:
         return True
     if _PROMO_NOISE_RE.search(combined) and not _ACTUAL_TX_RE.search(combined):
         return True
+    if body.source == "email":
+        return not (_TX_SIGNAL_RE.search(combined) and _EMAIL_CURRENCY_AMT_RE.search(combined))
     if _TX_SIGNAL_RE.search(combined) and _DIGIT_RE.search(combined):
         return False
     return True

@@ -29,8 +29,8 @@ export const RELEASE_NOTES: ReleaseNote[] = [
     features: [
       {
         title: '郵件自動記帳',
-        intro: '後端新增輕量化 IMAP 郵件輪詢通道，自動擷取銀行刷卡與入帳通知信送進收件匣，就算前景開著 LINE 也不漏記。',
-        howto: '於伺服器 .env 設定 IMAP 帳號後即可自動收信',
+        intro: '支援自動讀取銀行寄來的刷卡與入帳通知信送進收件匣，就算前景開著 LINE 也不漏記。',
+        howto: '於「設定 → 自動記帳收件匣」或綁定信箱通知即可自動匯入',
       },
       {
         title: '轉帳末碼與拓樸識別',
