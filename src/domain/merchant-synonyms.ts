@@ -370,6 +370,7 @@ export const SYNONYMS: Synonym[] = [
     kind: 'expense',
     generic: ['健身房', '健身', '運動', '游泳', '瑜珈', '重訓', '教練課'],
     specific: [
+      '打球', '羽球', '籃球', '網球', '桌球', '排球', '高爾夫', '保齡球', '撞球', '球場', '球館',
       'world gym', '世界健身', '健身工廠', 'fitness factory', 'curves', '可爾姿',
       'true yoga', '全真瑜珈', '成吉思汗', '國民運動中心', 'space cycle', 'hypercore',
       '超核心', 'more fit', '打鐵健身', 'anytime fitness',

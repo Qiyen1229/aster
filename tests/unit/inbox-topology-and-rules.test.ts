@@ -79,4 +79,18 @@ describe('自動記帳進階規則與隱式學習（3–8）', () => {
     const rules = await db.rules.toArray();
     expect(rules.some((r) => r.keyword === 'ECPAY*UBER' && r.renameNote === 'Uber' && r.categoryId === 'exp-transport')).toBe(true);
   });
+
+  it('語音一句話多筆：「今天ChatGPT訂閱花了650打球花了320都是現金」應去掉「都是」並把打球歸類運動健身', async () => {
+    const { parseEntries } = await import('@/domain/nlp');
+    const { parseContext } = await import('@/services/quickentry');
+    await addAccount({
+      name: '錢包', type: 'cash', currency: 'TWD', initialBalanceMinor: 5000_00,
+      icon: 'wallet', color: '#f59e0b', includeInNetWorth: true, isLiability: false,
+    });
+    const ctx = await parseContext('2026-11-26');
+    const entries = parseEntries('今天ChatGPT訂閱花了650打球花了320都是現金', ctx);
+    expect(entries).toHaveLength(2);
+    expect(entries[1].note).toBe('打球');
+    expect(entries[1].categoryId).toBe('exp-entertainment-sport');
+  });
 });
