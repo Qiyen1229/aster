@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     imap_poll_seconds: int = Field(120, ge=30, le=3600)
     imap_target_user: str = ""  # 收進哪位 Aster 使用者（填使用者名稱或 Email；留空則用第一位管理員）
 
+    # Cloudflare Email Routing Webhook 轉寄收信（Gmail 自動轉寄）
+    email_webhook_secret: str = ""
+    email_forward_domain: str = "qiyen.me"
+    email_forward_prefix: str = "in-"
+
     # 資料庫自動備份（只支援 SQLite；PostgreSQL 請用 pg_dump，見 docs/OPERATIONS.md）
     backup_daily: bool = True
     backup_keep: int = Field(7, ge=1, le=90)  # 保留最近幾份

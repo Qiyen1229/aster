@@ -1,0 +1,9 @@
+name = "aster-email-forward"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+ASTER_WEBHOOK_URL = "https://aster.qiyen.me/api/hook/email"
+
+# 請勿將密鑰直接寫入此檔案，改用以下指令設定：
+# npx wrangler secret put ASTER_WEBHOOK_SECRET

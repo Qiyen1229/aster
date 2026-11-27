@@ -358,6 +358,43 @@ export const listTokens = () => api<InboxToken[]>('/inbox/tokens');
 export const createToken = (name: string) => api<{ token: string; item: InboxToken }>('/inbox/tokens', { method: 'POST', body: { name } });
 export const revokeToken = (id: number) => api(`/inbox/tokens/${id}`, { method: 'DELETE' });
 
+export interface EmailForwardBinding {
+  id: number;
+  source_email: string;
+  forward_address: string;
+  status: 'pending_verify' | 'verified';
+  verify_url: string | null;
+  verify_code: string | null;
+  verify_received_at: string | null;
+  last_received_at: string | null;
+  received_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export function emailForwardStatusLabel(binding: EmailForwardBinding | null | undefined): {
+  kind: 'unconfigured' | 'pending' | 'connected';
+  label: string;
+} {
+  if (!binding) return { kind: 'unconfigured', label: '未啟用' };
+  if (binding.received_count > 0 || binding.last_received_at) {
+    return { kind: 'connected', label: `已連線 · 已接收 ${binding.received_count} 筆` };
+  }
+  if (binding.status === 'verified') {
+    return { kind: 'connected', label: '已連線 · 已接收 0 筆' };
+  }
+  return { kind: 'pending', label: '設定中' };
+}
+
+export const getEmailForwardBinding = () => api<EmailForwardBinding | null>('/inbox/email-forward');
+export const setupEmailForward = (sourceEmail: string) =>
+  api<EmailForwardBinding>('/inbox/email-forward', { method: 'POST', body: { source_email: sourceEmail } });
+export const markEmailForwardVerified = () =>
+  api<EmailForwardBinding>('/inbox/email-forward/verify', { method: 'POST', body: {} });
+export const removeEmailForward = async (): Promise<void> => {
+  await api('/inbox/email-forward', { method: 'DELETE' });
+};
+
 const SYNC_AT_KEY = 'inbox.lastSyncAt';
 const SYNC_ERR_KEY = 'inbox.lastError';
 

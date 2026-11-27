@@ -376,6 +376,12 @@ const ICON_NODES: Record<string, React.ReactNode> = {
       <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
     </>
   ),
+  mail: (
+    <>
+      <rect width="20" height="16" x="2" y="4" rx="2" />
+      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+    </>
+  ),
 };
 
 export type IconName = keyof typeof ICON_NODES;

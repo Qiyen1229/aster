@@ -68,3 +68,24 @@ class InboxDedupeKey(Base):
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     dedupe_key: Mapped[str] = mapped_column(String(160))
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class EmailForwardBinding(Base):
+    """使用者專屬 Email 自動轉寄綁定（Cloudflare Email Routing Webhook）。"""
+
+    __tablename__ = "email_forward_bindings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    source_email: Mapped[str] = mapped_column(String(254))
+    forward_token: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    forward_address: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    # pending_verify | verified
+    status: Mapped[str] = mapped_column(String(24), default="pending_verify")
+    verify_url: Mapped[str | None] = mapped_column(String(1000), nullable=True, default=None)
+    verify_code: Mapped[str | None] = mapped_column(String(32), nullable=True, default=None)
+    verify_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    last_received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    received_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

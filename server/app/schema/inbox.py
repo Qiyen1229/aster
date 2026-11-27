@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -154,3 +156,58 @@ class AckResult(BaseModel):
     """實際刪除的項目；另一台裝置已處理過的不會出現在這裡（避免重複記帳）"""
 
     ids: list[int]
+
+
+_SIMPLE_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class EmailForwardSetup(BaseModel):
+    source_email: str = Field(min_length=3, max_length=254)
+
+    @field_validator("source_email", mode="before")
+    @classmethod
+    def _validate_email(cls, v: object) -> str:
+        s = _clip(v, 254).lower()
+        if not _SIMPLE_EMAIL_RE.fullmatch(s):
+            raise ValueError("請輸入有效的 Email 位址")
+        return s
+
+
+class EmailForwardBindingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source_email: str
+    forward_address: str
+    status: Literal["pending_verify", "verified"]
+    verify_url: str | None = None
+    verify_code: str | None = None
+    verify_received_at: datetime | None = None
+    last_received_at: datetime | None = None
+    received_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class EmailForwardHookIn(BaseModel):
+    """Cloudflare Email Worker 送來的轉寄郵件內容。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    to: str = Field(min_length=3, max_length=320)
+    from_addr: str = Field(default="", max_length=320)
+    subject: str = Field(default="", max_length=300)
+    text: str = Field(default="", max_length=12000)
+    message_id: str | None = Field(default=None, max_length=300)
+
+    @field_validator("to", "from_addr", "subject", "text", mode="before")
+    @classmethod
+    def _coerce_str(cls, v: object) -> str:
+        if v is None:
+            return ""
+        return str(v)
+
+    @field_validator("message_id", mode="before")
+    @classmethod
+    def _coerce_msg_id(cls, v: object) -> str | None:
+        return _clip_opt(v, 300)

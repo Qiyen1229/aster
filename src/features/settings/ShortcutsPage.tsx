@@ -9,14 +9,17 @@ import { Capacitor } from '@capacitor/core';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  createToken, ensureLink, forgetLink, hookUrl, listTokens, revokeToken, savedLink,
+  createToken, emailForwardStatusLabel, ensureLink, forgetLink, getEmailForwardBinding, hookUrl, listTokens, revokeToken, savedLink,
   deviceLabel, openShortcutImport, shortcutFileUrl, SHORTCUTS,
+  type EmailForwardBinding,
   type InboxToken,
 } from '@/services/inbox';
+import { AUTH_ENABLED } from '@/stores/auth';
 import { useSettings } from '@/stores/settings';
 import { useUI, ask, askInput } from '@/stores/ui';
 import { Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
+import { EmailForwardSheet } from '../inbox/EmailForwardSheet';
 import { countTokenUses, ShortcutWizard, type ShortcutDef } from '../inbox/ShortcutWizard';
 
 const snack = (text: string, duration?: number) => useUI.getState().showSnack({ text, duration });
@@ -50,6 +53,9 @@ export default function ShortcutsPage() {
   const [preparing, setPreparing] = useState(false);
   const [activeChannel, setActiveChannel] = useState<ShortcutDef | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [emailBinding, setEmailBinding] = useState<EmailForwardBinding | null>(null);
+  const [emailChecked, setEmailChecked] = useState(false);
+  const [emailSheetOpen, setEmailSheetOpen] = useState(false);
 
   const refreshTokens = useCallback(async (): Promise<InboxToken[]> => {
     try {
@@ -71,6 +77,12 @@ export default function ShortcutsPage() {
 
   useEffect(() => {
     void refreshTokens();
+    if (AUTH_ENABLED) {
+      void getEmailForwardBinding()
+        .then(setEmailBinding)
+        .catch(() => undefined)
+        .finally(() => setEmailChecked(true));
+    }
   }, [refreshTokens]);
 
   const addShortcut = async (sc: ShortcutDef) => {
@@ -170,6 +182,7 @@ export default function ShortcutsPage() {
 
   const conn = getConnectionState(tokens, !!link);
   const actionLabel = conn.kind === 'connected' ? '管理' : '設定';
+  const emailConn = emailForwardStatusLabel(emailBinding);
 
   return (
     <main className="page">
@@ -215,6 +228,35 @@ export default function ShortcutsPage() {
             </section>
           );
         })}
+
+        {AUTH_ENABLED && (
+          <section className="card shortcut-channel-card">
+            <div className="shortcut-channel-head">
+              <span className="set-tile" style={{ ['--c' as string]: '#FF375F' }} aria-hidden="true">
+                <Icon name="mail" size={18} />
+              </span>
+              <div className="shortcut-channel-meta">
+                <div className="shortcut-channel-title">Email 自動轉寄（Gmail）</div>
+                <div className="shortcut-channel-sub muted">
+                  透過專屬轉寄地址自動接收 Gmail 銀行與行動支付通知信並匯入 Aster 收件匣
+                </div>
+              </div>
+              <button
+                type="button"
+                className={emailConn.kind === 'connected' ? 'pill' : 'pill accent-pill'}
+                onClick={() => setEmailSheetOpen(true)}
+              >
+                {emailBinding ? '管理' : '設定'}
+              </button>
+            </div>
+            <div className="shortcut-channel-foot">
+              <span className={`shortcut-status-badge is-${emailConn.kind}`}>
+                <i className="shortcut-status-dot" aria-hidden="true" />
+                {!emailChecked ? '檢查連線中…' : emailConn.label}
+              </span>
+            </div>
+          </section>
+        )}
       </div>
 
       <div className="section-title">偏好與管理</div>
@@ -246,6 +288,13 @@ export default function ShortcutsPage() {
         onAdd={addShortcut}
         onSendTest={(k) => sendTest('link', k)}
         onRefreshTokens={refreshTokens}
+      />
+
+      <EmailForwardSheet
+        open={emailSheetOpen}
+        onClose={() => setEmailSheetOpen(false)}
+        binding={emailBinding}
+        onUpdated={setEmailBinding}
       />
 
       <Sheet open={advancedOpen} onClose={() => setAdvancedOpen(false)} title="進階設定與裝置管理">
