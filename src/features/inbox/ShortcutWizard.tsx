@@ -24,6 +24,9 @@ function save(d: Done) { try { localStorage.setItem(key(), JSON.stringify(d)); }
 export function ShortcutWizard({ preparing, onAdd, hasLink }: { preparing: boolean; onAdd: (s: Def) => Promise<void>; hasLink: boolean }) {
   const [done, setDone] = useState<Done>(load);
   const [justAdded, setJustAdded] = useState<string | null>(null);
+  const [pendingKey, setPendingKey] = useState<string | null>(() => {
+    try { return sessionStorage.getItem(PENDING); } catch { return null; }
+  });
   const listRef = useRef<HTMLDivElement>(null);
 
   const mark = useCallback((k: string, what: keyof Done, on: boolean) => {
@@ -34,28 +37,48 @@ export function ShortcutWizard({ preparing, onAdd, hasLink }: { preparing: boole
     });
   }, []);
 
-  // 從「捷徑」App 回到 Aster：剛才按了「加入」的那個捷徑自動打勾（匯入被取消也會打勾，這只是備忘，可以點勾勾取消）
+  // 從「捷徑」App 回到 Aster：顯示待確認提示，由使用者明確點「確認已加入」後才打勾（不自動假設匯入成功）
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
-      let k: string | null = null;
-      try { k = sessionStorage.getItem(PENDING); sessionStorage.removeItem(PENDING); } catch { /* 忽略 */ }
-      if (k) { mark(k, 'added', true); setJustAdded(k); }
+      try {
+        const k = sessionStorage.getItem(PENDING);
+        if (k) setPendingKey(k);
+      } catch { /* 忽略 */ }
     };
     document.addEventListener('visibilitychange', onVisible);
-    onVisible(); // 同一個分頁被系統丟掉重載時，回來的當下也補做一次
+    onVisible();
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [mark]);
+  }, []);
 
   const add = async (s: Def) => {
     try { sessionStorage.setItem(PENDING, s.key); } catch { /* 忽略 */ }
-    await onAdd(s);
+    setPendingKey(s.key);
+    try {
+      await onAdd(s);
+    } catch {
+      dismissPending();
+    }
+  };
+
+  const confirmPending = () => {
+    if (!pendingKey) return;
+    mark(pendingKey, 'added', true);
+    setJustAdded(pendingKey);
+    setPendingKey(null);
+    try { sessionStorage.removeItem(PENDING); } catch { /* 忽略 */ }
+  };
+
+  const dismissPending = () => {
+    setPendingKey(null);
+    try { sessionStorage.removeItem(PENDING); } catch { /* 忽略 */ }
   };
 
   const left = SHORTCUTS.filter((s) => !done.added.includes(s.key));
   const next = left[0];
   const pct = Math.round(((SHORTCUTS.length - left.length) / SHORTCUTS.length) * 100);
   const needAuto = SHORTCUTS.filter((s) => s.automation && done.added.includes(s.key) && !done.auto.includes(s.key));
+  const pendingShortcut = pendingKey ? SHORTCUTS.find((s) => s.key === pendingKey) : undefined;
 
   return (
     <div className="card inbox-oneclick" ref={listRef}>
@@ -63,13 +86,22 @@ export function ShortcutWizard({ preparing, onAdd, hasLink }: { preparing: boole
         <b>已加入 {SHORTCUTS.length - left.length}／{SHORTCUTS.length}</b>
         <div className="wiz-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${pct}%` }} /></div>
       </div>
-      {justAdded && next && (
+      {pendingShortcut && (
+        <div className="wiz-next" role="status" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          <span>已從「捷徑」App 返回？請確認是否已加入「<b>{pendingShortcut.name}</b>」：</span>
+          <span style={{ display: 'flex', gap: 6 }}>
+            <button type="button" className="pill accent-pill" onClick={confirmPending}>確認已加入</button>
+            <button type="button" className="pill" onClick={dismissPending}>還沒加入</button>
+          </span>
+        </div>
+      )}
+      {!pendingShortcut && justAdded && next && (
         <p className="wiz-next" role="status">✅ 「{SHORTCUTS.find((s) => s.key === justAdded)?.name}」已標記為加入。下一個：<b>{next.title}</b></p>
       )}
       <ol className="oneclick-steps">
         <li>按「<b>加入</b>」：自動複製你的<b>連結碼</b>並切換到「捷徑」App，跳出「加入捷徑」</li>
         <li>按「<b>設定捷徑</b>」，長按輸入框 →「<b>貼上</b>」，再按「<b>加入捷徑</b>」</li>
-        <li>回到 Aster（左上角「◀ Aster」），這裡會自動打勾，接著加下一個</li>
+        <li>回到 Aster（左上角「◀ Aster」）後點「<b>確認已加入</b>」打勾，接著加下一個</li>
       </ol>
       {next && (
         <button className="btn" style={{ margin: '4px 0 10px' }} disabled={preparing} onClick={() => void add(next)}>

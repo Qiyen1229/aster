@@ -11,14 +11,15 @@ import hashlib
 import json
 import re
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.request_info import ClientInfo
 from app.core.security import utcnow
-from app.model import InboxBooking, InboxItem, InboxToken, User
+from app.model import InboxBooking, InboxDedupeKey, InboxItem, InboxToken, User
 from app.repository.sync_repository import SyncRepository
 from app.schema.inbox import BookingRequest, HookItem
 from app.service.audit_service import AuditService
@@ -28,6 +29,7 @@ TOKEN_PREFIX = "clr_"
 MAX_TOKENS = 10
 MAX_PENDING = 500
 RETENTION = timedelta(days=30)
+RETRY_DEDUPE_WINDOW = timedelta(seconds=60)
 
 _HARD_NOISE_RE = re.compile(
     r"驗證碼|動態密碼|安全碼|驗證密碼|\bOTP\b|登入成功|成功登入|登入通知|裝置登入|密碼變更|修改密碼",
@@ -55,6 +57,12 @@ _EMAIL_CURRENCY_AMT_RE = re.compile(
     r"(?:NT\$|NTD|TWD|USD|JPY|EUR|HKD|新台幣|新臺幣|台幣|臺幣|\$)\s*[\d,]+|[\d,]+(?:\.\d+)?\s*元",
     re.IGNORECASE,
 )
+_OFFICIAL_ACTION_SENDER_RE = re.compile(
+    r"(?:LINE\s*Pay|LINE\s*錢包|LINE\s*Bank|街口|悠遊付|悠遊卡|一卡通|iPASS|icash|全支付|歐付寶|"
+    r"國泰世華|國泰|中國信託|中信|玉山|台新|Richart|富邦|永豐|聯邦|兆豐|第一銀行|華南|"
+    r"合作金庫|合庫|彰化銀行|彰銀|凱基|元大|新光|星展|樂天|渣打|滙豐|匯豐|王道|陽信|遠東商銀|郵局|台灣\s*Pay|銀行)",
+    re.IGNORECASE,
+)
 
 
 def is_noise_notification(body: HookItem) -> bool:
@@ -71,8 +79,9 @@ def is_noise_notification(body: HookItem) -> bool:
         return True
     if body.source == "email":
         return not (_TX_SIGNAL_RE.search(combined) and _EMAIL_CURRENCY_AMT_RE.search(combined))
-    if _TX_SIGNAL_RE.search(combined) and _DIGIT_RE.search(combined):
-        return False
+    if _TX_SIGNAL_RE.search(combined):
+        if _DIGIT_RE.search(combined) or _OFFICIAL_ACTION_SENDER_RE.search(f"{body.card} {combined}"):
+            return False
     return True
 
 
@@ -114,23 +123,97 @@ class InboxService:
         return user, row
 
     # ── 項目 ──
+    def _purge_expired(self, user_id: int, now: datetime) -> int:
+        res = self.db.execute(delete(InboxItem).where(InboxItem.user_id == user_id, InboxItem.created_at < now - RETENTION))
+        self.db.execute(delete(InboxDedupeKey).where(InboxDedupeKey.user_id == user_id, InboxDedupeKey.expires_at < now))
+        return int(res.rowcount or 0)
+
+    @staticmethod
+    def _dedupe_key_for_hook(body: HookItem) -> tuple[str, timedelta]:
+        if body.source_event_id:
+            return f"event:{body.source_event_id}", RETENTION
+        payload = "|".join([
+            body.source, body.text, body.amount, body.merchant, body.card, body.date,
+            body.currency or "", body.event_at or "",
+        ])
+        fp = hashlib.sha256(payload.encode()).hexdigest()
+        return f"retry:{fp}", RETRY_DEDUPE_WINDOW
+
+    def _claim_dedupe(self, user_id: int, dedupe_key: str, expires_at: datetime, now: datetime) -> bool:
+        """嘗試登記去重鍵；若仍在有效期內已存在則回傳 False。"""
+        existing = self.db.scalar(
+            select(InboxDedupeKey).where(InboxDedupeKey.user_id == user_id, InboxDedupeKey.dedupe_key == dedupe_key)
+        )
+        if existing:
+            if existing.expires_at >= now:
+                return False
+            existing.expires_at = expires_at
+            self.db.flush()
+            return True
+        try:
+            with self.db.begin_nested():
+                self.db.add(InboxDedupeKey(user_id=user_id, dedupe_key=dedupe_key, expires_at=expires_at))
+                self.db.flush()
+            return True
+        except IntegrityError:
+            return False
+
     def receive(self, user: User, token: InboxToken, body: HookItem) -> InboxItem | None:
+        item, _ = self.receive_with_status(user, token, body)
+        return item
+
+    def receive_with_status(self, user: User, token: InboxToken, body: HookItem) -> tuple[InboxItem | None, str]:
         if is_noise_notification(body):
-            return None
+            return None, "noise"
+        now = utcnow()
+        self._purge_expired(user.id, now)
+
+        if body.source_event_id:
+            existing_item = self.db.scalar(
+                select(InboxItem).where(InboxItem.user_id == user.id, InboxItem.source_event_id == body.source_event_id)
+            )
+            if existing_item:
+                return None, "duplicate"
+
+        dedupe_key, ttl = self._dedupe_key_for_hook(body)
+        # 先檢查 pending 上限（避免被大量重複或滿載時寫入 dedupe_key 卻沒進收件匣）
+        existing_dedupe = self.db.scalar(
+            select(InboxDedupeKey).where(
+                InboxDedupeKey.user_id == user.id,
+                InboxDedupeKey.dedupe_key == dedupe_key,
+                InboxDedupeKey.expires_at >= now,
+            )
+        )
+        if existing_dedupe:
+            return None, "duplicate"
+
         pending = int(self.db.scalar(select(func.count(InboxItem.id)).where(InboxItem.user_id == user.id)) or 0)
         if pending >= MAX_PENDING:
             raise ServiceError(429, "收件匣已滿，請先打開 App 處理待確認的項目")
-        item = InboxItem(user_id=user.id, token_id=token.id, source=body.source, text=body.text, amount=body.amount,
-                         merchant=body.merchant, card=body.card, occurred=body.date)
+
+        if not self._claim_dedupe(user.id, dedupe_key, now + ttl, now):
+            return None, "duplicate"
+
+        item = InboxItem(
+            user_id=user.id, token_id=token.id, source=body.source, text=body.text, amount=body.amount,
+            merchant=body.merchant, card=body.card, occurred=body.date,
+            currency=body.currency, source_event_id=body.source_event_id, event_at=body.event_at,
+        )
         self.db.add(item)
-        token.last_used_at = utcnow()
+        token.last_used_at = now
         token.use_count = (token.use_count or 0) + 1
         self.db.flush()
-        return item
+        return item, "created"
 
     def items(self, user: User) -> list[InboxItem]:
-        self.db.execute(delete(InboxItem).where(InboxItem.user_id == user.id, InboxItem.created_at < utcnow() - RETENTION))
-        return list(self.db.scalars(select(InboxItem).where(InboxItem.user_id == user.id).order_by(InboxItem.id.desc()).limit(MAX_PENDING)).all())
+        rows, _ = self.items_with_meta(user)
+        return rows
+
+    def items_with_meta(self, user: User) -> tuple[list[InboxItem], int]:
+        now = utcnow()
+        purged = self._purge_expired(user.id, now)
+        rows = list(self.db.scalars(select(InboxItem).where(InboxItem.user_id == user.id).order_by(InboxItem.id.desc()).limit(MAX_PENDING)).all())
+        return rows, purged
 
     def reserve_booking(self, user: User, body: BookingRequest) -> None:
         SyncRepository(self.db).reserve_seq(user.id, 0)

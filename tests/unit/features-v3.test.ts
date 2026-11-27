@@ -224,7 +224,7 @@ describe('電子發票記帳：帳戶判斷與對到手動記帳', () => {
     // 過去在星巴克都用信用卡
     for (let i = 0; i < 3; i++) await addTransaction({ type: 'expense', accountId: card.id, categoryId: 'exp-food-drink', amountMinor: 15000, currency: 'TWD', date: d(-20 - i), ts: i, note: '星巴克' });
     // 手動記過的 7-11 85 元（沒有發票號碼）
-    const manual = await addTransaction({ type: 'expense', accountId: cash.id, categoryId: 'exp-food', amountMinor: 8500, currency: 'TWD', date: d(-1), ts: 9, note: '早餐' });
+    const manual = await addTransaction({ type: 'expense', accountId: cash.id, categoryId: 'exp-food', amountMinor: 8500, currency: 'TWD', date: d(-1), ts: 9, note: '7-11 早餐' });
     invalidateAutocat();
     const inv = (number: string, sellerName: string, amount: number, date: string) => ({ number, date, amount, sellerId: '', sellerName, status: '已確認', items: [] });
     const r = await importInvoices([
@@ -263,7 +263,7 @@ describe('電子發票記帳：帳戶判斷與對到手動記帳', () => {
       currency: 'USD', date: today, ts: 1, note: '美金付款',
     });
 
-    const inv = (number: string, amount: number, date: string) => ({ number, date, amount, sellerId: '', sellerName: '商店', status: '已確認', items: [] });
+    const inv = (number: string, amount: number, date: string, sellerName = '美金付款') => ({ number, date, amount, sellerId: '', sellerName, status: '已確認', items: [] });
 
     // 差 1 元 (301 元) 不配對
     const rDiff = await importInvoices([inv('AB11111111', 301, today)], { defaultAccountId: twdAcc.id });
@@ -283,9 +283,49 @@ describe('電子發票記帳：帳戶判斷與對到手動記帳', () => {
       currency: 'USD', date: today, ts: 2, note: '美金付款2',
     });
     // 300 TWD 發票，換算為 USD base 為 300 * (1/30) = 10 USD (1000 minor)
-    const rMatchUsdBase = await importInvoices([inv('AB33333333', 300, today)], { defaultAccountId: usdAcc.id });
+    const rMatchUsdBase = await importInvoices([inv('AB33333333', 300, today, '美金付款2')], { defaultAccountId: usdAcc.id });
     expect(rMatchUsdBase.matched).toBe(1);
     const updated2 = await db.transactions.get(manualUsd2.id);
     expect(updated2?.invoiceNo).toBe('AB33333333');
+  });
+
+  it('Item 7：確定性 ID、商家不符不誤配、多筆候選不盲配、載具略過已軟刪除發票', async () => {
+    const { importInvoices } = await import('@/services/einvoice');
+    const { deleteTransactions } = await import('@/db/repo/ledger');
+    const { todayKey } = await import('@/domain/period');
+    await db.delete();
+    await db.open();
+    await bootstrap();
+    invalidateAutocat();
+    const cash = await addAccount({ name: '現金', icon: '', color: '', type: 'cash', currency: 'TWD', initialBalanceMinor: 0, includeInNetWorth: true, isLiability: false });
+    const today = todayKey();
+    const inv = (number: string, sellerName: string, amount: number) => ({ number, date: today, amount, sellerId: '', sellerName, status: '開立', items: [] });
+
+    // 1. 正規化發票號碼與確定性 ID
+    const r1 = await importInvoices([inv('aa-00000099', '星巴克', 150)], { defaultAccountId: cash.id });
+    expect(r1.created).toBe(1);
+    const createdRow = await db.transactions.get('inv-AA00000099');
+    expect(createdRow?.invoiceNo).toBe('AA00000099');
+
+    // 2. 載具匯入遇到已軟刪除發票時略過（不復活也不重複建）
+    await deleteTransactions(['inv-AA00000099']);
+    const rCarrier = await importInvoices([inv('AA00000099', '星巴克', 150)], { defaultAccountId: cash.id, source: 'carrier' });
+    expect(rCarrier).toMatchObject({ created: 0, skipped: 1 });
+
+    // 2b. 手動匯入已軟刪除發票時可順利復原（不因 Dexie subtransaction store 不足而失敗）
+    const rManualRestore = await importInvoices([inv('AA00000099', '星巴克', 150)], { defaultAccountId: cash.id, source: 'manual' });
+    expect(rManualRestore).toMatchObject({ created: 1, skipped: 0 });
+    expect((await db.transactions.get('inv-AA00000099'))?.deletedAt).toBeNull();
+
+    // 3. 商家不符（全聯 vs 7-11 同金額）不配對
+    await addTransaction({ type: 'expense', accountId: cash.id, categoryId: 'exp-food', amountMinor: 20000, currency: 'TWD', date: today, ts: 1, note: '全聯' });
+    const rMismatch = await importInvoices([inv('BB11111111', '統一超商', 200)], { defaultAccountId: cash.id });
+    expect(rMismatch).toMatchObject({ created: 1, matched: 0 });
+
+    // 4. 多筆同條件候選不盲配
+    await addTransaction({ type: 'expense', accountId: cash.id, categoryId: 'exp-food', amountMinor: 9500, currency: 'TWD', date: today, ts: 2, note: '麥當勞' });
+    await addTransaction({ type: 'expense', accountId: cash.id, categoryId: 'exp-food', amountMinor: 9500, currency: 'TWD', date: today, ts: 3, note: '麥當勞' });
+    const rMulti = await importInvoices([inv('CC22222222', '麥當勞', 95)], { defaultAccountId: cash.id });
+    expect(rMulti).toMatchObject({ created: 1, matched: 0 });
   });
 });

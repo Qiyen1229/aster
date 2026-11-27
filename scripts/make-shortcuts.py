@@ -115,6 +115,17 @@ def shortcut_input(prop: str | None = None) -> dict:
     return a
 
 
+def current_date_iso() -> dict:
+    return {
+        "Type": "CurrentDate",
+        "Aggrandizements": [{
+            "Type": "WFDateFormatVariableAggrandizement",
+            "WFDateFormatStyle": "ISO 8601",
+            "WFISO8601IncludeTime": True,
+        }],
+    }
+
+
 def field(key: str, value: dict) -> dict:
     return {"WFItemType": 0, "WFKey": text(key), "WFValue": value}
 
@@ -224,7 +235,8 @@ def build(
 
 
 def auto() -> dict:
-    """Aster 自動記帳：內建銀行通知與錢包交易觸發器，收到通知或 Apple Pay 付款後自動送出"""
+    """Aster 自動記帳：內建銀行與行動支付通知觸發器，收到通知後自動送出"""
+    rand_id = str(uuid.uuid4()).upper()
     return build(
         [
             field("source", text("notify")),
@@ -232,10 +244,14 @@ def auto() -> dict:
             field("merchant", var_text(shortcut_input("Merchant"))),
             field("card", multi_var_text([shortcut_input("Card or Pass"), shortcut_input("App")])),
             field("text", multi_var_text([shortcut_input("Title"), shortcut_input("Subtitle"), shortcut_input()])),
+            field("date", var_text(current_date_iso())),
+            field("source_event_id", multi_var_text([current_date_iso(), output(rand_id, "隨機數字")], "-")),
         ],
         before=[
             {"WFWorkflowActionIdentifier": "is.workflow.actions.delay",
              "WFWorkflowActionParameters": {"WFDelayTime": 1}},
+            {"WFWorkflowActionIdentifier": "is.workflow.actions.number.random",
+             "WFWorkflowActionParameters": {"UUID": rand_id, "WFRandomNumberMinimum": 100000, "WFRandomNumberMaximum": 999999}},
         ],
         triggers=[
             {
@@ -245,6 +261,27 @@ def auto() -> dict:
                     "SelectedApps": NOTIFY_APPS,
                 },
             },
+        ],
+    )
+
+
+def applepay() -> dict:
+    """Aster Apple Pay 記帳：錢包交易觸發器（WFWalletTransactionTrigger），感應付款後自動送出"""
+    rand_id = str(uuid.uuid4()).upper()
+    return build(
+        [
+            field("source", text("applepay")),
+            field("amount", var_text(shortcut_input("Amount"))),
+            field("merchant", var_text(shortcut_input("Merchant"))),
+            field("card", var_text(shortcut_input("Card or Pass"))),
+            field("date", var_text(current_date_iso())),
+            field("source_event_id", multi_var_text([current_date_iso(), output(rand_id, "隨機數字")], "-")),
+        ],
+        before=[
+            {"WFWorkflowActionIdentifier": "is.workflow.actions.number.random",
+             "WFWorkflowActionParameters": {"UUID": rand_id, "WFRandomNumberMinimum": 100000, "WFRandomNumberMaximum": 999999}},
+        ],
+        triggers=[
             {
                 "WFTriggerIdentifier": "WFWalletTransactionTrigger",
                 "WFTriggerUUID": str(uuid.uuid4()).upper(),
@@ -261,10 +298,13 @@ def voice() -> dict:
     code_id = str(uuid.uuid4()).upper()
     req_id = str(uuid.uuid4()).upper()
     detect_id = str(uuid.uuid4()).upper()
+    rand_id = str(uuid.uuid4()).upper()
 
     actions = [
         {"WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
          "WFWorkflowActionParameters": {"UUID": code_id, "WFTextActionText": text("")}},
+        {"WFWorkflowActionIdentifier": "is.workflow.actions.number.random",
+         "WFWorkflowActionParameters": {"UUID": rand_id, "WFRandomNumberMinimum": 100000, "WFRandomNumberMaximum": 999999}},
         {"WFWorkflowActionIdentifier": "is.workflow.actions.detect.text",
          "WFWorkflowActionParameters": {
              "UUID": detect_id,
@@ -310,6 +350,8 @@ def voice() -> dict:
              "WFJSONValues": dict_value([
                  field("source", text("siri")),
                  field("text", var_text(output(cond_id, "如果的結果"))),
+                 field("date", var_text(current_date_iso())),
+                 field("source_event_id", multi_var_text([current_date_iso(), output(rand_id, "隨機數字")], "-")),
              ]),
          }},
         *_show_hook_message(req_id),
@@ -336,6 +378,7 @@ def voice() -> dict:
 
 SHORTCUTS: dict[str, tuple[str, object]] = {
     "aster-auto": ("Aster 自動記帳", auto),
+    "aster-applepay": ("Aster Apple Pay 記帳", applepay),
     "aster-voice": ("Aster 隨手記", voice),
 }
 

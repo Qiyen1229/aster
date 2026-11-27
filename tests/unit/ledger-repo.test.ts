@@ -84,4 +84,11 @@ describe('ledger repo：帳目與餘額一致性', () => {
     expect([await bal(a.id), await bal(b.id)]).toEqual([0, -300]);
     expect((await db.transactions.get(t1.id))!.categoryId).toBe('exp-transport');
   });
+
+  it('非主幣別帳戶缺少對主幣別匯率時拋出明確錯誤，不靜默以 1:1 計', async () => {
+    const jpy = await acc('日幣帳戶', 0, 'JPY');
+    await expect(
+      addTransaction({ ...base, type: 'expense', accountId: jpy.id, categoryId: 'exp-food', amountMinor: 1000, currency: 'JPY' }),
+    ).rejects.toThrow(/匯率/);
+  });
 });

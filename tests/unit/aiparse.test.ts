@@ -42,6 +42,11 @@ describe('aiEntriesToDrafts', () => {
     expect(l[0].categoryId).toBeUndefined();
     expect(l[0].accountId).toBeUndefined();
   });
+
+  it('保留並正規化外幣幣別', () => {
+    const [d] = aiEntriesToDrafts([e({ amount: 20, currency: 'usd', note: 'AWS' })], ctx, 'AWS 20 USD');
+    expect(d.currency).toBe('USD');
+  });
 });
 
 describe('namesForAi', () => {

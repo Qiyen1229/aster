@@ -41,6 +41,7 @@ class ParseEntryRequest(BaseModel):
 class ParsedEntry(BaseModel):
     type: Literal["expense", "income", "transfer"] = "expense"
     amount: float = Field(gt=0, lt=1e12)
+    currency: str | None = None
     note: str = ""
     category: str | None = None
     account: str | None = None
@@ -193,6 +194,7 @@ class TranscribeResult(BaseModel):
 class StatementEntry(BaseModel):
     date: str
     amount: float
+    currency: str = "TWD"
     type: Literal["expense", "income"]
     merchant: str = ""
     foreign_amount: float | None = None

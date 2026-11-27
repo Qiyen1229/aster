@@ -22,6 +22,7 @@ export default function HomeInbox() {
   const count = useInboxCount((s) => s.n);
   const { map: accMap } = useAccounts();
   const [entries, setEntries] = useState<InboxEntry[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const today = todayKey();
 
@@ -29,8 +30,16 @@ export default function HomeInbox() {
     try {
       const m = await import('@/services/inbox');
       setEntries(await m.loadInbox());
-    } catch {
-      setEntries([]);
+      setLoadError(null);
+    } catch (err) {
+      const msg = (err as Error)?.message;
+      if (msg) {
+        setLoadError(msg);
+        return;
+      }
+      const { getInboxSyncState } = await import('@/services/inbox');
+      const state = await getInboxSyncState().catch(() => ({ lastSyncAt: null, lastError: null }));
+      setLoadError(state.lastError || '收件匣載入失敗');
     }
   }, []);
   useEffect(() => {
@@ -86,13 +95,27 @@ export default function HomeInbox() {
 
   const list = entries ?? [];
   const shown = list.slice(0, SHOW);
+  const statusLabel = loadError ? '讀取失敗' : entries === null ? '載入中…' : list.length ? '全部查看' : '沒有待確認';
 
   return (
     <section className="home-inbox" aria-label="收件匣">
       <button type="button" className="home-inbox-head" onClick={() => navigate('/inbox')}>
         <span>📥 收件匣{list.length ? `（${list.length} 筆待確認）` : ''}</span>
-        <span className="muted home-inbox-more">{list.length ? '全部查看' : '沒有待確認'}<Icon name="chevronR" size={14} /></span>
+        <span className="muted home-inbox-more">{statusLabel}<Icon name="chevronR" size={14} /></span>
       </button>
+      {loadError && (
+        <div className="list">
+          <div className="row inbox-row" role="alert">
+            <span className="row-main">
+              <span className="row-title">收件匣暫時讀不到</span>
+              <span className="row-sub" style={{ whiteSpace: 'normal' }}>{loadError}</span>
+            </span>
+            <span className="inbox-actions">
+              <button type="button" className="pill accent-pill" onClick={() => void reload()}>重試</button>
+            </span>
+          </div>
+        </div>
+      )}
       {shown.length > 0 && (
         <div className="list">
           {shown.map((e) => {
@@ -106,7 +129,7 @@ export default function HomeInbox() {
                   <span className="row-title">{title}</span>
                   <span className="row-sub" style={{ whiteSpace: 'normal' }}>
                     {d ? `${shortDate(d.date, today)} · ${acc?.name ?? '?'}` : '看不懂金額，請點「入帳」或「編輯」補填'}
-                    {e.review ? ' · ⚠️ LINE 聊天，請確認' : e.dup ? ' · ⚠️ 可能重複' : ''}
+                    {e.review ? ` · ⚠️ ${e.review}` : e.dup ? ' · ⚠️ 可能重複' : ''}
                   </span>
                 </span>
                 {d && <span className={`num ${d.kind === 'income' ? 'pos' : 'neg'}`}>{formatMoney(toMinor(d.amount, cur), cur)}</span>}

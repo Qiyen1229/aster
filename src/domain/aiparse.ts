@@ -8,6 +8,7 @@ import type { DraftEntry, ParseContext } from './nlp';
 export interface AiEntry {
   type: 'expense' | 'income' | 'transfer';
   amount: number;
+  currency?: string | null;
   note: string;
   category: string | null;
   account: string | null;
@@ -20,15 +21,16 @@ export function aiEntriesToDrafts(entries: AiEntry[], ctx: ParseContext, raw: st
   const out: DraftEntry[] = [];
   for (const e of entries) {
     if (!(e.amount > 0)) continue;
+    const currency = e.currency ? e.currency.trim().toUpperCase() : undefined;
     const accountId = acc(e.account);
     const toAccountId = acc(e.to_account);
     if (e.type === 'transfer') {
       if (!accountId || !toAccountId || accountId === toAccountId) continue;
-      out.push({ kind: 'transfer', amount: e.amount, date: e.date ?? ctx.today, dateGiven: !!e.date, accountId, toAccountId, note: e.note, raw });
+      out.push({ kind: 'transfer', amount: e.amount, ...(currency ? { currency } : {}), date: e.date ?? ctx.today, dateGiven: !!e.date, accountId, toAccountId, note: e.note, raw });
       continue;
     }
     const cat = e.category ? ctx.categories.find((c) => c.name === e.category && c.kind === e.type) : undefined;
-    out.push({ kind: e.type, amount: e.amount, date: e.date ?? ctx.today, dateGiven: !!e.date, accountId, categoryId: cat?.id, note: e.note, raw });
+    out.push({ kind: e.type, amount: e.amount, ...(currency ? { currency } : {}), date: e.date ?? ctx.today, dateGiven: !!e.date, accountId, categoryId: cat?.id, note: e.note, raw });
   }
   return out;
 }

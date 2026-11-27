@@ -66,7 +66,7 @@ export async function syncCarrier(opts: { force?: boolean; days?: number } = {})
   const lastDate = (await db.meta.get(META_LAST_DATE))?.value as string | undefined;
   const start = opts.days ? addDays(end, -opts.days) : lastDate ? addDays(lastDate, -3) : addDays(end, -60);
   const list = await fetchCarrierInvoices(start, end);
-  const r = await importInvoices(list, { defaultAccountId: cfg.defaultAccountId });
+  const r = await importInvoices(list, { defaultAccountId: cfg.defaultAccountId, source: 'carrier' });
   await db.meta.bulkPut([{ key: META_LAST_DATE, value: end }, { key: META_LAST_RUN, value: Date.now() }]);
   return { ...r, fetched: list.length, start, end };
 }

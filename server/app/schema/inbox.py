@@ -21,6 +21,11 @@ def _clip(v: object, n: int) -> str:
     return str(v).strip()[:n]
 
 
+def _clip_opt(v: object, n: int) -> str | None:
+    s = _clip(v, n)
+    return s or None
+
+
 class HookItem(BaseModel):
     """iPhone 捷徑送進收件匣的內容；欄位都可以省略，但至少要有文字或金額。"""
 
@@ -32,6 +37,9 @@ class HookItem(BaseModel):
     merchant: str = ""
     card: str = ""
     date: str = ""
+    currency: str | None = None
+    source_event_id: str | None = None
+    event_at: str | None = None
 
     @field_validator("source", mode="before")
     @classmethod
@@ -60,9 +68,24 @@ class HookItem(BaseModel):
     def _card(cls, v: object) -> str:
         return _clip(v, 80)
 
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _currency(cls, v: object) -> str | None:
+        return _clip_opt(v, 16)
+
+    @field_validator("source_event_id", mode="before")
+    @classmethod
+    def _source_event_id(cls, v: object) -> str | None:
+        return _clip_opt(v, 128)
+
+    @field_validator("event_at", mode="before")
+    @classmethod
+    def _event_at(cls, v: object) -> str | None:
+        return _clip_opt(v, 64)
+
     @model_validator(mode="after")
     def _not_empty(self) -> HookItem:
-        if not (self.text or self.amount or self.merchant):
+        if not (self.text or self.amount or self.merchant or (self.source == "applepay" and self.card)):
             raise ValueError("內容是空的：請至少傳送文字或金額")
         return self
 
@@ -104,6 +127,9 @@ class InboxItemOut(BaseModel):
     merchant: str
     card: str
     occurred: str
+    currency: str | None = None
+    source_event_id: str | None = None
+    event_at: str | None = None
     created_at: datetime
 
 

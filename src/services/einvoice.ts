@@ -144,10 +144,14 @@ export async function scanInvoiceImage(file: Blob): Promise<{ invoice: Invoice |
 }
 
 /** 已記帳的發票號碼（避免重複匯入） */
+export const normInvoiceNo = (no: string) => no.trim().toUpperCase().replace(/-/g, '');
+
 export async function existingInvoiceNos(numbers: string[]): Promise<Set<string>> {
   const { db } = await import('@/db/schema');
-  const rows = await db.transactions.where('invoiceNo').anyOf(numbers).toArray();
-  return new Set(rows.filter((t) => !t.deletedAt).map((t) => t.invoiceNo!));
+  const norm = [...new Set(numbers.map(normInvoiceNo).filter(Boolean))];
+  if (!norm.length) return new Set();
+  const rows = await db.transactions.where('invoiceNo').anyOf(norm).toArray();
+  return new Set(rows.filter((t) => !t.deletedAt).map((t) => normInvoiceNo(t.invoiceNo!)));
 }
 
 export interface InvoiceImportResult {
@@ -164,32 +168,40 @@ export interface InvoiceImportResult {
 /**
  * 批次把發票記成支出：
  * - 已記過的發票號碼、作廢發票略過
- * - 手動記過同一筆（同金額、日期相差 1 天內、還沒有發票號碼的支出）→ 補上發票號碼與商家，不重複記帳
+ * - 手動記過同一筆（同金額、日期相差 1 天內、商家相近且唯一候選、還沒有發票號碼的支出）→ 補上發票號碼與商家，不重複記帳
  * - 帳戶：自動分類規則指定的帳戶 → 過去同一商家最常用的帳戶 → 預設帳戶
  * - 分類：自動分類規則與商家記憶，找不到則記「其他支出」
  */
-export async function importInvoices(list: Invoice[], opts: { defaultAccountId: string }): Promise<InvoiceImportResult> {
-  const [{ db }, { addTransaction }, { suggestAccount, suggestCategory }, { toMinor, convertMinor }, { getRate }, { getSetting }] = await Promise.all([
-    import('@/db/schema'), import('@/db/repo/ledger'), import('./autocat'), import('@/domain/money'), import('./fx'), import('@/db/repo/settings'),
+export async function importInvoices(list: Invoice[], opts: { defaultAccountId: string; source?: 'carrier' | 'manual' }): Promise<InvoiceImportResult> {
+  const [{ db }, { addTransaction, resolveAmounts, restoreTransactions }, { suggestAccount, suggestCategory }, { toMinor, convertMinor }, { getRate }, { getSetting }, { shopSimilar }] = await Promise.all([
+    import('@/db/schema'), import('@/db/repo/ledger'), import('./autocat'), import('@/domain/money'), import('./fx'), import('@/db/repo/settings'), import('@/domain/dedupe'),
   ]);
   const base = (await getSetting('baseCurrency')) || 'TWD';
   const accounts = new Map((await db.accounts.toArray()).filter((a) => !a.archived && !a.deletedAt).map((a) => [a.id, a]));
   const fallback = accounts.get(opts.defaultAccountId) ?? [...accounts.values()].find((a) => !a.isLiability) ?? [...accounts.values()][0];
   if (!fallback) throw new Error('請先新增帳戶');
-  const done = await existingInvoiceNos(list.map((i) => i.number));
   const res: InvoiceImportResult = { created: 0, matched: 0, skipped: 0, usedDefault: 0 };
-  const dates = list.map((i) => i.date).sort();
   const shift = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
-  const manual = dates.length
-    ? (await db.transactions.where('date').between(shift(dates[0], -1), shift(dates[dates.length - 1], 1), true, true).toArray())
-      .filter((t) => !t.deletedAt && t.type === 'expense' && !t.invoiceNo)
-    : [];
-  const used = new Set<string>();
+
+  // 先在交易外完成匯率查詢與建議計算，避免 Dexie transaction 內發生非同步網路 await
+  type PreparedInv = {
+    inv: Invoice;
+    normNo: string;
+    note: string;
+    invTwdMinor: number;
+    invBaseMinor: number | null;
+    suggestedAcc: Awaited<ReturnType<typeof suggestAccount>>;
+    account: NonNullable<typeof fallback>;
+    isDefaultAcc: boolean;
+    txInput: import('@/db/repo/ledger').TxInput;
+    amounts: Awaited<ReturnType<typeof resolveAmounts>>;
+  };
+  const prepared: PreparedInv[] = [];
   for (const inv of [...list].sort((a, b) => a.date.localeCompare(b.date))) {
-    if (done.has(inv.number) || isVoided(inv) || !(inv.amount > 0)) { res.skipped++; continue; }
+    const normNo = normInvoiceNo(inv.number);
+    if (!normNo || isVoided(inv) || !(inv.amount > 0)) { res.skipped++; continue; }
     const note = invoiceNote(inv) || inv.sellerName;
     const text = [inv.sellerName, note].filter(Boolean).join(' ');
-    // 台灣電子發票皆為新台幣：TWD 交易比對 amountMinor；外幣交易比對換匯後本位幣 baseAmountMinor
     const invTwdMinor = toMinor(inv.amount, 'TWD');
     let invBaseMinor: number | null = null;
     if (base === 'TWD') {
@@ -198,32 +210,93 @@ export async function importInvoices(list: Invoice[], opts: { defaultAccountId: 
       const rateTwdToBase = await getRate('TWD', base);
       if (rateTwdToBase) invBaseMinor = convertMinor(invTwdMinor, 'TWD', base, rateTwdToBase);
     }
-    const hit = manual.find((t) => !used.has(t.id) && Math.abs(Date.parse(t.date) - Date.parse(inv.date)) <= 86400000
-      && (t.currency === 'TWD' ? t.amountMinor === invTwdMinor : (invBaseMinor !== null && t.baseAmountMinor === invBaseMinor)));
-    if (hit) {
-      used.add(hit.id);
-      await db.transactions.update(hit.id, { invoiceNo: inv.number, merchant: hit.merchant || inv.sellerName || undefined, note: hit.note || note, updatedAt: Date.now() });
-      done.add(inv.number);
-      res.matched++;
-      continue;
-    }
-    const acc = await suggestAccount(text, 'expense');
-    const account = (acc && accounts.get(acc.accountId)) || fallback;
-    if (account === fallback && !(acc && accounts.has(acc.accountId))) res.usedDefault++;
+    const suggestedAcc = await suggestAccount(text, 'expense');
+    const account = (suggestedAcc && accounts.get(suggestedAcc.accountId)) || fallback;
+    const isDefaultAcc = account === fallback && !(suggestedAcc && accounts.has(suggestedAcc.accountId));
     const sug = await suggestCategory(text, 'expense');
     let fxRateDec: string | undefined;
     if (account.currency !== 'TWD') {
       const rate = await getRate('TWD', account.currency);
       if (rate) fxRateDec = rate.toString();
     }
-    await addTransaction({
-      type: 'expense', accountId: account.id, categoryId: sug?.categoryId || 'exp-other_exp', amountMinor: invTwdMinor,
-      currency: 'TWD', date: inv.date, ts: new Date(`${inv.date}T${/^\d{2}:\d{2}/.test(inv.time ?? '') ? inv.time!.slice(0, 5) : '12:00'}:00`).getTime(),
-      note, merchant: inv.sellerName || undefined, invoiceNo: inv.number, tagIds: sug?.tagIds ?? [],
+    const txInput: import('@/db/repo/ledger').TxInput = {
+      id: `inv-${normNo}`,
+      type: 'expense',
+      accountId: account.id,
+      categoryId: sug?.categoryId || 'exp-other_exp',
+      amountMinor: invTwdMinor,
+      currency: 'TWD',
+      date: inv.date,
+      ts: new Date(`${inv.date}T${/^\d{2}:\d{2}/.test(inv.time ?? '') ? inv.time!.slice(0, 5) : '12:00'}:00`).getTime(),
+      note,
+      merchant: inv.sellerName || undefined,
+      invoiceNo: normNo,
+      tagIds: sug?.tagIds ?? [],
       fxRateDec,
-    });
-    done.add(inv.number);
-    res.created++;
+      accountSource: suggestedAcc?.source ?? 'default',
+      categorySource: sug?.source ?? 'default',
+    };
+    const amounts = await resolveAmounts(txInput);
+    prepared.push({ inv, normNo, note, invTwdMinor, invBaseMinor, suggestedAcc, account, isDefaultAcc, txInput, amounts });
   }
+
+  if (!prepared.length) return res;
+
+  await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.debts, db.stock_trades], async () => {
+    const seenInBatch = new Set<string>();
+    const used = new Set<string>();
+    for (const p of prepared) {
+      if (seenInBatch.has(p.normNo)) { res.skipped++; continue; }
+      const byId = await db.transactions.get(p.txInput.id!);
+      const byNo = await db.transactions.where('invoiceNo').equals(p.normNo).toArray();
+      const activeExists = (byId && !byId.deletedAt) || byNo.some((t) => t.type === 'expense' && !t.deletedAt);
+      const deletedExists = (byId && byId.deletedAt != null) || byNo.some((t) => t.type === 'expense' && t.deletedAt != null);
+      if (activeExists || (deletedExists && opts.source === 'carrier')) {
+        seenInBatch.add(p.normNo);
+        res.skipped++;
+        continue;
+      }
+
+      const candidates = (await db.transactions.where('date').between(shift(p.inv.date, -1), shift(p.inv.date, 1), true, true).toArray())
+        .filter((t) => !t.deletedAt && t.type === 'expense' && !t.invoiceNo && !used.has(t.id));
+      const invShop = (p.inv.sellerName || p.note || '').trim();
+      const matches = candidates.filter((t) => {
+        if (Math.abs(Date.parse(t.date) - Date.parse(p.inv.date)) > 86400000) return false;
+        const amtOk = t.currency === 'TWD' ? t.amountMinor === p.invTwdMinor : (p.invBaseMinor !== null && t.baseAmountMinor === p.invBaseMinor);
+        if (!amtOk) return false;
+        const tShop = (t.merchant || t.note || '').trim();
+        if (tShop && invShop && !shopSimilar(tShop, invShop)) return false;
+        if (p.suggestedAcc && t.currency === p.account.currency && t.accountId !== p.suggestedAcc.accountId) return false;
+        return true;
+      });
+      if (matches.length === 1) {
+        const hit = matches[0];
+        used.add(hit.id);
+        await db.transactions.update(hit.id, {
+          invoiceNo: p.normNo,
+          merchant: hit.merchant || p.inv.sellerName || undefined,
+          note: hit.note || p.note,
+          updatedAt: Date.now(),
+        });
+        seenInBatch.add(p.normNo);
+        res.matched++;
+        continue;
+      }
+
+      if (byId && byId.deletedAt != null) {
+        await db.transactions.update(byId.id, {
+          ...p.txInput,
+          ...p.amounts,
+          updatedAt: Date.now(),
+        });
+        await restoreTransactions([byId.id]);
+      } else {
+        await addTransaction(p.txInput, p.amounts);
+      }
+      if (p.isDefaultAcc) res.usedDefault++;
+      seenInBatch.add(p.normNo);
+      res.created++;
+    }
+  });
   return res;
 }

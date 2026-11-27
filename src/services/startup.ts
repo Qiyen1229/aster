@@ -12,6 +12,7 @@ import { refreshRatesIfStale } from './fx';
 import { describeQuoteErrors, refreshQuotes } from './quotes/registry';
 import { takeSnapshot } from './snapshots';
 import { addTwHolidays, marketState, parseTwseHolidays } from '@/domain/invest/market-hours';
+import { todayKey } from '@/domain/period';
 import { getJson } from './quotes/http';
 import { useSettings } from '@/stores/settings';
 import { notifyUser } from './notify';
@@ -109,16 +110,63 @@ export async function runStartupTasks() {
   await step('insights', () => import('./insights').then((m) => m.runInsights({ notifyNew: true })));
 }
 
+let scheduledLock: Promise<void> | null = null;
+
+/** 前景定時／切回前景補算：檢查到期的週期／分期規則並入帳，避免與啟動或多次觸發並發 */
+export function runScheduledAutoBook(): Promise<void> {
+  if (scheduledLock) return scheduledLock;
+  const exec = async () => {
+    const today = todayKey();
+    const nowHm = new Date().toTimeString().slice(0, 5);
+    const [dueRec, activeInst] = await Promise.all([
+      db.recurring_rules.where('nextDue').belowOrEqual(today).toArray(),
+      db.installments.where('status').equals('active').toArray(),
+    ]);
+    const hasDueRec = dueRec.some((r) => r.active && !(r.rule.count === 1 && r.at && r.nextDue >= today && nowHm < r.at));
+    const hasDueInst = activeInst.some((inst) => inst.schedule.some((s) => !s.transactionId && s.date <= today));
+    if (!hasDueRec && !hasDueInst) {
+      await runReminderChecks().catch(() => undefined);
+      return;
+    }
+    const rec = await processRecurring(today).catch(() => ({ created: 0, pending: 0 }));
+    const instCreated = await processInstallments(today).catch(() => 0);
+    await runReminderChecks().catch(() => undefined);
+    const created = rec.created + instCreated;
+    if (created || rec.pending) {
+      notifyUser({ text: [created ? `已自動入帳 ${created} 筆週期／分期帳目` : '', rec.pending ? `${rec.pending} 筆待確認` : ''].filter(Boolean).join('，') });
+    }
+  };
+  const run: Promise<void> = (async () => {
+    if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+      await navigator.locks.request('aster-scheduled-autobook', { ifAvailable: true }, async (lock) => {
+        if (lock) await exec();
+      });
+    } else {
+      await exec();
+    }
+  })();
+  const p = run.finally(() => { scheduledLock = null; });
+  scheduledLock = p;
+  return p;
+}
+
 /**
- * 背景循環（App 在前景時）：盤中每 N 秒刷新報價；回到前景時處理收件匣（30 秒節流）與補跑週期帳目、提醒檢查（10 分鐘節流）。
+ * 背景循環（App 在前景時）：每 60 秒檢查到期排程／分期（離線也執行）；盤中每 N 秒刷新報價；
+ * 回到前景時處理收件匣（30 秒節流）與補跑週期帳目、提醒檢查（10 分鐘節流）。
  * 回傳清除函式。
  */
 export function startAutoRefresh(): () => void {
   let lastQuote = Date.now();
+  let lastScheduled = Date.now();
   let lastChecks = Date.now();
   let lastInbox = Date.now();
   const tick = async () => {
-    if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+    if (document.visibilityState !== 'visible') return;
+    if (Date.now() - lastScheduled >= 60_000) {
+      lastScheduled = Date.now();
+      await runScheduledAutoBook().catch(() => undefined);
+    }
+    if (!navigator.onLine) return;
     const sec = useSettings.getState().quote.refreshSec;
     if (sec >= 15 && Date.now() - lastQuote >= sec * 1000) {
       lastQuote = Date.now();
@@ -135,10 +183,9 @@ export function startAutoRefresh(): () => void {
     }
     if (Date.now() - lastChecks < 10 * 60 * 1000) return;
     lastChecks = Date.now();
-    await processRecurring().catch(() => undefined);
-    await processInstallments().catch(() => undefined);
+    lastScheduled = Date.now();
+    await runScheduledAutoBook().catch(() => undefined);
     await takeSnapshot().catch(() => undefined);
-    await runReminderChecks().catch(() => undefined);
     void import('./push').then((m) => m.schedulePush()).catch(() => undefined); // 滾動更新接下來 14 天的排程
     await import('./insights').then((m) => m.runInsights({ notifyNew: true })).catch(() => undefined);
     await import('./forecast').then((m) => m.refreshForecastCount()).catch(() => undefined);

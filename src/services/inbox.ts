@@ -13,6 +13,7 @@ import { Browser } from '@capacitor/browser';
 import { api, getApiOrigin } from './api';
 import { useInboxCount } from './inboxCount';
 import { extractDate, findAccounts, findAmounts, matchCategory, parseEntries, shortDate, toHalfWidth, type DraftEntry } from '@/domain/nlp';
+import { detectCurrency } from '@/domain/nlp-amount';
 import { findDuplicate, type DupCandidate } from '@/domain/dedupe';
 import { formatMoney, toMinor } from '@/domain/money';
 import { addDays, toDateKey, todayKey } from '@/domain/period';
@@ -21,6 +22,7 @@ import { useSettings } from '@/stores/settings';
 import { notifyUser } from './notify';
 import { AUTH_ENABLED, useAuth } from '@/stores/auth';
 import { suggestAccount, learnImplicitMapping } from './autocat';
+import { getRate } from './fx';
 import { bookDrafts, fallbackAccount, parseContext, resolveDraft, type ResolvedDraft } from './quickentry';
 
 export interface InboxRaw {
@@ -31,6 +33,9 @@ export interface InboxRaw {
   merchant: string;
   card: string;
   occurred: string;
+  currency?: string | null;
+  source_event_id?: string | null;
+  event_at?: string | null;
   created_at: string;
 }
 
@@ -55,6 +60,8 @@ export interface InboxEntry {
   dup?: InboxDup;
   /** 來源不夠可信（例如 LINE 聊天訊息裡剛好有金額）：只留在收件匣等你確認，絕不自動入帳 */
   review?: string;
+  /** 多金額／點數折抵／外幣未換算，需人工確認或由 AI 救援 */
+  ambiguous?: boolean;
 }
 
 /** LINE 裡視為「官方帳號」的發送者：只有這些名稱出現在訊息裡、且像交易通知，才當作消費通知 */
@@ -172,6 +179,9 @@ export function matchesBlacklist(it: Pick<InboxRaw, 'text' | 'merchant'> & { car
  */
 export function judgeNotice(it: Pick<InboxRaw, 'source' | 'card' | 'text' | 'merchant'>, hasDrafts: boolean, whitelist: string[] = [], blacklist: string[] = []): NoticeVerdict {
   if (matchesBlacklist(it, blacklist)) return { trust: 'drop' };
+  if (!hasDrafts && it.source === 'applepay') {
+    return { trust: 'review', reason: 'Apple Pay 通知未含金額，請點「手動記」或「編輯」補填金額' };
+  }
   if (matchesWhitelist(it, whitelist)) return { trust: 'ok' };
   if (it.source !== 'notify' || !isLineChat(it.card ?? '')) return { trust: 'ok' };
   if (isTrustedLineNotice(it.text ?? '')) return { trust: 'ok' };
@@ -278,20 +288,55 @@ export const listTokens = () => api<InboxToken[]>('/inbox/tokens');
 export const createToken = (name: string) => api<{ token: string; item: InboxToken }>('/inbox/tokens', { method: 'POST', body: { name } });
 export const revokeToken = (id: number) => api(`/inbox/tokens/${id}`, { method: 'DELETE' });
 
-export async function fetchInbox(): Promise<InboxRaw[]> {
-  const list = await api<InboxRaw[]>('/inbox/items');
-  useInboxCount.getState().set(list.length);
-  return list;
+const SYNC_AT_KEY = 'inbox.lastSyncAt';
+const SYNC_ERR_KEY = 'inbox.lastError';
+
+export async function getInboxSyncState(): Promise<{ lastSyncAt: number | null; lastError: string | null }> {
+  const [at, err] = await Promise.all([
+    db.meta.get(SYNC_AT_KEY).catch(() => undefined),
+    db.meta.get(SYNC_ERR_KEY).catch(() => undefined),
+  ]);
+  return {
+    lastSyncAt: typeof at?.value === 'number' ? at.value : null,
+    lastError: typeof err?.value === 'string' && err.value ? err.value : null,
+  };
 }
 
-/** 從伺服器移除；回傳實際移除的 id（別台裝置已處理的不會出現） */
+export async function fetchInbox(): Promise<InboxRaw[]> {
+  try {
+    const list = await api<InboxRaw[]>('/inbox/items');
+    useInboxCount.getState().set(list.length);
+    await db.meta.put({ key: SYNC_AT_KEY, value: Date.now() }).catch(() => undefined);
+    await db.meta.delete(SYNC_ERR_KEY).catch(() => undefined);
+    return list;
+  } catch (err) {
+    const msg = (err as Error)?.message || '收件匣載入失敗';
+    await db.meta.put({ key: SYNC_ERR_KEY, value: msg }).catch(() => undefined);
+    throw err;
+  }
+}
+
+/** 從伺服器移除；回傳實際移除的 id（別台裝置已處理的不會出現）。依伺服器上限每批最多 200 筆 */
 export async function ackInbox(ids: number[]): Promise<number[]> {
-  if (!ids.length) return [];
-  const r = await api<{ ids: number[] }>('/inbox/items/ack', { method: 'POST', body: { ids } });
+  const uniqueIds = [...new Set(ids)];
+  if (!uniqueIds.length) return [];
+  const ackedIds: number[] = [];
+  for (let i = 0; i < uniqueIds.length; i += 200) {
+    const chunk = uniqueIds.slice(i, i + 200);
+    try {
+      const r = await api<{ ids: number[] }>('/inbox/items/ack', { method: 'POST', body: { ids: chunk } });
+      ackedIds.push(...r.ids);
+      const s = useInboxCount.getState();
+      s.set(Math.max(0, s.n - r.ids.length));
+    } catch (err) {
+      if (ackedIds.length) invalidateInboxReadOnly();
+      const e = new Error((err as Error)?.message || '清除通知失敗') as Error & { ackedIds?: number[] };
+      e.ackedIds = ackedIds;
+      throw e;
+    }
+  }
   invalidateInboxReadOnly();
-  const s = useInboxCount.getState();
-  s.set(Math.max(0, s.n - r.ids.length));
-  return r.ids;
+  return ackedIds;
 }
 
 /** 通知／簡訊／Email 裡的商店名稱：「商店:全聯」「特店名稱：Uber」「於 全家 消費」「在 7-ELEVEN 付款」 */
@@ -341,15 +386,35 @@ export function cardAccount(card: string, ctx: Ctx, cardMap: Record<string, stri
  * 2. 若同時出現外幣與「約／折合新台幣 X 元」，優先取台幣實付金額
  * 3. 若有多個金額或外幣卻沒有明確實付字眼，標記 ambiguous=true 交由 AI 結構化抽取
  */
-export function extractPreferredNoticeAmount(text: string): { amount?: number; currency?: string; ambiguous: boolean } {
+export function extractPreferredNoticeAmount(text: string, hintCurrency?: string): { amount?: number; currency?: string; ambiguous: boolean } {
   const norm = toHalfWidth(text.normalize('NFKC'));
-  const netMatch = norm.match(/(?:實付|實際付款|實際扣款|實際支付|折抵後|扣點後|應付金額)\s*[:：]?\s*(?:NT\$|NTD|TWD|新[台臺]幣|\$)?\s*([\d,]+(?:\.\d+)?)/i);
-  if (netMatch) {
-    const val = Number(netMatch[1].replace(/,/g, ''));
-    if (val > 0) return { amount: val, currency: 'TWD', ambiguous: false };
+  const hint = hintCurrency?.trim().toUpperCase();
+  const detectedAll = detectCurrency(norm);
+  const hasForeignCtx = Boolean(detectedAll && detectedAll !== 'TWD')
+    || /\b(?:USD|JPY|EUR|HKD|KRW|GBP|SGD|CNY|RMB|THB|AUD)\b/i.test(norm)
+    || Boolean(hint && hint !== 'TWD');
+  const netKw = norm.match(/(?:實付|實際付款|實際扣款|實際支付|折抵後|扣點後|應付金額)\s*[:：]?/i);
+  if (netKw) {
+    const tail = norm.slice(netKw.index! + netKw[0].length);
+    if (/^\s*(?:[-－負]\s*)?(?:NT\$|NTD|TWD|US\$|USD|HK\$|JPY|EUR|GBP|CNY|RMB|KRW|THB|SGD|AUD|新?[台臺]幣|美[金元]|日[幣圓元]|港[幣元]|歐元|人民幣|韓[元幣]|英鎊|泰銖|新加坡幣|新幣|澳幣|\$)?\s*[\d,]/i.test(tail)) {
+      const hit = findAmounts(tail)[0];
+      if (hit && hit.value > 0) {
+        const beforeHit = tail.slice(0, hit.index);
+        const afterHit = tail.slice(hit.index + hit.length, hit.index + hit.length + 12);
+        const rawSlice = tail.slice(hit.index, hit.index + hit.length);
+        let currency = hit.currency ?? detectCurrency(afterHit) ?? detectCurrency(beforeHit);
+        if (!currency) {
+          if (/NT\$|NTD|TWD|新?[台臺]幣/i.test(rawSlice) || (!hasForeignCtx && /(?:元|塊|圓|\$)/.test(rawSlice))) {
+            currency = 'TWD';
+          } else if (hasForeignCtx && /\$/.test(rawSlice)) {
+            currency = (detectedAll && detectedAll !== 'TWD' ? detectedAll : undefined) ?? (hint && hint !== 'TWD' ? hint : undefined);
+          }
+        }
+        return { amount: hit.value, ...(currency ? { currency } : {}), ambiguous: false };
+      }
+    }
   }
-  const hasFx = /\b(?:USD|JPY|EUR|HKD|KRW|GBP|SGD|CNY|RMB)\b/i.test(norm);
-  if (hasFx) {
+  if (hasForeignCtx) {
     const twdMatch = norm.match(/(?:約|折合|換算|計)\s*(?:NT\$|NTD|TWD|(?:新)?[台臺]幣)\s*([\d,]+(?:\.\d+)?)/i);
     if (twdMatch) {
       const val = Number(twdMatch[1].replace(/,/g, ''));
@@ -414,6 +479,7 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
   const date = itemDate(it, ctx.today);
   const base = defaultAccountId && ctx.accounts.some((a) => a.id === defaultAccountId) ? defaultAccountId : fallback;
   const byCard = cardAccount(it.card, ctx, cardMap);
+  const itemCurrency = it.currency ? it.currency.trim().toUpperCase() : undefined;
   let drafts: DraftEntry[];
   if (it.amount) {
     // Apple Pay：金額、商家、卡片都是分開的欄位
@@ -424,7 +490,7 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     const inferred = parsed.find((d) => d.amount === Math.abs(hit.value)) ?? parsed[0];
     const refund = /退款|退貨|refund/i.test(`${it.text} ${it.amount}`.replace(/(?:退款|退貨)(?:須知|說明|規定|辦法|政策)/g, '')) || hit.value < 0;
     drafts = [{
-      ...inferred, kind: refund ? 'income' : inferred?.kind ?? 'expense', amount: Math.abs(hit.value), currency: hit.currency ?? inferred?.currency, date, dateGiven: true,
+      ...inferred, kind: refund ? 'income' : inferred?.kind ?? 'expense', amount: Math.abs(hit.value), currency: hit.currency ?? itemCurrency ?? inferred?.currency, date, dateGiven: true,
       note: it.merchant || inferred?.note || it.text, raw: text,
     }];
   } else {
@@ -434,12 +500,12 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     if (it.source === 'notify' || it.source === 'sms' || it.source === 'email') {
       const merchant = it.merchant || noticeMerchant(it.text);
       const isBalanceOrFee = (d: DraftEntry) => /(?:餘額|結餘|可用額度|信用額度|手續費|(?:帳號|卡號)?(?:後|末)四碼)/.test(d.raw);
-      const prefAmt = extractPreferredNoticeAmount(it.text);
+      const prefAmt = extractPreferredNoticeAmount(it.text, itemCurrency);
       const primary = drafts.find((d) => !isBalanceOrFee(d) && d.amount > 0)
         ?? drafts.find((d) => d.amount > 0)
         ?? drafts[0];
       const chosenAmount = prefAmt.amount ?? primary.amount;
-      const chosenCurrency = prefAmt.currency ?? primary.currency;
+      const chosenCurrency = prefAmt.currency ?? primary.currency ?? itemCurrency;
       // 排除「回饋將於次月入帳」「退款須知」等行銷／說明文字，避免把消費通知誤判為收入
       const strippedForIncome = it.text
         .replace(/(?:點數|回饋|紅利|LINE\s*POINTS)[^。\n]{0,16}入帳/gi, '')
@@ -486,6 +552,10 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
       });
       const bankAcc = nonAppAccs.find((a) => ctx.accounts.find((acc) => acc.id === a.id)?.type !== 'cash') ?? nonAppAccs[0];
       targetAcc = bankAcc?.id ?? byCard ?? d.accountId;
+    } else if (it.source === 'email') {
+      const emailAccs = findAccounts(`${it.card ?? ''}\n${it.text ?? ''}`, ctx.accounts);
+      const bankAcc = emailAccs.find((a) => ctx.accounts.find((acc) => acc.id === a.id)?.type !== 'cash') ?? emailAccs[0];
+      targetAcc = byCard ?? bankAcc?.id ?? d.accountId;
     } else {
       targetAcc = byCard ?? d.accountId;
     }
@@ -503,7 +573,7 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
       : undefined;
     const explicitRuleAcc = ruleAcc?.source === 'rule' && ctx.accounts.some((a) => a.id === ruleAcc.accountId) ? ruleAcc.accountId : undefined;
     const preferredAcc = explicitRuleAcc ?? targetAcc;
-    const r = await resolveDraft({ ...d, categoryId: cleanCategoryId, accountId: preferredAcc }, base, matchText, memoryText);
+    const r = await resolveDraft({ ...d, currency: d.currency ?? itemCurrency, categoryId: cleanCategoryId, accountId: preferredAcc }, base, matchText, memoryText);
     out.push(
       explicitRuleAcc
         ? { ...r, accountId: explicitRuleAcc, accountSource: 'rule', ruleIds: [...new Set([...(r.ruleIds ?? []), ...(ruleAcc?.ruleId ? [ruleAcc.ruleId] : [])])] }
@@ -513,6 +583,21 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     );
   }
   return out;
+}
+
+const RETRY_WINDOW_MS = 120_000;
+
+function itemEventMs(it: Pick<InboxRaw, 'event_at' | 'occurred' | 'created_at'>): number | undefined {
+  const raw = (it.event_at && /\d:\d/.test(it.event_at) ? it.event_at : undefined)
+    || (it.occurred && /\d:\d/.test(it.occurred) ? it.occurred : undefined)
+    || it.created_at
+    || it.event_at
+    || it.occurred;
+  if (!raw) return undefined;
+  const normalized = raw.trim().replace(/\//g, '-');
+  const iso = /[zZ]|[+-]\d\d:?\d\d$/.test(normalized) || !normalized.includes(':') ? normalized : `${normalized.replace(' ', 'T')}Z`;
+  const t = new Date(iso).getTime();
+  return Number.isNaN(t) ? undefined : t;
 }
 
 /**
@@ -528,7 +613,19 @@ export async function markDuplicates(entries: InboxEntry[], today = todayKey()):
   const probeOf = (e: InboxEntry) => {
     const d = e.drafts[0];
     const cur = d.currency ?? accounts.get(d.accountId)?.currency ?? 'TWD';
-    return { cur, p: { date: d.date, amountMinor: toMinor(d.amount, cur), currency: cur, accountId: d.accountId, text: `${e.item.merchant} ${d.note}` } };
+    return {
+      cur,
+      p: {
+        date: d.date,
+        amountMinor: toMinor(d.amount, cur),
+        currency: cur,
+        accountId: d.accountId,
+        text: `${e.item.merchant} ${d.note}`,
+        source: e.item.source,
+        eventAt: itemEventMs(e.item),
+        sourceEventId: e.item.source_event_id ?? undefined,
+      },
+    };
   };
   const ordered = [...single].sort((a, b) => a.item.id - b.item.id);
   const dates = ordered.map((e) => e.drafts[0].date).sort();
@@ -543,24 +640,63 @@ export async function markDuplicates(entries: InboxEntry[], today = todayKey()):
   for (let i = 0; i < ordered.length; i++) {
     const e = ordered[i];
     const { cur, p } = probeOf(e);
-    // 收件匣內：較早的、來源不同的另一則
-    const earlier = ordered.slice(0, i).filter((o) => o.drafts[0].kind === e.drafts[0].kind).map((o) => {
+    // 收件匣內：排除同來源且超過短重試視窗的項目（除非 source_event_id 相同）
+    const earlier = ordered.slice(0, i).filter((o) => {
+      if (o.drafts[0].kind !== e.drafts[0].kind) return false;
+      if (o.item.source !== e.item.source) return true;
+      if (e.item.source_event_id && o.item.source_event_id && e.item.source_event_id === o.item.source_event_id) return true;
+      const oAt = itemEventMs(o.item);
+      return p.eventAt !== undefined && oAt !== undefined && Math.abs(p.eventAt - oAt) <= RETRY_WINDOW_MS;
+    }).map((o) => {
       const q = probeOf(o);
       return { id: String(o.item.id), ...q.p };
     });
     const inboxHit = findDuplicate(p, earlier);
-    if (inboxHit) {
+    const ledgerHit = findDuplicate(p, e.drafts[0].kind === 'income' ? inc : exp);
+    const useLedger = Boolean(ledgerHit && (!inboxHit || (ledgerHit.level === 'strong' && inboxHit.level !== 'strong')));
+    if (useLedger && ledgerHit) {
+      const t = ledger.get(ledgerHit.id)!;
+      e.dup = { level: ledgerHit.level, from: 'ledger', txId: t.id, label: `${shortDate(t.date, today)} ${t.merchant || t.note || '已記的帳'} ${formatMoney(t.amountMinor, cur)}` };
+    } else if (inboxHit) {
       const other = ordered.find((o) => String(o.item.id) === inboxHit.id)!;
       e.dup = {
         level: inboxHit.level, from: 'inbox', inboxId: other.item.id,
         label: `${SOURCE_LABEL[other.item.source]?.label ?? '另一則'} 那筆`,
       };
-      continue;
     }
-    const hit = findDuplicate(p, e.drafts[0].kind === 'income' ? inc : exp);
-    if (hit) {
-      const t = ledger.get(hit.id)!;
-      e.dup = { level: hit.level, from: 'ledger', txId: t.id, label: `${shortDate(t.date, today)} ${t.merchant || t.note || '已記的帳'} ${formatMoney(t.amountMinor, cur)}` };
+  }
+}
+
+function isNoticeAmbiguous(item: InboxRaw): boolean {
+  if (item.amount) return false;
+  if (item.source !== 'notify' && item.source !== 'sms' && item.source !== 'email') return false;
+  return extractPreferredNoticeAmount(item.text).ambiguous;
+}
+
+async function checkInboxFxRates(entries: InboxEntry[]): Promise<void> {
+  const candidates = entries.filter((e) => e.drafts.length > 0 && !e.review);
+  if (!candidates.length) return;
+  const accounts = new Map((await db.accounts.toArray()).map((a) => [a.id, a]));
+  const baseCurrency = useSettings.getState().baseCurrency;
+  for (const e of candidates) {
+    for (const d of e.drafts) {
+      const acc = accounts.get(d.accountId);
+      if (!acc) continue;
+      const cur = d.currency ?? acc.currency;
+      if (cur !== acc.currency) {
+        const rate = await getRate(cur, acc.currency).catch(() => null);
+        if (!rate) {
+          e.review = `缺 ${cur}→${acc.currency} 匯率，需確認`;
+          break;
+        }
+      }
+      if (acc.currency !== baseCurrency) {
+        const rate = await getRate(acc.currency, baseCurrency).catch(() => null);
+        if (!rate) {
+          e.review = `缺 ${acc.currency}→${baseCurrency} 匯率，需確認`;
+          break;
+        }
+      }
     }
   }
 }
@@ -574,12 +710,14 @@ export async function loadInbox(): Promise<InboxEntry[]> {
     const drafts = await draftsFromItem(item, ctx, fallback).catch(() => []);
     const v = judgeNotice(item, drafts.length > 0, whitelist, blacklist);
     if (v.trust === 'drop') { dropped.push({ item, drafts: [], review: '已忽略，但通知尚未清除，請重新整理或略過' }); continue; }
-    out.push({ item, drafts, ...(v.trust === 'review' ? { review: v.reason } : {}) });
+    const ambiguous = isNoticeAmbiguous(item);
+    out.push({ item, drafts, ...(ambiguous ? { ambiguous: true } : {}), ...(v.trust === 'review' ? { review: v.reason } : {}) });
   }
   if (dropped.length) {
     try { await ackInbox(dropped.map((e) => e.item.id)); }
     catch { out.push(...dropped); }
   }
+  await checkInboxFxRates(out).catch(() => undefined);
   await markDuplicates(out, ctx.today).catch(() => undefined);
   return out;
 }
@@ -601,8 +739,10 @@ export async function loadInboxReadOnly(): Promise<InboxEntry[]> {
     const cfg = useSettings.getState().inbox;
     const v = judgeNotice(item, drafts.length > 0, cfg.whitelist ?? [], cfg.blacklist ?? []);
     if (v.trust === 'drop') continue;
-    out.push({ item, drafts, ...(v.trust === 'review' ? { review: v.reason } : {}) });
+    const ambiguous = isNoticeAmbiguous(item);
+    out.push({ item, drafts, ...(ambiguous ? { ambiguous: true } : {}), ...(v.trust === 'review' ? { review: v.reason } : {}) });
   }
+  await checkInboxFxRates(out).catch(() => undefined);
   await markDuplicates(out, ctx.today).catch(() => undefined);
   roCache = { at: Date.now(), dbName: db.name, policy, entries: structuredClone(out) };
   return out;
@@ -657,15 +797,18 @@ export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplic
     if (bookedItemIds.includes(e.item.id)) continue;
     try {
       const sourceId = `inbox-${e.item.id}`;
-      const receipt = await db.meta.get(`booked:${sourceId}`);
+      const [receipt, ackedReceipt] = await Promise.all([
+        db.meta.get(`booked:${sourceId}`),
+        db.meta.get(`acked:${sourceId}`),
+      ]);
       const existing = receipt || await db.transactions.get(`${sourceId}-0`) || await db.transfers.get(`${sourceId}-0`);
       const cfg = useSettings.getState().inbox;
-      if (!existing && (matchesBlacklist(e.item, cfg.blacklist ?? []) || !e.drafts.length || (opts.skipDuplicates && (e.dup?.level === 'strong' || e.review)))) continue;
+      if (!existing && (matchesBlacklist(e.item, cfg.blacklist ?? []) || !e.drafts.length || (opts.skipDuplicates && (e.dup?.level === 'strong' || e.review || e.ambiguous)))) continue;
       const res = existing ? { txIds: [], transferIds: [] } : await bookDrafts(e.drafts, { sourceId, travelProjectId: opts.travelProjectId });
       txIds.push(...res.txIds);
       transferIds.push(...res.transferIds);
       if (!res.txIds.length && !res.transferIds.length) alreadyBooked++;
-      bookedItemIds.push(e.item.id);
+      if (!existing || !ackedReceipt) bookedItemIds.push(e.item.id);
       const first = e.drafts[0];
       if (first && first.accountSource !== 'default' && !(e.item.source === 'notify' && (isLineChat(e.item.card) || isPaymentRelayCard(e.item.card)))) learnCard(e.item.card, first.accountId);
     } catch (err) {
@@ -677,7 +820,13 @@ export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplic
     try {
       await ackInbox(bookedItemIds);
       clearedItemIds.push(...bookedItemIds);
+      await db.meta.bulkPut(bookedItemIds.map((id) => ({ key: `acked:inbox-${id}`, value: true }))).catch(() => undefined);
     } catch (err) {
+      const acked = (err as { ackedIds?: number[] })?.ackedIds ?? [];
+      if (acked.length) {
+        clearedItemIds.push(...acked);
+        await db.meta.bulkPut(acked.map((id) => ({ key: `acked:inbox-${id}`, value: true }))).catch(() => undefined);
+      }
       console.warn('[inbox] 帳目已儲存，收件匣清除待重試', err);
     }
   }
@@ -737,34 +886,108 @@ export async function previewAutoBook(text: string, card = '', merchant = '', op
  * 特殊情況 AI 救援：當規則、商家記憶與關鍵字都無法判斷（例如沒見過的商店名、或完全看不懂金額）且使用者有開啟 AI 時，
  * 才交給 AI 協助解析／補分類，單次最多處理 5 筆避免過度消耗額度；失敗靜默退回原本規則結果。
  */
-async function enrichAmbiguousInboxWithAi(entries: InboxEntry[]): Promise<void> {
+export async function enrichAmbiguousInboxWithAi(entries: InboxEntry[]): Promise<void> {
   const ai = await import('./ai').catch(() => null);
-  if (!ai?.aiEnabledLocally()) return;
+  if (!ai?.aiEnabledLocally()) {
+    for (const e of entries) {
+      if (e.ambiguous || isNoticeAmbiguous(e.item)) {
+        e.ambiguous = true;
+        e.review = e.review || '金額或折抵不明確，請確認後再記帳';
+      }
+    }
+    return;
+  }
   const targets = entries.filter((e) =>
     !e.drafts.length
-    || extractPreferredNoticeAmount(e.item.text).ambiguous
+    || e.ambiguous
+    || isNoticeAmbiguous(e.item)
     || e.drafts.some((d) => d.kind !== 'transfer' && d.categorySource === 'default' && (d.categoryId === 'exp-other_exp' || d.categoryId === 'inc-other_inc')),
   ).slice(0, 8);
   if (!targets.length) return;
-  const fallback = await fallbackAccount();
+  const [ctx, fallback] = await Promise.all([parseContext(), fallbackAccount()]);
+  const { cardMap, defaultAccountId } = useSettings.getState().inbox;
+  const base = defaultAccountId && ctx.accounts.some((a) => a.id === defaultAccountId) ? defaultAccountId : fallback;
   for (const e of targets) {
+    const isAmb = Boolean(e.ambiguous || isNoticeAmbiguous(e.item));
     const raw = (e.item.merchant ? `${e.item.merchant} ${e.item.text}` : e.item.text).trim();
-    if (!raw) continue;
+    if (!raw) {
+      if (isAmb) {
+        e.ambiguous = true;
+        e.review = e.review || '金額或折抵不明確，請確認後再記帳';
+      }
+      continue;
+    }
     try {
       const { drafts } = await ai.aiParseText(raw);
-      if (!drafts.length) continue;
+      const validDrafts = drafts.filter((d) => Number.isFinite(d.amount) && d.amount > 0);
+      if (!validDrafts.length) {
+        if (isAmb) {
+          e.ambiguous = true;
+          e.review = e.review || '金額或折抵不明確，請確認後再記帳';
+        }
+        continue;
+      }
+      const cardMapped = e.item.card && cardMap[e.item.card] && ctx.accounts.some((a) => a.id === cardMap[e.item.card])
+        ? cardMap[e.item.card]
+        : undefined;
+      const byCard = cardAccount(e.item.card, ctx, cardMap);
       if (!e.drafts.length) {
-        e.drafts = await Promise.all(drafts.map((d) => resolveDraft(d, fallback, raw, e.item.merchant || d.note)));
+        e.drafts = await Promise.all(validDrafts.map((d) => {
+          const preferredAcc = cardMapped ?? d.accountId ?? byCard;
+          return resolveDraft({ ...d, accountId: preferredAcc }, base, raw, e.item.merchant || d.note);
+        }));
+        e.ambiguous = false;
+      } else if (isAmb) {
+        const nextDrafts: ResolvedDraft[] = [];
+        for (let i = 0; i < e.drafts.length; i++) {
+          const cur = e.drafts[i];
+          const aiHit = validDrafts[i] ?? validDrafts[0];
+          const nextAccId = cardMapped
+            ?? (cur.accountSource === 'rule' ? cur.accountId : (aiHit.accountId ?? (cur.accountSource === 'default' ? undefined : cur.accountId)));
+          const nextCatId = cur.categorySource === 'rule'
+            ? cur.categoryId
+            : (aiHit.categoryId ?? (cur.categorySource !== 'default' ? cur.categoryId : undefined));
+          const merged: DraftEntry = {
+            ...cur,
+            amount: aiHit.amount,
+            currency: aiHit.currency ?? cur.currency ?? (e.item.currency ? e.item.currency.trim().toUpperCase() : undefined),
+            kind: aiHit.kind,
+            date: aiHit.dateGiven ? aiHit.date : cur.date,
+            dateGiven: cur.dateGiven || aiHit.dateGiven,
+            note: (e.item.merchant || aiHit.note || cur.note).trim(),
+            categoryId: nextCatId,
+            accountId: nextAccId,
+            ...(aiHit.kind === 'transfer' && aiHit.toAccountId ? { toAccountId: aiHit.toAccountId } : {}),
+          };
+          const resolved = await resolveDraft(merged, base, raw, e.item.merchant || merged.note);
+          nextDrafts.push(
+            cardMapped
+              ? { ...resolved, accountId: cardMapped, accountSource: 'rule' }
+              : cur.accountSource === 'rule'
+                ? { ...resolved, accountId: cur.accountId, accountSource: 'rule' }
+                : resolved,
+          );
+        }
+        e.drafts = nextDrafts;
+        e.ambiguous = false;
       } else {
         for (let i = 0; i < e.drafts.length; i++) {
           const cur = e.drafts[i];
-          const aiHit = drafts[i] ?? drafts[0];
+          const aiHit = validDrafts[i] ?? validDrafts[0];
           if (cur.categorySource === 'default' && aiHit?.categoryId && aiHit.categoryId !== 'exp-other_exp' && aiHit.categoryId !== 'inc-other_inc') {
             e.drafts[i] = { ...cur, categoryId: aiHit.categoryId, categorySource: 'text' };
           }
         }
       }
-    } catch { /* AI 失敗或超額時保留規則結果，不阻斷自動入帳 */ }
+    } catch {
+      if (isAmb) {
+        e.ambiguous = true;
+        e.review = e.review || '金額或折抵不明確，請確認後再記帳';
+      }
+    }
+  }
+  for (const e of entries) {
+    if (e.ambiguous && !e.review) e.review = '金額或折抵不明確，請確認後再記帳';
   }
 }
 
@@ -779,6 +1002,7 @@ export async function processInboxOnStartup(): Promise<{ booked: number; pending
   if (!entries.some(auto)) return { booked: 0, pending: entries.length, merged: 0 };
   const autoReady = entries.filter((e) => auto(e) && !e.review);
   await enrichAmbiguousInboxWithAi(autoReady);
+  await checkInboxFxRates(autoReady).catch(() => undefined);
   await markDuplicates(entries);
   const r = await bookInboxEntries(autoReady, { skipDuplicates: true });
   const pending = entries.filter((e) => !r.clearedItemIds.includes(e.item.id)).length;

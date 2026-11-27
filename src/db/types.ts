@@ -110,6 +110,9 @@ export interface Transaction extends BaseRow {
   transferId?: string;
   stockTradeId?: string;
   dividendId?: string;
+  accountSource?: string;
+  categorySource?: string;
+  reconcileTargetId?: string;
   split?: { myShareMinor: number; debtIds: string[] };
   excludeFromBudget?: boolean;
   excludeFromStats?: boolean;

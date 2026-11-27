@@ -4,7 +4,7 @@ from app.model.app_setting import AppSetting
 from app.model.audit_log import AuditLog
 from app.model.base import Base
 from app.model.e2ee_push import PushSchedule, PushSubscription, SyncKey, SyncRekey, SyncRekeyRecord
-from app.model.inbox import InboxBooking, InboxItem, InboxToken
+from app.model.inbox import InboxBooking, InboxDedupeKey, InboxItem, InboxToken
 from app.model.notify_channel import NotifyChannel
 from app.model.password_reset import PasswordReset
 from app.model.rate_limit import RateLimitHit
@@ -12,4 +12,4 @@ from app.model.refresh_token import RefreshToken
 from app.model.sync_record import SyncRecord, SyncState
 from app.model.user import ROLE_ADMIN, ROLE_USER, User
 
-__all__ = ["AiUsage", "AppSetting", "AuditLog", "Base", "InboxBooking", "InboxItem", "InboxToken", "NotifyChannel", "PasswordReset", "PushSchedule", "PushSubscription", "RateLimitHit", "SyncKey", "SyncRekey", "SyncRekeyRecord", "RefreshToken", "SyncRecord", "SyncState", "User", "ROLE_ADMIN", "ROLE_USER"]
+__all__ = ["AiUsage", "AppSetting", "AuditLog", "Base", "InboxBooking", "InboxDedupeKey", "InboxItem", "InboxToken", "NotifyChannel", "PasswordReset", "PushSchedule", "PushSubscription", "RateLimitHit", "SyncKey", "SyncRekey", "SyncRekeyRecord", "RefreshToken", "SyncRecord", "SyncState", "User", "ROLE_ADMIN", "ROLE_USER"]

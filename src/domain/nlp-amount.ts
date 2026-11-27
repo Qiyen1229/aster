@@ -87,18 +87,19 @@ const AMOUNT_RE = new RegExp(
   'g',
 );
 /** 數字後面接這些字代表數量、時間或店名，不是金額 */
-const NOT_AMOUNT_AFTER = /^[杯個份張瓶罐包盒碗件次人位隻台支顆片條本號樓點時分秒歲年月日天週周%折度嵐樣種隻碼吋]/;
+const NOT_AMOUNT_AFTER = /^[杯個份張瓶罐包盒碗件次人位隻台支顆片條本號樓點時分秒歲年月日天週周%折度嵐樣種隻碼吋期]/;
 const NOT_AMOUNT_BEFORE = /(?:[A-Za-z\-/#_.]|\d:)$/;
 /** 「週3」「第2」「下午3」「雙11」的數字不是金額 */
 const NOT_AMOUNT_AFTER_WORD = /(週|周|星期|禮拜|礼拜|第|早上|下午|晚上|中午|末|碼|码|號|号|卡號|帳號|雙|双)$/;
 /** 中文數字後面可以接的字（「一百五用現金」）；其他中文字代表是詞的一部分（「五十嵐」「十分」） */
 const CN_OK_AFTER = /^($|[\s,，、。;；!！?？)）]|[用刷付給在從到買花去搭吃喝的])/;
 export const CURRENCY_WORDS: [RegExp, string][] = [
+  [/NT\$|NTD|TWD|新台幣|新臺幣|台幣|臺幣/i, 'TWD'],
   [/美金|美元|US\$|USD/i, 'USD'], [/日幣|日圓|日元|円|JPY/i, 'JPY'], [/港幣|港元|HK\$|HKD/i, 'HKD'],
   [/歐元|EUR/i, 'EUR'], [/人民幣|RMB|CNY/i, 'CNY'], [/韓元|韓幣|KRW/i, 'KRW'], [/英鎊|GBP/i, 'GBP'],
   [/泰銖|THB/i, 'THB'], [/新加坡幣|新幣|SGD/i, 'SGD'], [/澳幣|AUD/i, 'AUD'],
 ];
-const CURRENCY_AFTER = /^(美金|美元|日幣|日圓|日元|円|港幣|港元|歐元|人民幣|韓元|韓幣|英鎊|泰銖|新加坡幣|新幣|澳幣)/;
+const CURRENCY_AFTER = /^(?:新台幣|新臺幣|台幣|臺幣|美金|美元|日幣|日圓|日元|円|港幣|港元|歐元|人民幣|韓元|韓幣|英鎊|泰銖|新加坡幣|新幣|澳幣|USD|TWD|NTD|JPY|HKD|EUR|CNY|RMB|KRW|GBP|THB|SGD|AUD)(?![a-zA-Z])/i;
 /** 會被誤認為金額的店名與行銷檔期詞 */
 const PROTECTED = new RegExp([
   '7\\s*-?\\s*11', '7\\s*-?\\s*eleven', '85\\s*度\\s*c', '50\\s*嵐', '五十嵐', '21\\s*世紀', '(?:台北|臺北)?101(?:大樓|購物中心|觀景台)', '3\\s*m(?![a-z])',
@@ -136,7 +137,7 @@ export function findAmounts(text: string): AmountHit[] {
     // 「1200 日圓」：後面接幣別，不是「日」
     const curAfter = !suffix ? after.trimStart().match(CURRENCY_AFTER)?.[0] : undefined;
     if (!suffix && !curAfter && NOT_AMOUNT_AFTER.test(after.trimStart())) continue;
-    if (!suffix && /^[A-Za-z/\-:]/.test(after)) continue;
+    if (!suffix && !curAfter && /^[A-Za-z/\-:]/.test(after)) continue;
     if (isCn) {
       if (/第$/.test(before)) continue;
       const hasUnit = /[十百千萬万拾佰仟]/.test(num);

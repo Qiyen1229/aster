@@ -227,9 +227,20 @@ export async function processRecurring(today = todayKey()): Promise<{ created: n
     if (due.length && !completed.length) continue;
     const lastDone = completed[completed.length - 1] ?? r.nextDue;
     const next = nextAfter(r.rule, r.startDate, completed.length ? lastDone : addDaysSafe(r.nextDue, -1));
-    await db.recurring_rules.update(r.id, {
-      nextDue: next ?? '9999-12-31', doneCount: r.doneCount + completed.length, pendingDates: pend,
-      active: next ? 1 : 0, updatedAt: now(),
+    await db.transaction('rw', db.recurring_rules, async () => {
+      const fresh = await db.recurring_rules.get(r.id);
+      if (!fresh || !fresh.active || fresh.nextDue !== r.nextDue) return;
+      const mergedPend = [...fresh.pendingDates];
+      for (const d of pend) {
+        if (!mergedPend.includes(d)) mergedPend.push(d);
+      }
+      await db.recurring_rules.update(r.id, {
+        nextDue: next ?? '9999-12-31',
+        doneCount: fresh.doneCount + completed.length,
+        pendingDates: mergedPend,
+        active: next ? 1 : 0,
+        updatedAt: now(),
+      });
     });
   }
   return { created, pending };

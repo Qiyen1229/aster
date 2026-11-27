@@ -36,6 +36,9 @@ export interface TxInput {
   installmentNo?: number;
   stockTradeId?: string;
   dividendId?: string;
+  accountSource?: string;
+  categorySource?: string;
+  reconcileTargetId?: string;
   split?: Transaction['split'];
 }
 
@@ -71,8 +74,8 @@ export async function resolveAmounts(input: TxInput): Promise<Pick<Transaction, 
   let baseAmountMinor = accountAmountMinor;
   if (acc.currency !== base) {
     const r = await getRate(acc.currency, base);
-    // 無法取得匯率時暫以 1 計，資料健康檢查會在有匯率後重算
-    baseAmountMinor = convertMinor(accountAmountMinor, acc.currency, base, r ?? 1);
+    if (!r) throw new Error(`缺少 ${acc.currency}→${base} 匯率，請先更新或手動輸入匯率`);
+    baseAmountMinor = convertMinor(accountAmountMinor, acc.currency, base, r);
   }
   return {
     accountAmountMinor,
@@ -104,6 +107,9 @@ function toRow(id: string, input: TxInput, amounts: Awaited<ReturnType<typeof re
     installmentNo: input.installmentNo,
     stockTradeId: input.stockTradeId,
     dividendId: input.dividendId,
+    accountSource: input.accountSource,
+    categorySource: input.categorySource,
+    reconcileTargetId: input.reconcileTargetId,
     split: input.split,
     isSample: input.isSample,
     excludeFromBudget: input.excludeFromBudget,

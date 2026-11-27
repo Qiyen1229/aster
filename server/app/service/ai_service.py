@@ -167,8 +167,10 @@ def validate_entries(data: object, categories: list[str], accounts: list[str], t
             amount = float(str(item.get("amount", "")).replace(",", ""))
             typ = item.get("type") if item.get("type") in ("expense", "income", "transfer") else "expense"
             pick = lambda v, allowed: v if isinstance(v, str) and v in allowed else None  # noqa: E731
+            raw_cur = item.get("currency")
+            cur = raw_cur.strip().upper() if isinstance(raw_cur, str) and len(raw_cur.strip()) == 3 and raw_cur.strip().isascii() and raw_cur.strip().isalpha() else None
             e = ParsedEntry(
-                type=typ, amount=amount, note=str(item.get("note") or "").strip()[:60],
+                type=typ, amount=amount, currency=cur, note=str(item.get("note") or "").strip()[:60],
                 category=pick(item.get("category"), categories), account=pick(item.get("account"), accounts),
                 to_account=pick(item.get("to_account"), accounts) if typ == "transfer" else None,
                 date=_valid_date(item.get("date"), today),

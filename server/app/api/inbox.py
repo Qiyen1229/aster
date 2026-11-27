@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_client, get_current_user, get_db, rate_limit
@@ -47,8 +47,11 @@ def revoke_token(token_id: int, user: User = Depends(get_current_user), client: 
 
 
 @router.get("/items", response_model=list[InboxItemOut], summary="待確認的項目")
-def items(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[InboxItemOut]:
-    return [InboxItemOut.model_validate(i) for i in InboxService(db).items(user)]
+def items(response: Response, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[InboxItemOut]:
+    rows, purged_count = InboxService(db).items_with_meta(user)
+    if purged_count:
+        response.headers["X-Inbox-Purged-Count"] = str(purged_count)
+    return [InboxItemOut.model_validate(i) for i in rows]
 
 
 @router.post("/items/booking", response_model=MessageResponse, summary="登記通知的固定記帳結構")
@@ -72,9 +75,11 @@ def hook(body: HookItem, client: ClientInfo = Depends(get_client), authorization
     svc = InboxService(db)
     user, row = svc.user_for_token(token)
     rate_limit(hook_limiter, str(row.id))
-    item = svc.receive(user, row, body)
-    if item is None:
+    item, status = svc.receive_with_status(user, row, body)
+    if status == "noise":
         return HookResult(message="已略過非消費通知")
+    if status == "duplicate" or item is None:
+        return HookResult(message="已收到（重複通知略過）")
     # 立即推播：有訂閱背景推播的裝置會收到通知，點開直達收件匣。內容不含金額與商家（與 E2EE 推播一致）；失敗不影響收件
     try:
         from app.service.push_service import PushService

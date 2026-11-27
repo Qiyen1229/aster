@@ -14,7 +14,7 @@ import { shortDate } from '@/domain/nlp';
 import { todayKey } from '@/domain/period';
 import { deleteTransactions, deleteTransfers } from '@/db/repo/ledger';
 import {
-  ackInbox, bookInboxEntries, inboxPrefix4, mergeDuplicate, loadInbox, markDuplicates, SOURCE_LABEL, useInboxCount,
+  ackInbox, bookInboxEntries, getInboxSyncState, inboxPrefix4, mergeDuplicate, loadInbox, markDuplicates, SOURCE_LABEL, useInboxCount,
   type InboxEntry,
 } from '@/services/inbox';
 import { saveSetting } from '@/db/repo/settings';
@@ -38,7 +38,7 @@ export default function InboxPage() {
   const { all: categories, map: catMap } = useCategories();
   const count = useInboxCount((s) => s.n);
   const [entries, setEntries] = useState<InboxEntry[] | null>(null);
-  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
   const today = todayKey();
@@ -75,12 +75,23 @@ export default function InboxPage() {
   const fcCount = (fc?.rules.length ?? 0) + (fc?.predicted.length ?? 0);
 
   const reload = useCallback(async () => {
-    try { setEntries(await loadInbox()); setError(''); } catch (e) { setError((e as Error).message); setEntries([]); }
+    try {
+      setEntries(await loadInbox());
+      setLoadError('');
+    } catch (e) {
+      const msg = (e as Error)?.message;
+      if (msg) {
+        setLoadError(msg);
+        return;
+      }
+      const state = await getInboxSyncState().catch(() => ({ lastSyncAt: null, lastError: null }));
+      setLoadError(state.lastError || '無法連線到伺服器');
+    }
   }, []);
   useEffect(() => { void reload(); }, [reload, count]);
 
-  // 「全部記帳」不含很可能重複的：那些請一則一則確認
-  const ready = entries?.filter((e) => e.drafts.length && e.dup?.level !== 'strong' && !e.review) ?? [];
+  // 「全部記帳」不含很可能重複或金額不明確的：那些請一則一則確認
+  const ready = entries?.filter((e) => e.drafts.length && e.dup?.level !== 'strong' && !e.review && !e.ambiguous) ?? [];
 
   const book = async (list: InboxEntry[]) => {
     setBusy(true);
@@ -255,8 +266,12 @@ export default function InboxPage() {
       )}
 
       <div className="section-title">待確認{entries?.length ? `（${entries.length}）` : ''}</div>
-      {error && <div className="card"><p style={{ margin: 0 }}>收件匣暫時讀不到：{error}</p></div>}
-      {entries === null ? <SkeletonRows n={2} /> : entries.length === 0 ? (
+      {loadError ? (
+        <div className="card" role="alert">
+          <p style={{ margin: '0 0 8px' }}>收件匣暫時讀不到：{loadError}</p>
+          <button type="button" className="pill accent-pill" onClick={() => void reload()}>重試</button>
+        </div>
+      ) : entries === null ? <SkeletonRows n={2} /> : entries.length === 0 ? (
         <EmptyState emoji="📭" title="收件匣是空的" text="捷徑送來的消費通知與預計扣款會出現在這裡核對記帳。" />
       ) : (
         <>

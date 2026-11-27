@@ -7,7 +7,7 @@ import { categoryLabel, useAccounts, useCategories } from '@/app/hooks';
 import { deleteTransactions } from '@/db/repo/ledger';
 import { fromMinor, formatMoney, toMinor } from '@/domain/money';
 import { reconcile, REASON_LABEL, summarizeReport, type LedgerRow, type StmtRow } from '@/domain/reconcile';
-import { applyFixes, loadLedgerRows, stmtFromAi, stmtFromCsv, suggestForMissing } from '@/services/reconcile';
+import { applyFixes, loadLedgerRows, resolveStmtFromAi, stmtFromCsv, suggestForMissing } from '@/services/reconcile';
 import type { StatementEntry } from '@/services/ai';
 import type { ParsedRow } from '@/services/importer';
 import { snackUndo, useUI } from '@/stores/ui';
@@ -40,13 +40,30 @@ export function ReconcilePanel({ csvRows, aiEntries, printedTotal, defaultAccoun
   const [verified, setVerified] = useState(false);
   const [busy, setBusy] = useState(false);
   const [applied, setApplied] = useState<number | null>(null);
+  const [fxError, setFxError] = useState<string | null>(null);
 
   const acc = accounts.list.find((a) => a.id === accountId);
   const accCur = acc?.currency;
-  // 帳單金額依選定帳戶的幣別換算；換帳戶就重新換算（AI 明細的手動修改會重來）
+  // 帳單金額依明細幣別換算為選定帳戶的幣別；缺匯率時提示並阻擋 1:1 誤記
   useEffect(() => {
     if (!accCur) return;
-    setRows(aiEntries ? stmtFromAi(aiEntries, accCur) : stmtFromCsv(csvRows ?? [], accCur));
+    if (!aiEntries) {
+      setFxError(null);
+      setRows(stmtFromCsv(csvRows ?? [], accCur));
+      return;
+    }
+    let cancelled = false;
+    void resolveStmtFromAi(aiEntries, accCur).then(({ rows: nextRows, missingFx }) => {
+      if (cancelled) return;
+      if (missingFx.length) {
+        setFxError(`帳單幣別（${missingFx.join('、')}）與帳戶幣別（${accCur}）不同，且缺少匯率，請先更新匯率或切換至 ${missingFx[0]} 帳戶`);
+        setRows([]);
+      } else {
+        setFxError(null);
+        setRows(nextRows);
+      }
+    });
+    return () => { cancelled = true; };
   }, [accCur]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (accountId || !accounts.list.length) return;
@@ -113,8 +130,14 @@ export function ReconcilePanel({ csvRows, aiEntries, printedTotal, defaultAccoun
             options={accounts.list.map((a) => ({ value: a.id, label: `${a.name}（${a.currency}）` }))}
           />
         </div>
-        <p style={{ margin: '10px 0 4px', fontWeight: 600 }}>{allGood ? '✅ 全部吻合，沒有要補的' : summarizeReport(report, money)}</p>
-        <p className="row-sub" style={{ whiteSpace: 'normal' }}>帳單 {rows.length} 筆，日期容差 ±3 天，金額與商家名稱一起比對。{applied ? `　已補齊 ${applied} 筆。` : ''}</p>
+        {fxError ? (
+          <p className="row-sub" style={{ margin: '10px 0 4px', whiteSpace: 'normal', color: 'var(--danger)' }}>⚠️ {fxError}</p>
+        ) : (
+          <>
+            <p style={{ margin: '10px 0 4px', fontWeight: 600 }}>{allGood ? '✅ 全部吻合，沒有要補的' : summarizeReport(report, money)}</p>
+            <p className="row-sub" style={{ whiteSpace: 'normal' }}>帳單 {rows.length} 筆，日期容差 ±3 天，金額與商家名稱一起比對。{applied ? `　已補齊 ${applied} 筆。` : ''}</p>
+          </>
+        )}
         {source === 'ai' && (
           <p className="row-sub" style={{ whiteSpace: 'normal', color: totalGap === 0 ? 'var(--success)' : 'var(--warning)' }}>
             {totalGap === 0 ? `✅ 讀到的明細加總 ${money(report.stmtTotalMinor)}，與帳單合計相符`
@@ -223,7 +246,7 @@ export function ReconcilePanel({ csvRows, aiEntries, printedTotal, defaultAccoun
           <Switch label="我已核對明細" checked={verified} onChange={setVerified} />
         </div>
       )}
-      <button className="btn" style={{ marginTop: 12 }} disabled={busy || nothingToDo || (needVerify && (missingSel.length > 0 || varSel.length > 0) && !verified)} onClick={() => void apply()}>
+      <button className="btn" style={{ marginTop: 12 }} disabled={!!fxError || busy || nothingToDo || (needVerify && (missingSel.length > 0 || varSel.length > 0) && !verified)} onClick={() => void apply()}>
         {busy ? '補齊中…' : nothingToDo ? '沒有需要補的項目' : `一鍵補齊並平帳（補記 ${missingSel.length} 筆${varSel.length ? `、差額 ${varSel.length} 筆` : ''}${adjustTarget !== null && remaining ? '、校正餘額' : ''}）`}
       </button>
       <button className="btn secondary" style={{ marginTop: 8 }} onClick={onDone}>完成</button>

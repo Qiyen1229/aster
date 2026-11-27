@@ -230,7 +230,9 @@ async function finishRemote(log: AgentOpLog): Promise<AgentOpLog> {
     await ackInbox(log.pendingInboxIds);
     log.pendingInboxIds = [];
     log.warnings = [];
-  } catch {
+  } catch (err) {
+    const acked = new Set((err as { ackedIds?: number[] })?.ackedIds ?? []);
+    if (acked.size) log.pendingInboxIds = log.pendingInboxIds.filter((id) => !acked.has(id));
     log.warnings = [`本機操作已儲存；${log.pendingInboxIds.length} 筆通知尚未清除，可在收件匣重試，不會重複入帳`];
   }
   try {

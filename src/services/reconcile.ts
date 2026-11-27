@@ -6,7 +6,8 @@ import { db } from '@/db/schema';
 import { addTransaction } from '@/db/repo/ledger';
 import { FEE_LIKE, type LedgerRow, type Match, type StmtRow } from '@/domain/reconcile';
 import { addDays } from '@/domain/period';
-import { toMinor } from '@/domain/money';
+import { convertMinor, toMinor } from '@/domain/money';
+import { getRate } from './fx';
 import { suggestCategory } from './autocat';
 import type { ParsedRow } from './importer';
 import type { StatementEntry } from './ai';
@@ -19,12 +20,43 @@ export function stmtFromCsv(rows: ParsedRow[], accountCurrency: string): StmtRow
     .filter((r) => r.amountMinor > 0);
 }
 
-/** AI 讀出的截圖明細 → 帳單明細 */
-export function stmtFromAi(entries: StatementEntry[], accountCurrency: string): StmtRow[] {
-  return entries.map((e, i) => ({
-    id: `a${i}`, date: e.date, amountMinor: toMinor(e.amount, accountCurrency), kind: e.type, text: e.merchant,
-    ...(e.foreign_amount && e.foreign_currency ? { foreignMinor: toMinor(e.foreign_amount, e.foreign_currency), foreignCurrency: e.foreign_currency } : {}),
-  })).filter((r) => r.amountMinor > 0);
+/** AI 讀出的截圖明細 → 帳單明細（依明細幣別或預設 TWD 換算為帳戶幣別；缺匯率時丟出明確錯誤） */
+export function stmtFromAi(entries: StatementEntry[], accountCurrency: string, rates?: Map<string, string | number>): StmtRow[] {
+  return entries.map((e, i) => {
+    const stmtCur = (e.currency || 'TWD').toUpperCase();
+    let amountMinor: number;
+    let foreignInfo: { foreignMinor?: number; foreignCurrency?: string } = {};
+    if (stmtCur === accountCurrency) {
+      amountMinor = toMinor(e.amount, accountCurrency);
+    } else {
+      const rate = rates?.get(`${stmtCur}>${accountCurrency}`);
+      if (!rate) throw new Error(`缺少 ${stmtCur}→${accountCurrency} 匯率，無法將 ${stmtCur} 帳單換算為 ${accountCurrency}`);
+      const stmtMinor = toMinor(e.amount, stmtCur);
+      amountMinor = convertMinor(stmtMinor, stmtCur, accountCurrency, rate);
+      foreignInfo = { foreignMinor: stmtMinor, foreignCurrency: stmtCur };
+    }
+    if (e.foreign_amount && e.foreign_currency) {
+      foreignInfo = { foreignMinor: toMinor(e.foreign_amount, e.foreign_currency), foreignCurrency: e.foreign_currency };
+    }
+    return {
+      id: `a${i}`, date: e.date, amountMinor, kind: e.type, text: e.merchant,
+      ...foreignInfo,
+    };
+  }).filter((r) => r.amountMinor > 0);
+}
+
+/** 非同步版 AI 帳單轉換：自動查詢缺少的匯率，缺匯率時回傳 missingFx 供 UI 提示阻擋 */
+export async function resolveStmtFromAi(entries: StatementEntry[], accountCurrency: string): Promise<{ rows: StmtRow[]; missingFx: string[] }> {
+  const needed = [...new Set(entries.map((e) => (e.currency || 'TWD').toUpperCase()).filter((c) => c !== accountCurrency))];
+  const rates = new Map<string, string | number>();
+  const missingFx: string[] = [];
+  for (const cur of needed) {
+    const r = await getRate(cur, accountCurrency);
+    if (!r) missingFx.push(cur);
+    else rates.set(`${cur}>${accountCurrency}`, r.toString());
+  }
+  if (missingFx.length) return { rows: [], missingFx };
+  return { rows: stmtFromAi(entries, accountCurrency, rates), missingFx: [] };
 }
 
 /**
@@ -43,16 +75,27 @@ export async function loadLedgerRows(accountId: string, stmt: StmtRow[]): Promis
   const txs = (await db.transactions.where('date').between(addDays(dates[0], -4), addDays(dates[dates.length - 1], 4), true, true).toArray())
     .filter((t) => t.accountId === accountId && !t.deletedAt && !t.transferId && (t.type === 'expense' || t.type === 'income' || t.type === 'transfer_fee'));
   const rows: LedgerRow[] = [];
-  const adjustments: { base: string; id8?: string; date: string; kind: 'expense' | 'income'; amount: number }[] = [];
+  const adjustments: { targetId?: string; base: string; id8?: string; date: string; kind: 'expense' | 'income'; amount: number }[] = [];
   for (const t of txs) {
     const m = ADJ_RE.exec(t.note);
-    if (m) { adjustments.push({ base: m[1].trim(), id8: m[2], date: t.date, kind: t.type === 'income' ? 'income' : 'expense', amount: Math.abs(t.accountAmountMinor) }); continue; }
+    if (m || t.reconcileTargetId) {
+      adjustments.push({
+        targetId: t.reconcileTargetId,
+        base: m ? m[1].trim() : t.note.trim(),
+        id8: m?.[2],
+        date: t.date,
+        kind: t.type === 'income' ? 'income' : 'expense',
+        amount: Math.abs(t.accountAmountMinor),
+      });
+      continue;
+    }
     rows.push({ id: t.id, date: t.date, accountMinor: Math.abs(t.accountAmountMinor), origMinor: Math.abs(t.amountMinor), origCurrency: t.currency, kind: t.type === 'income' ? 'income' : 'expense', text: `${t.note} ${t.merchant ?? ''}`.trim() });
   }
-  // 先前對帳補的差額併回原本那筆：優先用 id；舊資料用名稱＋日期最近，且同一筆原帳目不重複配
+  // 先前對帳補的差額併回原本那筆：優先用完整 reconcileTargetId → 末 10 碼 id → 名稱＋日期最近，且同一筆原帳目不重複配
   const used = new Set<string>();
   for (const a of adjustments) {
-    let target = a.id8 ? rows.find((r) => r.id.endsWith(a.id8!)) : undefined;
+    let target = a.targetId ? rows.find((r) => !used.has(r.id) && r.id === a.targetId) : undefined;
+    if (!target && a.id8) target = rows.find((r) => !used.has(r.id) && r.id.endsWith(a.id8!));
     if (!target) {
       target = rows.filter((r) => !used.has(r.id) && (r.text.trim() === a.base || (!r.text.trim() && !a.base)))
         .sort((x, y) => Math.abs(Date.parse(x.date) - Date.parse(a.date)) - Math.abs(Date.parse(y.date) - Date.parse(a.date)))[0];
@@ -119,6 +162,7 @@ export async function applyFixes(account: Account, f: Fixes): Promise<string[]> 
       const t = await addTransaction({
         type, accountId: account.id, categoryId, amountMinor: Math.abs(diff), currency: account.currency,
         date: v.stmt.date, ts: at(v.stmt.date), note: adjustmentNote(v.ledger.text.trim() || v.stmt.text, v.ledger.id),
+        reconcileTargetId: v.ledger.id,
       });
       ids.push(t.id);
     }

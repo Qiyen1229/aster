@@ -292,7 +292,7 @@ export async function aiAgentPlan(text: string, screen?: string, onPartial?: (su
 
 // ───────────── v4.0：帳單截圖對帳 ─────────────
 
-export interface StatementEntry { date: string; amount: number; type: 'expense' | 'income'; merchant: string; foreign_amount: number | null; foreign_currency: string | null }
+export interface StatementEntry { date: string; amount: number; currency?: string; type: 'expense' | 'income'; merchant: string; foreign_amount: number | null; foreign_currency: string | null }
 
 function readFileAsBase64DataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

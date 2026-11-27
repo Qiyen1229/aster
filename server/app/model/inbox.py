@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.security import utcnow
@@ -52,4 +52,19 @@ class InboxItem(Base):
     card: Mapped[str] = mapped_column(String(80), default="")
     # 捷徑傳來的交易時間（原樣保存，由 App 解析）
     occurred: Mapped[str] = mapped_column(String(40), default="")
+    currency: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
+    source_event_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None, index=True)
+    event_at: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class InboxDedupeKey(Base):
+    """收件匣去重鍵（跨重試、Email 輪詢與已 ack／過期項目保留期間防重複）。"""
+
+    __tablename__ = "inbox_dedupe_keys"
+    __table_args__ = (UniqueConstraint("user_id", "dedupe_key", name="uq_inbox_dedupe_user_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    dedupe_key: Mapped[str] = mapped_column(String(160))
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)

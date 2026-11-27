@@ -96,4 +96,49 @@ describe('plan repo', () => {
     expect(totals(await db.transactions.toArray()).income).toBe(0);
     expect((await db.debts.get(id))!.settled).toBe(1);
   });
+
+  it('Item 10：並發呼叫 processRecurring 不重複入帳也不重複累計 doneCount', async () => {
+    const a = await mkAcc();
+    const id = await saveRecurring({
+      kind: 'subscription', name: 'Spotify', active: 1, mode: 'auto', remindDaysBefore: 0, startDate: '2026-10-01',
+      rule: { freq: 'month', interval: 1 },
+      template: { type: 'expense', accountId: a.id, categoryId: 'exp-subscription-music', amountMinor: 14900, currency: 'TWD' },
+    });
+    await Promise.all([processRecurring('2026-10-10'), processRecurring('2026-10-10')]);
+    const txs = await db.transactions.toArray();
+    expect(txs).toHaveLength(1);
+    const rule = await db.recurring_rules.get(id);
+    expect(rule?.doneCount).toBe(1);
+    expect((await db.accounts.get(a.id))!.balanceMinor).toBe(-14900);
+  });
+
+  it('Item 2：bookDrafts 遇到 installmentPeriods 時建立分期而非單筆整額支出', async () => {
+    const { bookDrafts } = await import('@/services/quickentry');
+    const a = await mkAcc();
+    await bookDrafts([{
+      kind: 'expense', amount: 12000, date: '2026-10-01', dateGiven: true,
+      accountId: a.id, categoryId: 'exp-shopping-digital', installmentPeriods: 12,
+      note: '手機', raw: '手機12000元分12期', tagIds: [],
+      categorySource: 'text', accountSource: 'text',
+    }], { updateLastAccount: false });
+    const insts = await db.installments.toArray();
+    expect(insts).toHaveLength(1);
+    expect(insts[0]).toMatchObject({ name: '手機', periods: 12, principalMinor: 1200000 });
+  });
+
+  it('Item 10：runScheduledAutoBook 並發呼叫只會入帳一次到期週期規則', async () => {
+    const { runScheduledAutoBook } = await import('@/services/startup');
+    const { todayKey } = await import('@/domain/period');
+    const a = await mkAcc();
+    const today = todayKey();
+    await saveRecurring({
+      kind: 'subscription', name: 'Netflix', active: 1, mode: 'auto', remindDaysBefore: 0, startDate: today,
+      rule: { freq: 'month', interval: 1 },
+      template: { type: 'expense', accountId: a.id, categoryId: 'exp-subscription-video', amountMinor: 39000, currency: 'TWD' },
+    });
+    await Promise.all([runScheduledAutoBook(), runScheduledAutoBook()]);
+    const txs = await db.transactions.toArray();
+    expect(txs).toHaveLength(1);
+    expect(txs[0].amountMinor).toBe(39000);
+  });
 });

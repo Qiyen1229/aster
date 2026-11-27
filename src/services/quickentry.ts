@@ -156,7 +156,11 @@ export async function bookDrafts(list: ResolvedDraft[], opts: { sourceId?: strin
   const st = useSettings.getState();
   const travelId = opts.travelProjectId ?? st.travelModeProjectId;
   const travel = travelId ? await db.projects.get(travelId) : undefined;
-  const prepared: ({ kind: 'tx'; input: TxInput; amounts: Awaited<ReturnType<typeof resolveAmounts>>; rules: string[] } | { kind: 'transfer'; input: TransferInput; rules: string[] })[] = [];
+  const prepared: (
+    | { kind: 'tx'; input: TxInput; amounts: Awaited<ReturnType<typeof resolveAmounts>>; rules: string[] }
+    | { kind: 'transfer'; input: TransferInput; rules: string[] }
+    | { kind: 'installment'; input: { name: string; accountId: string; categoryId: string; principalMinor: number; currency: string; periods: number; aprDec: '0'; feeMinor: 0; feeMode: 'first'; firstDate: string }; rules: string[] }
+  )[] = [];
   const now = new Date();
   const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   for (const [i, d] of list.entries()) {
@@ -170,22 +174,37 @@ export async function bookDrafts(list: ResolvedDraft[], opts: { sourceId?: strin
     if (d.kind === 'transfer') {
       const to = d.toAccountId ? accounts.get(d.toAccountId) : undefined;
       if (!to || !usable(to) || to.id === acc.id) throw new Error('轉帳需要兩個不同且未封存的帳戶');
-      if (to.currency !== acc.currency) throw new Error('跨幣別轉帳請用記帳面板輸入匯率');
+      if (to.currency !== acc.currency || (d.currency && d.currency !== acc.currency)) throw new Error('跨幣別轉帳請用記帳面板輸入匯率');
       const amt = toMinor(d.amount, acc.currency);
       prepared.push({ kind: 'transfer', input: { id, fromAccountId: acc.id, toAccountId: to.id, fromAmountMinor: amt, toAmountMinor: amt, feeMinor: 0, date: d.date, ts, note: d.note, tagIds: d.tagIds, projectId: d.projectId }, rules });
+    } else if (d.kind === 'expense' && d.installmentPeriods && d.installmentPeriods >= 2 && d.installmentPeriods <= 60) {
+      const { currency } = travelDraftDefaults(d, travel, acc.currency, st.baseCurrency);
+      const principalMinor = toMinor(d.amount, currency);
+      await resolveAmounts({ type: 'expense', accountId: acc.id, categoryId: d.categoryId!, amountMinor: principalMinor, currency, date: d.date, ts });
+      prepared.push({
+        kind: 'installment',
+        input: {
+          name: d.note || '分期付款', accountId: acc.id, categoryId: d.categoryId!, principalMinor,
+          currency, periods: d.installmentPeriods, aprDec: '0', feeMinor: 0, feeMode: 'first', firstDate: d.date,
+        },
+        rules,
+      });
     } else {
       const { projectId, currency } = travelDraftDefaults(d, travel, acc.currency, st.baseCurrency);
       const input: TxInput = {
         id, type: d.kind, accountId: acc.id, categoryId: d.categoryId!, amountMinor: toMinor(d.amount, currency), currency,
         date: d.date, ts, note: d.note, tagIds: d.tagIds, projectId,
+        accountSource: d.accountSource, categorySource: d.categorySource,
       };
       prepared.push({ kind: 'tx', input, amounts: await resolveAmounts(input), rules });
     }
   }
   if (list.length) await reserveInboxSource(opts.sourceId, inboxDraftShape(list));
+  const installmentsToAdd: Extract<typeof prepared[number], { kind: 'installment' }>[] = [];
   await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.attachments, db.rules, db.meta, db.settings, db.exchange_rates], async () => {
     if (receiptKey && await db.meta.get(receiptKey)) return;
     for (const p of prepared) {
+      if (p.kind === 'installment') { installmentsToAdd.push(p); continue; }
       if (p.input.id && (await db.transactions.get(p.input.id) || await db.transfers.get(p.input.id))) continue;
       const ids = p.kind === 'tx' ? [p.input.accountId] : [p.input.fromAccountId, p.input.toAccountId];
       for (const aid of ids) {
@@ -196,8 +215,20 @@ export async function bookDrafts(list: ResolvedDraft[], opts: { sourceId?: strin
       else transferIds.push((await addTransfer(p.input)).id);
       for (const ruleId of p.rules) await countRuleHit(ruleId);
     }
-    if (receiptKey && list.length) await db.meta.put({ key: receiptKey, value: { txIds, transferIds } });
+    if (receiptKey && list.length && !installmentsToAdd.length) await db.meta.put({ key: receiptKey, value: { txIds, transferIds } });
   });
+  if (installmentsToAdd.length) {
+    const { addInstallment } = await import('@/db/repo/plan');
+    for (const p of installmentsToAdd) {
+      const instId = await addInstallment(p.input);
+      const inst = await db.installments.get(instId);
+      for (const s of inst?.schedule ?? []) {
+        if (s.transactionId) txIds.push(s.transactionId);
+      }
+      for (const ruleId of p.rules) await countRuleHit(ruleId);
+    }
+    if (receiptKey && list.length) await db.meta.put({ key: receiptKey, value: { txIds, transferIds } });
+  }
   if (opts.updateLastAccount !== false && (txIds.length || transferIds.length)) useSettings.getState().set('lastAccountId', list[list.length - 1].accountId);
   return { txIds, transferIds };
 }

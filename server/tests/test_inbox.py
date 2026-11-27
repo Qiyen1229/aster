@@ -217,3 +217,88 @@ def test_hook_errors_always_include_message(api: Api) -> None:
     assert empty_payload.status_code == 422
     empty_body = empty_payload.json()
     assert empty_body["detail"] and empty_body["message"] == empty_body["detail"]
+
+
+def test_applepay_card_only_and_hook_idempotency(api: Api) -> None:
+    api.register("alice")
+    token = api.post("/api/inbox/tokens", {"name": "iPhone"}).json()["token"]
+
+    # Apple Pay 只有 card（沒有 amount 與 merchant）也應受理且不被當噪音
+    r_ap = _hook(token, {
+        "source": "applepay",
+        "card": "玉山 Pi 卡",
+        "currency": "TWD",
+        "source_event_id": "ap-evt-001",
+        "event_at": "2026-11-27T10:00:00+08:00",
+    })
+    assert r_ap.status_code == 200 and r_ap.json()["ok"]
+
+    # 同一 source_event_id 重送（項目尚在收件匣中）：不重複建立
+    r_dup1 = _hook(token, {
+        "source": "applepay",
+        "card": "玉山 Pi 卡",
+        "source_event_id": "ap-evt-001",
+    })
+    assert r_dup1.status_code == 200
+    items = api.get("/api/inbox/items").json()
+    assert len(items) == 1
+    assert items[0]["currency"] == "TWD"
+    assert items[0]["source_event_id"] == "ap-evt-001"
+    assert items[0]["event_at"] == "2026-11-27T10:00:00+08:00"
+
+    # ack 刪除後，同一 source_event_id 重送仍不應重複建立
+    assert api.post("/api/inbox/items/ack", {"ids": [items[0]["id"]]}).json()["ids"] == [items[0]["id"]]
+    r_dup2 = _hook(token, {
+        "source": "applepay",
+        "card": "玉山 Pi 卡",
+        "source_event_id": "ap-evt-001",
+    })
+    assert r_dup2.status_code == 200
+    assert api.get("/api/inbox/items").json() == []
+
+    # 無 source_event_id 的短時間重複重試也不應重複建立
+    assert _hook(token, {"source": "siri", "text": "咖啡 85"}).status_code == 200
+    assert _hook(token, {"source": "siri", "text": "咖啡 85"}).status_code == 200
+    assert len(api.get("/api/inbox/items").json()) == 1
+
+
+def test_receive_purges_expired_before_cap_and_reports_purged_header(api: Api) -> None:
+    from datetime import timedelta
+    from sqlalchemy import select
+    from app.core.security import utcnow
+    from app.db import session_scope
+    from app.model import InboxItem, User
+    from app.service.inbox_service import MAX_PENDING
+
+    api.register("alice")
+    token = api.post("/api/inbox/tokens", {"name": "iPhone"}).json()["token"]
+
+    old_time = utcnow() - timedelta(days=31)
+    for db in session_scope():
+        user = db.scalar(select(User).where(User.username == "alice"))
+        assert user is not None
+        for i in range(MAX_PENDING):
+            db.add(InboxItem(
+                user_id=user.id,
+                source="siri",
+                text=f"舊項目 {i}",
+                created_at=old_time,
+            ))
+
+    # 雖然原本有 500 筆，但全部已超過 30 天，receive() 應先清除過期項目而不回 429
+    r = _hook(token, {"source": "siri", "text": "新項目 100"})
+    assert r.status_code == 200
+    items_res = api.get("/api/inbox/items")
+    assert items_res.status_code == 200
+    assert len(items_res.json()) == 1
+    assert items_res.json()[0]["text"] == "新項目 100"
+
+    # 若在 items() 時有過期項目被清除，應回傳 X-Inbox-Purged-Count 標頭
+    for db in session_scope():
+        user = db.scalar(select(User).where(User.username == "alice"))
+        assert user is not None
+        db.add(InboxItem(user_id=user.id, source="siri", text="另一筆過期", created_at=old_time))
+    res2 = api.get("/api/inbox/items")
+    assert res2.status_code == 200
+    assert res2.headers.get("X-Inbox-Purged-Count") == "1"
+    assert len(res2.json()) == 1

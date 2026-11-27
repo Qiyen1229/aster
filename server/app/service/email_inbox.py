@@ -2,29 +2,36 @@
 from __future__ import annotations
 
 import email
+import hashlib
 import imaplib
 import logging
+import os
 import re
+from datetime import timedelta
 from email.header import decode_header
 from email.message import Message
 from email.utils import parseaddr
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import utcnow
-from app.model import ROLE_ADMIN, InboxItem, User
+from app.model import ROLE_ADMIN, InboxDedupeKey, InboxItem, User
 from app.schema.inbox import HookItem
-from app.service.inbox_service import MAX_PENDING, is_noise_notification
+from app.service.inbox_service import MAX_PENDING, RETENTION, is_noise_notification
 
 log = logging.getLogger("aster.email_inbox")
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 _FOOTER_NOISE_RE = re.compile(r"(?:Google\s*LLC|1600\s*Amphitheatre\s*Parkway|Mountain\s*View,\s*CA\s*\d{5})", re.IGNORECASE)
+EMAIL_DEDUPE_TTL = timedelta(days=90)
 
 
 def imap_configured() -> bool:
+    if os.environ.get("CLURE_IMAP_ENABLED", "").strip().lower() in ("0", "false", "no", "off"):
+        return False
     s = get_settings()
     return bool(s.imap_host.strip() and s.imap_user.strip() and s.imap_password)
 
@@ -84,6 +91,25 @@ def _resolve_target_user(db: Session) -> User | None:
         or db.scalar(select(User).where(User.is_active.is_(True)).order_by(User.id))
 
 
+def _extract_uidvalidity(imap: imaplib.IMAP4_SSL) -> str:
+    if not hasattr(imap, "response"):
+        return ""
+    _, vals = imap.response("UIDVALIDITY")
+    if vals and vals[0]:
+        raw = vals[0]
+        return raw.decode("ascii", errors="ignore").strip() if isinstance(raw, bytes) else str(raw).strip()
+    return ""
+
+
+def _email_dedupe_key(parsed: Message, folder: str, uidvalidity: str, uid: bytes, sender: str, subject: str, body: str) -> str:
+    msg_id = (parsed.get("Message-ID") or "").strip()
+    if msg_id:
+        return f"email:msgid:{hashlib.sha256(msg_id.encode('utf-8', errors='replace')).hexdigest()}"
+    uid_str = uid.decode("ascii", errors="replace")
+    fp_raw = f"{folder}|{uidvalidity}|{uid_str}|{sender}|{subject}|{body[:200]}"
+    return f"email:fp:{hashlib.sha256(fp_raw.encode('utf-8', errors='replace')).hexdigest()}"
+
+
 def poll_imap_once(db: Session) -> int:
     """輪詢未讀信件並將符合交易特徵的通知寫入收件匣；回傳新增筆數。"""
     if not imap_configured():
@@ -92,20 +118,29 @@ def poll_imap_once(db: Session) -> int:
     if not user:
         return 0
     s = get_settings()
-    added = 0
+    folder = s.imap_folder.strip() or "INBOX"
+    added_items: list[InboxItem] = []
+    uids_to_mark_seen: list[bytes] = []
+    now = utcnow()
     try:
+        db.execute(delete(InboxItem).where(InboxItem.user_id == user.id, InboxItem.created_at < now - RETENTION))
+        db.execute(delete(InboxDedupeKey).where(InboxDedupeKey.user_id == user.id, InboxDedupeKey.expires_at < now))
+
         with imaplib.IMAP4_SSL(s.imap_host.strip(), s.imap_port, timeout=15) as imap:
             imap.login(s.imap_user.strip(), s.imap_password)
-            imap.select(s.imap_folder.strip() or "INBOX")
-            typ, data = imap.search(None, "UNSEEN")
+            sel_typ, _ = imap.select(folder, readonly=False)
+            if sel_typ != "OK":
+                return 0
+            uidvalidity = _extract_uidvalidity(imap)
+            typ, data = imap.uid("search", None, "UNSEEN")
             if typ != "OK" or not data or not data[0]:
                 return 0
-            msg_ids = data[0].split()[:20]
+            uids = data[0].split()[:20]
             pending = int(db.scalar(select(func.count(InboxItem.id)).where(InboxItem.user_id == user.id)) or 0)
-            for mid in msg_ids:
+            for uid in uids:
                 if pending >= MAX_PENDING:
                     break
-                ftyp, fdata = imap.fetch(mid, "(RFC822)")
+                ftyp, fdata = imap.uid("fetch", uid, "(BODY.PEEK[])")
                 if ftyp != "OK" or not fdata:
                     continue
                 raw_bytes = next((part[1] for part in fdata if isinstance(part, tuple) and isinstance(part[1], bytes)), None)
@@ -114,19 +149,75 @@ def poll_imap_once(db: Session) -> int:
                 parsed = email.message_from_bytes(raw_bytes)
                 sender, subject, body = extract_email_text(parsed)
                 combined = f"{subject}\n{body}".strip()[:1000]
-                hook = HookItem(source="email", text=combined, merchant=sender, card=sender[:60])
-                if is_noise_notification(hook):
+                if not combined:
+                    uids_to_mark_seen.append(uid)
                     continue
-                db.add(InboxItem(
+                hook = HookItem(source="email", text=combined, merchant="", card=sender[:60])
+                if is_noise_notification(hook):
+                    uids_to_mark_seen.append(uid)
+                    continue
+
+                dedupe_key = _email_dedupe_key(parsed, folder, uidvalidity, uid, sender, subject, body)
+                seen_item = db.scalar(
+                    select(InboxItem.id).where(InboxItem.user_id == user.id, InboxItem.source_event_id == dedupe_key)
+                )
+                seen_dedupe = db.scalar(
+                    select(InboxDedupeKey).where(
+                        InboxDedupeKey.user_id == user.id,
+                        InboxDedupeKey.dedupe_key == dedupe_key,
+                        InboxDedupeKey.expires_at >= now,
+                    )
+                )
+                if seen_item is not None or seen_dedupe is not None:
+                    uids_to_mark_seen.append(uid)
+                    continue
+
+                try:
+                    with db.begin_nested():
+                        existing_expired = db.scalar(
+                            select(InboxDedupeKey).where(
+                                InboxDedupeKey.user_id == user.id,
+                                InboxDedupeKey.dedupe_key == dedupe_key,
+                            )
+                        )
+                        if existing_expired:
+                            existing_expired.expires_at = now + EMAIL_DEDUPE_TTL
+                        else:
+                            db.add(InboxDedupeKey(user_id=user.id, dedupe_key=dedupe_key, expires_at=now + EMAIL_DEDUPE_TTL))
+                        db.flush()
+                except IntegrityError:
+                    uids_to_mark_seen.append(uid)
+                    continue
+
+                item = InboxItem(
                     user_id=user.id, token_id=None, source="email",
-                    text=combined, amount="", merchant=sender, card=sender[:60],
-                    occurred=utcnow().strftime("%Y-%m-%d"),
-                ))
+                    text=combined, amount="", merchant="", card=sender[:60],
+                    occurred=now.strftime("%Y-%m-%d"), source_event_id=dedupe_key,
+                )
+                db.add(item)
+                db.flush()
+                added_items.append(item)
+                uids_to_mark_seen.append(uid)
                 pending += 1
-                added += 1
-            if added:
+
+            db.commit()
+            for uid in uids_to_mark_seen:
+                try:
+                    imap.uid("store", uid, "+FLAGS.SILENT", r"(\Seen)")
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("IMAP 標記已讀失敗（uid=%s）：%s", uid, exc)
+
+        if added_items:
+            try:
+                from app.service.push_service import PushService
+                PushService(db).send_to_user(
+                    user.id,
+                    {"title": "📥 收件匣有新項目", "body": "打開 Aster 確認記帳", "url": "/inbox", "tag": f"inbox:{added_items[-1].id}"},
+                )
                 db.commit()
-            return added
+            except Exception:  # noqa: BLE001 — 推播失敗不能影響收信結果
+                log.exception("Email 收件匣推播失敗")
+        return len(added_items)
     except Exception as exc:  # noqa: BLE001
         log.warning("IMAP 收信輪詢失敗：%s", exc)
         db.rollback()

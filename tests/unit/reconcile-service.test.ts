@@ -4,7 +4,7 @@ import { db } from '@/db/schema';
 import { addAccount } from '@/db/repo/accounts';
 import { addTransaction, deleteTransactions } from '@/db/repo/ledger';
 import { reconcile } from '@/domain/reconcile';
-import { applyFixes, loadLedgerRows, stmtFromAi, suggestForMissing } from '@/services/reconcile';
+import { applyFixes, loadLedgerRows, resolveStmtFromAi, stmtFromAi, suggestForMissing } from '@/services/reconcile';
 
 const cat = (id: string, name: string, kind = 'expense') => ({ id, name, kind, parentId: '', icon: '', color: '', sort: 0, archived: 0, createdAt: 1, updatedAt: 1 });
 
@@ -96,5 +96,33 @@ describe('對帳：載入、補齊、平帳、復原', () => {
     expect(rep2.missing).toHaveLength(0);
     expect(rep2.matched).toHaveLength(4);
     void a; void b; void c; void r;
+  });
+
+  it('外幣帳戶對 TWD 帳單：缺匯率阻擋；有匯率正確換算', async () => {
+    const entries = [{ date: '2026-10-10', amount: 320, type: 'expense' as const, merchant: '商店', foreign_amount: null, foreign_currency: null }];
+    expect(() => stmtFromAi(entries, 'USD')).toThrow(/匯率/);
+    const missingRes = await resolveStmtFromAi(entries, 'USD');
+    expect(missingRes.missingFx).toEqual(['TWD']);
+    await db.exchange_rates.put({ base: 'TWD', quote: 'USD', rateDec: '0.03125', source: 'manual', updatedAt: Date.now() });
+    const okRes = await resolveStmtFromAi(entries, 'USD');
+    expect(okRes.missingFx).toEqual([]);
+    expect(okRes.rows[0].amountMinor).toBe(1000); // 320 * 0.03125 = 10 USD
+  });
+
+  it('同日兩筆同金額調整帳目不撞車：以 reconcileTargetId 與 !used 區分', async () => {
+    const t1 = await tx('2026-10-12', 100, '訂閱');
+    const t2 = await tx('2026-10-12', 100, '訂閱');
+    const stmt = [
+      { id: 's1', date: '2026-10-12', amountMinor: 10500, kind: 'expense' as const, text: '訂閱' },
+      { id: 's2', date: '2026-10-12', amountMinor: 10500, kind: 'expense' as const, text: '訂閱' },
+    ];
+    const rep = reconcile(stmt, await loadLedgerRows(acc.id, stmt), 'TWD');
+    expect(rep.variances).toHaveLength(2);
+    await applyFixes(acc as never, { missing: [], variances: rep.variances, adjustTo: null });
+    const adjs = (await db.transactions.toArray()).filter((t) => t.reconcileTargetId);
+    expect(adjs.map((t) => t.reconcileTargetId).sort()).toEqual([t1.id, t2.id].sort());
+    const rep2 = reconcile(stmt, await loadLedgerRows(acc.id, stmt), 'TWD');
+    expect(rep2.variances).toHaveLength(0);
+    expect(rep2.matched).toHaveLength(2);
   });
 });

@@ -168,3 +168,46 @@ describe('轉帳', () => {
     expect(parseEntries('收到薪水 52000 存到台新', ctx)[0]).toMatchObject({ kind: 'income', accountId: 'taishin' });
   });
 });
+
+describe('Item 1 & 2：幣別、分期、合計排除、多卡分段、轉帳與退刷', () => {
+  it('TWD 幣別詞與後置三碼幣別偵測', () => {
+    expect(parseEntries('午餐 NT$120', ctx)[0].currency).toBe('TWD');
+    expect(parseEntries('咖啡 85 新台幣', ctx)[0].currency).toBe('TWD');
+    expect(parseEntries('午餐120台幣', ctx)[0]).toMatchObject({ amount: 120, currency: 'TWD' });
+    expect(parseEntries('實付 20 USD', ctx)[0]).toMatchObject({ amount: 20, currency: 'USD' });
+    expect(findAmounts('20 user')).toEqual([]);
+  });
+
+  it('分期：「手機12000元分12期」只記一筆 12000 並帶 installmentPeriods: 12', () => {
+    const list = parseEntries('手機12000元分12期', ctx);
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ kind: 'expense', amount: 12000, installmentPeriods: 12, note: '手機' });
+  });
+
+  it('退刷／退貨／刷退／折讓識別為收入', () => {
+    for (const s of ['刷卡退刷 500', '網購退貨 1200', '商家刷退 300', '消費折讓 150']) {
+      expect(parseEntries(s, ctx)[0].kind).toBe('income');
+    }
+  });
+
+  it('轉帳：「轉5000玉山到中國信託」與「玉山轉5000到中國信託」', () => {
+    for (const s of ['轉5000玉山到中國信託', '玉山轉5000到中國信託']) {
+      expect(parseEntries(s, ctx)[0]).toMatchObject({ kind: 'transfer', amount: 5000, accountId: 'esun', toAccountId: 'ctbc' });
+    }
+  });
+
+  it('多筆後的合計／共不重複記帳；單筆「聚餐共1200」正常記帳', () => {
+    expect(parseEntries('早餐 40 午餐 50 共 90', ctx).map((d) => d.amount)).toEqual([40, 50]);
+    expect(parseEntries('早餐40，午餐50，合計90元', ctx).map((d) => d.amount)).toEqual([40, 50]);
+    expect(parseEntries('聚餐共1200', ctx).map((d) => d.amount)).toEqual([1200]);
+  });
+
+  it('多卡分段綁定帳戶，且保留「都刷」共享帳戶', () => {
+    const a = parseEntries('早餐60刷玉山 午餐120刷中信', ctx);
+    expect(a.map((x) => [x.amount, x.accountId])).toEqual([[60, 'esun'], [120, 'ctbc']]);
+    const b = parseEntries('用玉山買早餐60 午餐120刷中信', ctx);
+    expect(b.map((x) => [x.amount, x.accountId])).toEqual([[60, 'esun'], [120, 'ctbc']]);
+    const c = parseEntries('用玉山買早餐60 用中信買午餐120', ctx);
+    expect(c.map((x) => [x.amount, x.accountId])).toEqual([[60, 'esun'], [120, 'ctbc']]);
+  });
+});
