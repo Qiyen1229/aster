@@ -3735,8 +3735,8 @@ html.voice-holding .sheet, html.voice-holding .sheet-backdrop { pointer-events: 
 
 .wiz-stepper { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
 .wiz-step-pill { padding: 8px 6px; border-radius: var(--radius-s); border: 0.5px solid var(--sep); background: var(--surface-2); color: var(--text-2); font-size: 0.78rem; font-weight: 600; text-align: center; cursor: pointer; }
+.wiz-step-pill.done { border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent-text, var(--text)); }
 .wiz-step-pill.active { border-color: var(--accent); background: var(--accent-soft, var(--surface-3)); color: var(--accent-text, var(--text)); }
-.wiz-step-pill.done { color: var(--accent-text, var(--text)); }
 .wiz-panel { padding: 14px; }
 .wiz-panel-title { margin: 0 0 6px; font-size: 0.96rem; }
 .wiz-guide-box { margin-top: 8px; padding: 12px; border-radius: var(--radius-s); background: var(--surface-2); border: 0.5px solid var(--sep); }

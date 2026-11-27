@@ -180,7 +180,7 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
           const disabled = n > 1 && !binding;
           const done = (n === 1 && !!binding)
             || (n === 2 && binding?.status === 'verified')
-            || (n === 3 && isConnected)
+            || (n === 3 && (isConnected || step >= 4))
             || (n === 4 && isConnected);
           return (
             <button
@@ -383,9 +383,22 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       {step === 4 && binding && (
         <section className="wiz-panel" style={{ padding: '4px 0' }}>
           <h3 className="wiz-panel-title" style={{ marginBottom: 6 }}>步驟 4：測試通知與完成</h3>
-          <p className="muted" style={{ margin: '0 0 12px', fontSize: '0.85rem', lineHeight: 1.5 }}>
-            可從 Gmail 手動轉寄一封銀行消費通知信到 <code style={{ overflowWrap: 'anywhere' }}>{binding.forward_address}</code> 測試，或等待下一筆通知自動寄達。
-          </p>
+          <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+            <div style={{ fontSize: '0.86rem', fontWeight: 600, marginBottom: 6 }}>如何手動轉寄測試信</div>
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.84rem', lineHeight: 1.65 }}>
+              <li>打開 <b>Gmail</b>，找一封近期有金額的<b>銀行刷卡或行動支付消費通知信</b>（可順便驗證自動入帳）。</li>
+              <li>點選信件右上角或下方的「<b>轉寄</b>」。</li>
+              <li>在收件人貼上你的專屬轉寄地址後按傳送：</li>
+            </ol>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, padding: '8px 10px', borderRadius: 12, background: 'var(--surface-2)' }}>
+              <code style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', overflowWrap: 'anywhere', lineHeight: 1.35 }}>
+                {binding.forward_address}
+              </code>
+              <button type="button" className="btn tinted small" onClick={() => void copyText(binding.forward_address, '轉寄地址')}>
+                複製
+              </button>
+            </div>
+          </div>
 
           {isConnected ? (
             <div className="wiz-verify-status ok" style={{ padding: 14, borderRadius: 16 }}>
