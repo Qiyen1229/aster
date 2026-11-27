@@ -238,7 +238,7 @@ def build(
 
 
 def auto() -> dict:
-    """Aster 自動記帳：內建銀行與行動支付通知觸發器，收到通知後自動送出"""
+    """Aster 自動記帳：合併銀行／行動支付／簡訊通知與 Apple Pay 錢包交易雙觸發器"""
     rand_id = str(uuid.uuid4()).upper()
     return build(
         [
@@ -264,27 +264,6 @@ def auto() -> dict:
                     "SelectedApps": NOTIFY_APPS,
                 },
             },
-        ],
-    )
-
-
-def applepay() -> dict:
-    """Aster Apple Pay 記帳：錢包交易觸發器（WFWalletTransactionTrigger），感應付款後自動送出"""
-    rand_id = str(uuid.uuid4()).upper()
-    return build(
-        [
-            field("source", text("applepay")),
-            field("amount", var_text(shortcut_input("Amount"))),
-            field("merchant", var_text(shortcut_input("Merchant"))),
-            field("card", var_text(shortcut_input("Card or Pass"))),
-            field("date", var_text(current_date_iso())),
-            field("source_event_id", multi_var_text([current_date_iso(), output(rand_id, "隨機數字")], "-")),
-        ],
-        before=[
-            {"WFWorkflowActionIdentifier": "is.workflow.actions.number.random",
-             "WFWorkflowActionParameters": {"UUID": rand_id, "WFRandomNumberMinimum": 100000, "WFRandomNumberMaximum": 999999}},
-        ],
-        triggers=[
             {
                 "WFTriggerIdentifier": "WFWalletTransactionTrigger",
                 "WFTriggerUUID": str(uuid.uuid4()).upper(),
@@ -296,7 +275,6 @@ def applepay() -> dict:
 
 SHORTCUTS: dict[str, tuple[str, object]] = {
     "aster-auto": ("Aster 自動記帳", auto),
-    "aster-applepay": ("Aster Apple Pay 記帳", applepay),
 }
 
 

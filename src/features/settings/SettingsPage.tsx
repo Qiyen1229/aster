@@ -4,7 +4,7 @@
  * 主頁面俐落清爽、一目瞭然；性質相近的功能合併於專屬面板內。
  */
 import { Capacitor } from '@capacitor/core';
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/db/schema';
@@ -31,8 +31,6 @@ import { FONT_SIZES } from '@/app/viewport';
 import { api } from '@/services/api';
 import { confirmIdentity } from '@/services/identity';
 import { wipeLocalData } from '@/services/lockGuard';
-import { emailForwardStatusLabel, getEmailForwardBinding, type EmailForwardBinding } from '@/services/inbox';
-import { EmailForwardSheet } from '@/features/inbox/EmailForwardSheet';
 
 const SYNC_TEXT = { off: '未啟用', idle: '已同步', syncing: '同步中…', offline: '離線，恢復連線後自動同步', error: '同步失敗', locked: '需要輸入加密密碼' } as const;
 
@@ -343,39 +341,12 @@ function TaxonomyHubSheet({ open, onClose }: { open: boolean; onClose: () => voi
 }
 
 /** 自動記帳集合面板 */
-function AutoRecordHubSheet({
-  open,
-  onClose,
-  binding,
-  onRefreshBinding,
-  onOpenEmailForward,
-}: {
-  open: boolean;
-  onClose: () => void;
-  binding: EmailForwardBinding | null;
-  onRefreshBinding: () => void;
-  onOpenEmailForward: () => void;
-}) {
+function AutoRecordHubSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navTo = useHubNav(onClose);
-  useEffect(() => {
-    if (open && AUTH_ENABLED) onRefreshBinding();
-  }, [open, onRefreshBinding]);
-  const emailStatus = emailForwardStatusLabel(binding);
   return (
     <Sheet open={open} onClose={onClose} title="自動記帳">
       <div className="list">
-        <Row icon="zap" tint="#30D158" label="自動記帳捷徑" hint="設定 iPhone 捷徑接收銀行 App、LINE Pay、街口、訊息通知與 Apple Pay 感應付款自動送出。" onClick={() => navTo('/settings/shortcuts')} />
-        {AUTH_ENABLED && (
-          <Row
-            icon="mail"
-            tint="#FF375F"
-            label="Email 自動轉寄（Gmail）"
-            hint="透過專屬轉寄地址自動接收 Gmail 銀行與行動支付通知信並匯入收件匣。"
-            onClick={() => { onClose(); onOpenEmailForward(); }}
-          >
-            <span className="row-value muted" style={{ fontSize: '0.85rem' }}>{emailStatus.label}</span>
-          </Row>
-        )}
+        <Row icon="zap" tint="#30D158" label="自動記帳捷徑" hint="設定 iPhone 捷徑（銀行 App、LINE Pay、街口、訊息通知與 Apple Pay）與 Email 自動轉寄。" onClick={() => navTo('/settings/shortcuts')} />
         <Row icon="receipt" tint="#0A84FF" label="電子發票載具" hint="綁定財政部手機條碼載具，自動同步發票明細、自動對獎並一鍵匯入記帳。" onClick={() => navTo('/settings/invoice')} />
         <Row icon="check" tint="#FF9F0A" label="帳單對帳匯入" onClick={() => navTo('/settings/import?mode=reconcile')} />
       </div>
@@ -510,12 +481,6 @@ export default function SettingsPage() {
   const [secOpen, setSecOpen] = useState(false);
   const [dataOpen, setDataOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
-  const [emailFwdOpen, setEmailFwdOpen] = useState(false);
-  const [emailFwdBinding, setEmailFwdBinding] = useState<EmailForwardBinding | null>(null);
-  const refreshEmailFwd = useCallback(() => {
-    if (!AUTH_ENABLED) return;
-    void getEmailForwardBinding().then(setEmailFwdBinding).catch(() => undefined);
-  }, []);
 
   // 下拉刷新（Pull-to-Refresh）：共用 hook
   const { armed, refreshing, indicatorRef, bind: ptrBind } = usePullToRefresh(() =>
@@ -688,13 +653,7 @@ export default function SettingsPage() {
 
       {/* 集合面板 Sheet */}
       <TaxonomyHubSheet open={catOpen} onClose={() => setCatOpen(false)} />
-      <AutoRecordHubSheet
-        open={autoOpen}
-        onClose={() => setAutoOpen(false)}
-        binding={emailFwdBinding}
-        onRefreshBinding={refreshEmailFwd}
-        onOpenEmailForward={() => setEmailFwdOpen(true)}
-      />
+      <AutoRecordHubSheet open={autoOpen} onClose={() => setAutoOpen(false)} />
       <AiHubSheet open={aiOpen} onClose={() => setAiOpen(false)} />
       <AppearanceSheet open={lookOpen} onClose={() => setLookOpen(false)} />
       <PrefsSheet open={prefsOpen} onClose={() => setPrefsOpen(false)} />
@@ -709,12 +668,6 @@ export default function SettingsPage() {
 
       {/* 細部彈窗 */}
       <EncryptionSheet open={encOpen} onClose={() => setEncOpen(false)} />
-      <EmailForwardSheet
-        open={emailFwdOpen}
-        onClose={() => setEmailFwdOpen(false)}
-        binding={emailFwdBinding}
-        onUpdated={setEmailFwdBinding}
-      />
       <Sheet open={pwOpen} onClose={() => setPwOpen(false)} title="變更密碼">
         {pwOpen && <ChangePasswordForm onDone={() => { setPwOpen(false); useUI.getState().showSnack({ text: '密碼已變更，其他裝置已登出' }); }} />}
       </Sheet>

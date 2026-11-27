@@ -87,7 +87,7 @@ class HookItem(BaseModel):
 
     @model_validator(mode="after")
     def _not_empty(self) -> HookItem:
-        if not (self.text or self.amount or self.merchant or (self.source == "applepay" and self.card)):
+        if not (self.text or self.amount or self.merchant or (self.source in ("applepay", "notify") and self.card)):
             raise ValueError("內容是空的：請至少傳送文字或金額")
         return self
 

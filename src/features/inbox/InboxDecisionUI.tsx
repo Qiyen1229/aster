@@ -155,54 +155,80 @@ export function SplitSkipControl({
 }) {
   const [open, setOpen] = useState(false);
 
-  if (!open) {
-    return (
+  return (
+    <span style={{ position: 'relative', display: 'inline-block' }}>
       <button
         type="button"
         className="pill"
         disabled={disabled}
         aria-label="略過"
-        onClick={() => setOpen(true)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((v) => !v)}
       >
         略過 ▾
       </button>
-    );
-  }
-
-  return (
-    <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }} role="group" aria-label="選擇略過原因">
-      <button
-        type="button"
-        className="pill"
-        disabled={disabled}
-        onClick={() => { setOpen(false); void onSkip('non_tx'); }}
-      >
-        非交易
-      </button>
-      <button
-        type="button"
-        className="pill"
-        disabled={disabled}
-        onClick={() => { setOpen(false); void onSkip('duplicate'); }}
-      >
-        重複
-      </button>
-      <button
-        type="button"
-        className="pill"
-        disabled={disabled}
-        onClick={() => { setOpen(false); void onSkip('ignore'); }}
-      >
-        這次不記
-      </button>
-      <button
-        type="button"
-        className="pill"
-        disabled={disabled}
-        onClick={() => setOpen(false)}
-      >
-        取消
-      </button>
+      {open && (
+        <>
+          <div
+            aria-hidden="true"
+            onClick={() => setOpen(false)}
+            style={{ position: 'fixed', inset: 0, zIndex: 55 }}
+          />
+          <div
+            role="menu"
+            aria-label="選擇略過原因"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 'calc(100% + 6px)',
+              zIndex: 60,
+              minWidth: 164,
+              padding: 6,
+              borderRadius: 14,
+              background: 'var(--surface)',
+              border: '0.5px solid var(--glass-border)',
+              boxShadow: 'var(--shadow-lg)',
+              display: 'grid',
+              gap: 2,
+            }}
+          >
+            {(
+              [
+                ['non_tx', '非交易', '驗證碼、廣告通知'],
+                ['duplicate', '重複', '帳本已有相同項目'],
+                ['ignore', '這次不記', '暫時略過不入帳'],
+              ] as const
+            ).map(([reason, label, sub]) => (
+              <button
+                key={reason}
+                type="button"
+                role="menuitem"
+                disabled={disabled}
+                onClick={() => {
+                  setOpen(false);
+                  void onSkip(reason);
+                }}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'flex-start',
+                  gap: 1,
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: 10,
+                  textAlign: 'left',
+                  background: 'transparent',
+                  color: 'var(--text)',
+                }}
+              >
+                <span style={{ fontSize: '0.84rem', fontWeight: 600 }}>{label}</span>
+                <span className="muted" style={{ fontSize: '0.72rem' }}>{sub}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </span>
   );
 }

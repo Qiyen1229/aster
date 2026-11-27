@@ -77,6 +77,8 @@ def is_noise_notification(body: HookItem) -> bool:
         return True
     if _PROMO_NOISE_RE.search(combined) and not _ACTUAL_TX_RE.search(combined):
         return True
+    if body.source == "notify" and (body.merchant.strip() or (body.card.strip() and not body.text.strip())):
+        return False
     if body.source == "email":
         return not (_TX_SIGNAL_RE.search(combined) and _EMAIL_CURRENCY_AMT_RE.search(combined))
     if _TX_SIGNAL_RE.search(combined):

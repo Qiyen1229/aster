@@ -206,19 +206,11 @@ export function ShortcutWizard({
         <div className="card wiz-panel">
           <p className="wiz-panel-title"><b>步驟 2／3：在「捷徑 → 自動化」分頁啟用</b></p>
           <div className="wiz-guide-box">
-            {shortcut.key === 'auto' ? (
-              <ol className="wiz-auto-steps">
-                <li>打開 iPhone「捷徑」App，切換到底部 <b>「捷徑 → 自動化」</b> 分頁。</li>
-                <li>開啟預先建立的「收到通知」自動化，並將執行方式設為 <b>「立即執行」</b>（建議關閉執行時通知）。</li>
-                <li>點入觸發的 App 清單，務必勾選 <b>「訊息」</b> 與常用銀行／支付 App（LINE Pay、街口等），<b>請勿加入 Gmail 或 Outlook</b>。</li>
-              </ol>
-            ) : (
-              <ol className="wiz-auto-steps">
-                <li>打開 iPhone「捷徑」App，切換到底部 <b>「捷徑 → 自動化」</b> 分頁。</li>
-                <li>開啟預先建立的 <b>「交易」</b> 自動化（可全選要追蹤的卡片），將執行方式設為 <b>「立即執行」</b>。</li>
-                <li>若清單內沒有自動化，點右上角「＋」→「交易」→「立即執行」→「執行捷徑：<b>{shortcut.name}</b>」。</li>
-              </ol>
-            )}
+            <ol className="wiz-auto-steps">
+              <li>打開 iPhone「捷徑」App，切換到底部 <b>「捷徑 → 自動化」</b> 分頁。</li>
+              <li>開啟預先建立的「收到通知」與「交易（Apple Pay）」自動化，並將執行方式設為 <b>「立即執行」</b>（建議關閉執行時通知）。</li>
+              <li>點入通知觸發的 App 清單，務必勾選 <b>「訊息」</b>、<b>「錢包」</b> 與常用銀行／支付 App（LINE Pay、街口等），<b>請勿加入 Gmail 或 Outlook</b>。</li>
+            </ol>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
             <a className="btn secondary" href="shortcuts://">打開「捷徑」App</a>

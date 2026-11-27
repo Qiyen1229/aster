@@ -239,19 +239,10 @@ export const SHORTCUTS = [
     key: 'auto',
     name: 'Aster 自動記帳',
     icon: '⚡',
-    title: '銀行與支付通知',
-    automation: '收到通知',
+    title: 'iPhone 自動記帳捷徑',
+    automation: '通知與交易',
     icloud: 'd965a9d8a48642aea3bb847b6525cdaa',
-    hint: '自動擷取銀行 App、LINE Pay、街口與簡訊消費通知',
-  },
-  {
-    key: 'applepay',
-    name: 'Aster Apple Pay 記帳',
-    icon: '💳',
-    title: 'Apple Pay 感應付款',
-    automation: '交易',
-    icloud: 'dc25d518b4614234870199310c7425c2',
-    hint: '感應刷卡後，自動將金額、商家與卡片送進 Aster',
+    hint: '一次涵蓋銀行 App、LINE Pay、街口、簡訊與 Apple Pay 感應付款',
   },
 ] as const;
 

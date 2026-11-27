@@ -151,9 +151,8 @@ export default function ShortcutsPage() {
       }
     }
     if (!url) return false;
-    const payload = channelKey === 'applepay'
-      ? { source: 'applepay', amount: '120', merchant: '測試商店', card: 'Apple Pay' }
-      : { source: 'notify', card: '測試銀行', text: '測試消費 午餐 120 元' };
+    const payload = { source: 'notify', card: '測試銀行', text: '測試消費 午餐 120 元' };
+    void channelKey;
     try {
       const r = await fetch(url, {
         method: 'POST',

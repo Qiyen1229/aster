@@ -151,7 +151,7 @@ describe('ShortcutWizard 3 步驟引導與明確確認流程', () => {
       root!.render(React.createElement(ShortcutWizard, {
         open: true,
         onClose: vi.fn(),
-        shortcut: SHORTCUTS[1],
+        shortcut: SHORTCUTS[0],
         preparing: false,
         hasLink: true,
         tokens: [baseToken],
@@ -161,7 +161,7 @@ describe('ShortcutWizard 3 步驟引導與明確確認流程', () => {
       }));
     });
 
-    const joinBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.includes('加入「Aster Apple Pay 記帳」'));
+    const joinBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.includes('加入「Aster 自動記帳」'));
     expect(joinBtn).toBeTruthy();
     await act(async () => { joinBtn!.click(); });
 
@@ -260,8 +260,7 @@ describe('ShortcutsPage 2 渠道中心與狀態顯示', () => {
     });
     await act(async () => { await Promise.resolve(); });
 
-    expect(host.textContent).toContain('銀行與支付通知');
-    expect(host.textContent).toContain('Apple Pay 感應付款');
+    expect(host.textContent).toContain('iPhone 自動記帳捷徑');
     expect(host.textContent).not.toContain('Siri');
     expect(host.textContent).toContain('未設定');
     expect(host.textContent).toContain('設定');

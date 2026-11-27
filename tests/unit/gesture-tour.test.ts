@@ -54,40 +54,40 @@ describe('首頁互動式手勢教學（GestureTour）', () => {
       root.render(React.createElement(GestureTour, { desktop: false }));
     });
 
-    expect(host.textContent).toContain('第 1 / 3 步');
+    expect(document.body.textContent).toContain('第 1 / 3 步');
 
     // Step 0：上滑超過 18px → 進入下滑關閉指引 → 下滑超過 18px
-    const target0 = host.querySelector<HTMLButtonElement>('.tour-target')!;
+    const target0 = document.body.querySelector<HTMLButtonElement>('.tour-target')!;
     await act(async () => {
       pointer(target0, 'pointerdown', { clientY: 800 });
       pointer(target0, 'pointermove', { clientY: 750 });
       pointer(target0, 'pointerup', { clientY: 750 });
     });
-    expect(host.textContent).toContain('接著往下滑，關閉 Cilo 面板');
+    expect(document.body.textContent).toContain('接著往下滑，關閉 Cilo 面板');
     await act(async () => {
       pointer(target0, 'pointerdown', { clientY: 750 });
       pointer(target0, 'pointermove', { clientY: 800 });
       pointer(target0, 'pointerup', { clientY: 800 });
     });
-    expect(host.textContent).toContain('做到了');
+    expect(document.body.textContent).toContain('做到了');
     await act(async () => { vi.advanceTimersByTime(500); });
 
     // Step 1：按住超過 350ms
-    expect(host.textContent).toContain('第 2 / 3 步');
-    const target1 = host.querySelector<HTMLButtonElement>('.tour-target')!;
+    expect(document.body.textContent).toContain('第 2 / 3 步');
+    const target1 = document.body.querySelector<HTMLButtonElement>('.tour-target')!;
     await act(async () => {
       pointer(target1, 'pointerdown', { clientY: 800 });
       vi.advanceTimersByTime(360);
     });
-    expect(host.textContent).toContain('手感對了');
+    expect(document.body.textContent).toContain('手感對了');
     await act(async () => {
       pointer(target1, 'pointerup', { clientY: 800 });
       vi.advanceTimersByTime(500);
     });
 
     // Step 2：輕點按鈕結束教學
-    expect(host.textContent).toContain('第 3 / 3 步');
-    const target2 = host.querySelector<HTMLButtonElement>('.tour-target')!;
+    expect(document.body.textContent).toContain('第 3 / 3 步');
+    const target2 = document.body.querySelector<HTMLButtonElement>('.tour-target')!;
     await act(async () => {
       pointer(target2, 'pointerdown', { clientY: 800 });
       pointer(target2, 'pointerup', { clientY: 800 });
@@ -100,7 +100,7 @@ describe('首頁互動式手勢教學（GestureTour）', () => {
     await act(async () => {
       root.render(React.createElement(GestureTour, { desktop: false }));
     });
-    const skip = host.querySelector<HTMLButtonElement>('.tour-skip')!;
+    const skip = document.body.querySelector<HTMLButtonElement>('.tour-skip')!;
     await act(async () => { skip.click(); });
     expect(useSettings.getState().gestureTourDone).toBe(true);
   });
@@ -109,8 +109,8 @@ describe('首頁互動式手勢教學（GestureTour）', () => {
     await act(async () => {
       root.render(React.createElement(GestureTour, { desktop: true }));
     });
-    expect(host.textContent).toContain('歡迎來到 Aster 寬屏模式');
-    const btn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent?.includes('開始使用'))!;
+    expect(document.body.textContent).toContain('歡迎來到 Aster 寬屏模式');
+    const btn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.includes('開始使用'))!;
     await act(async () => { btn.click(); });
     expect(useSettings.getState().gestureTourDone).toBe(true);
   });

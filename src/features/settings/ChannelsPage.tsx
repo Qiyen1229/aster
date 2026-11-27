@@ -18,6 +18,7 @@ import { SwitchField, TextField } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
 import { Sheet } from '@/ui/Sheet';
 import { Guide } from './GuideView';
+import { ChannelBrandIcon } from './ChannelBrandIcon';
 import { NotifTabs } from './NotifTabs';
 
 const snack = (text: string, duration?: number) => useUI.getState().showSnack({ text, duration });
@@ -94,7 +95,7 @@ function ChannelCard({ c, busy, onTest, onChange }: { c: Channel; busy: boolean;
   return (
     <div className="card" style={{ opacity: c.enabled ? 1 : 0.6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span className="dur-icon" aria-hidden="true">{info.icon}</span>
+        <ChannelBrandIcon kind={c.kind} size={36} />
         <div className="row-main">
           <div style={{ fontWeight: 650 }}>{c.name}</div>
           <div className="row-sub">{info.label}・{c.hint}</div>

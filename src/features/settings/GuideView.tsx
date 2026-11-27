@@ -1,6 +1,6 @@
 /** 外部通知的設定教學：可摺疊，依序列出步驟、要貼的欄位、常見問題與官方連結。 */
 import type { ChannelKind } from '@/services/outgoing';
-import { KIND_INFO } from '@/services/outgoing';
+import { ChannelBrandIcon } from './ChannelBrandIcon';
 import { GUIDES } from './channelGuides';
 
 export function GuideBody({ kind }: { kind: ChannelKind }) {
@@ -39,7 +39,10 @@ export function GuideBody({ kind }: { kind: ChannelKind }) {
 export function Guide({ kind, open }: { kind: ChannelKind; open?: boolean }) {
   return (
     <details className="guide" open={open}>
-      <summary><span aria-hidden="true">{KIND_INFO[kind].icon}</span> {GUIDES[kind].title}</summary>
+      <summary style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <ChannelBrandIcon kind={kind} size={22} />
+        <span>{GUIDES[kind].title}</span>
+      </summary>
       <GuideBody kind={kind} />
     </details>
   );

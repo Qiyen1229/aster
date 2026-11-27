@@ -4,6 +4,7 @@
  * - 桌機寬屏：顯示快捷鍵與側邊欄操作提示卡片
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { haptic } from '@/services/haptics';
 import { useSettings } from '@/stores/settings';
 import { useUI } from '@/stores/ui';
@@ -76,9 +77,11 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
     const update = () => setFabBox(measureFab());
     update();
     const raf = window.requestAnimationFrame(update);
+    const t = window.setTimeout(update, 120);
     window.addEventListener('resize', update);
     return () => {
       window.cancelAnimationFrame(raf);
+      window.clearTimeout(t);
       window.removeEventListener('resize', update);
       window.clearTimeout(holdTimer.current);
       window.clearTimeout(stepTimer.current);
@@ -184,7 +187,7 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
   }, [desktop]);
 
   if (desktop) {
-    return (
+    const desktopNode = (
       <div ref={tourRef} className="tour-backdrop desktop" role="dialog" aria-modal="true" aria-label="寬屏快捷導覽">
         <div className="tour-card">
           <div className="tour-head">
@@ -205,6 +208,7 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
         </div>
       </div>
     );
+    return typeof document !== 'undefined' ? createPortal(desktopNode, document.body) : desktopNode;
   }
 
   const cur = STEPS[step];
@@ -213,10 +217,10 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
     ? '喚出 Cilo 後，只要對著按鈕或面板往下滑就能收起。現在試著把下方按鈕往下滑看看！'
     : cur.desc;
   const cardBottom = typeof window !== 'undefined'
-    ? Math.max(112, window.innerHeight - fabBox.top + 26)
-    : 120;
+    ? Math.max(128, window.innerHeight - fabBox.top + 48)
+    : 140;
 
-  return (
+  const mobileNode = (
     <div ref={tourRef} className="tour-backdrop" role="dialog" aria-modal="true" aria-label="互動式手勢教學">
       <div className="tour-card" style={{ bottom: `${cardBottom}px` }}>
         <div className="tour-head">
@@ -247,7 +251,7 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
         <div
           className="tour-swipe-hint"
           aria-hidden="true"
-          style={{ left: `${fabBox.left + fabBox.width / 2}px`, top: `${fabBox.top - 10}px` }}
+          style={{ left: `${fabBox.left + fabBox.width / 2}px`, top: `${fabBox.top - 12}px` }}
         >
           <Icon name={swipePhase === 'down' ? 'down' : 'up'} size={20} />
           <span>{swipePhase === 'down' ? '往下滑關閉' : '往上滑'}</span>
@@ -279,4 +283,5 @@ export function GestureTour({ desktop }: { desktop: boolean }) {
       </button>
     </div>
   );
+  return typeof document !== 'undefined' ? createPortal(mobileNode, document.body) : mobileNode;
 }

@@ -4,17 +4,17 @@ import { openShortcutImport, shortcutIcloudUrl, SHORTCUTS } from '@/services/inb
 describe('加入捷徑：直接開 iCloud 分享連結', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('兩個捷徑（銀行與支付通知、Apple Pay）不含 Siri，且各有不同的 iCloud 連結（32 位小寫十六進位）', () => {
-    expect(SHORTCUTS.map((s) => s.key)).toEqual(['auto', 'applepay']);
+  it('合併為單一捷徑（Aster 自動記帳：含銀行通知、簡訊與 Apple Pay），不含 Siri，且具合法 32 位小寫十六進位 iCloud 連結', () => {
+    expect(SHORTCUTS.map((s) => s.key)).toEqual(['auto']);
     const ids = SHORTCUTS.map((s) => s.icloud);
-    expect(new Set(ids).size).toBe(2);
+    expect(new Set(ids).size).toBe(1);
     for (const id of ids) expect(id).toMatch(/^[0-9a-f]{32}$/);
   });
   it('「加入」＝開 https://www.icloud.com/shortcuts/<id>（不是 shortcuts://import-shortcut?url=，那個會顯示「檔案的格式不正確」）', () => {
     const loc = { href: '' };
     vi.stubGlobal('location', loc);
-    openShortcutImport(SHORTCUTS[1]);
-    expect(loc.href).toBe(shortcutIcloudUrl(SHORTCUTS[1]));
+    openShortcutImport(SHORTCUTS[0]);
+    expect(loc.href).toBe(shortcutIcloudUrl(SHORTCUTS[0]));
     expect(loc.href.startsWith('https://www.icloud.com/shortcuts/')).toBe(true);
     expect(loc.href).not.toContain('shortcuts://');
   });
