@@ -8,6 +8,7 @@ import type { Transaction, Transfer, TxType } from '../types';
 import { allocate, convertMinor } from '@/domain/money';
 import { transferEffects, txEffect } from '@/domain/ledger';
 import { getRate } from '@/services/fx';
+import { recordFeedback } from '@/services/decisionLog';
 import { getSetting } from './settings';
 
 export interface TxInput {
@@ -39,6 +40,7 @@ export interface TxInput {
   accountSource?: string;
   categorySource?: string;
   reconcileTargetId?: string;
+  decisionId?: string;
   split?: Transaction['split'];
 }
 
@@ -110,6 +112,7 @@ function toRow(id: string, input: TxInput, amounts: Awaited<ReturnType<typeof re
     accountSource: input.accountSource,
     categorySource: input.categorySource,
     reconcileTargetId: input.reconcileTargetId,
+    decisionId: input.decisionId,
     split: input.split,
     isSample: input.isSample,
     excludeFromBudget: input.excludeFromBudget,
@@ -199,7 +202,10 @@ async function durablesOnTxRestore(txId: string): Promise<void> {
   }
 }
 
+const UNDO_DELETE_WINDOW_MS = 7 * 86_400_000;
+
 export async function deleteTransactions(ids: string[]): Promise<void> {
+  const undoTargets: Array<{ id: string; decisionId: string }> = [];
   await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.durables, db.debts, db.stock_trades], async () => {
     const now = Date.now();
     for (const id of ids) {
@@ -235,8 +241,22 @@ export async function deleteTransactions(ids: string[]): Promise<void> {
       await db.transactions.update(id, { deletedAt: now, updatedAt: now });
       await bump(tx.accountId, -txEffect(tx));
       await durablesOnTxDelete(id, now);
+      if (tx.decisionId && now - tx.createdAt <= UNDO_DELETE_WINDOW_MS) {
+        undoTargets.push({ id: tx.id, decisionId: tx.decisionId });
+      }
     }
   });
+  if (undoTargets.length > 0) {
+    void Promise.all(
+      undoTargets.map((u) =>
+        recordFeedback({
+          decisionId: u.decisionId,
+          txId: u.id,
+          signalType: 'undo_delete',
+        }).catch(() => undefined),
+      ),
+    );
+  }
 }
 
 export async function listDeletedTransactions(limit = 50): Promise<Transaction[]> {

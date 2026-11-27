@@ -4,8 +4,8 @@
  */
 import Dexie, { type Table } from 'dexie';
 import type {
-  Account, AppErrorLog, Attachment, Budget, CategoryRule, BudgetPeriod, Category, Debt, Dividend, Durable, ExchangeRate, Goal,
-  Installment, Person, PortfolioSnapshot, PriceCache, PriceHistory, Project, RecurringRule,
+  Account, AppErrorLog, Attachment, AutoDecision, Budget, CategoryRule, BudgetPeriod, Category, Debt, Dividend, Durable, ExchangeRate, FeedbackSignal, Goal,
+  Installment, MerchantAlias, Person, PortfolioSnapshot, PriceCache, PriceHistory, Project, RecurringRule,
   Reminder, SavedFilter, SettingRow, Stock, StockTrade, Tag, Template, Transaction, Transfer, WatchItem, Wish,
 } from './types';
 import { OUTBOX, syncTracking, type OutboxEntry } from './sync-tracking';
@@ -43,6 +43,9 @@ export class AsterDB extends Dexie {
   sync_outbox!: Table<OutboxEntry, string>;
   rules!: Table<CategoryRule, string>;
   errors!: Table<AppErrorLog, number>;
+  auto_decisions!: Table<AutoDecision, string>;
+  feedback_signals!: Table<FeedbackSignal, string>;
+  merchant_aliases!: Table<MerchantAlias, string>;
 
   constructor(name = 'clure') {
     super(name);
@@ -110,6 +113,12 @@ export class AsterDB extends Dexie {
     // v7：本機錯誤日誌（非同步寫入 IndexedDB，僅保存在本機）
     this.version(7).stores({
       errors: '++id, ts, type',
+    });
+    // v8：自動記帳決策日誌、回饋訊號、商家別名（僅保存在本機，不跨裝置同步）
+    this.version(8).stores({
+      auto_decisions: 'id, ts, source, sourceEventId, txId, inboxItemId, outcome, parserVersion',
+      feedback_signals: 'id, ts, decisionId, ruleId, signalType, field',
+      merchant_aliases: 'id, rawKey, alias, updatedAt',
     });
     this.use(syncTracking);
   }

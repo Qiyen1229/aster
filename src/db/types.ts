@@ -113,6 +113,7 @@ export interface Transaction extends BaseRow {
   accountSource?: string;
   categorySource?: string;
   reconcileTargetId?: string;
+  decisionId?: string;
   split?: { myShareMinor: number; debtIds: string[] };
   excludeFromBudget?: boolean;
   excludeFromStats?: boolean;
@@ -427,6 +428,19 @@ export interface Reminder {
   body: string;
 }
 
+export type RuleStatus = 'candidate' | 'shadow' | 'active' | 'paused' | 'retired';
+
+export interface RuleStats {
+  shown: number;
+  autoBooked: number;
+  cleanAccepted: number;
+  editedCategory: number;
+  editedAccount: number;
+  editedAmount: number;
+  rejected: number;
+  lastMatchedAt?: number;
+}
+
 /** 自動分類規則（見 domain/rules.ts） */
 export interface CategoryRule extends BaseRow {
   keyword: string;
@@ -447,6 +461,24 @@ export interface CategoryRule extends BaseRow {
   enabled: boolean;
   /** 命中次數（統計用） */
   hits: number;
+  /** 規則生命週期狀態（舊規則未設時視為 'active'） */
+  status?: RuleStatus;
+  /** 規則效能統計 */
+  stats?: RuleStats;
+  /** 規則版本號 */
+  version?: number;
+  /** 狀態變更原因（例如自動啟用或自動暫停原因） */
+  statusReason?: string;
+  /** 來源限定（例如 'notify' | 'email' | 'applepay' | 'line'） */
+  source?: string;
+  /** 卡片／末四碼限定 */
+  card?: string;
+  /** 幣別限定 */
+  currency?: string;
+  /** 選填：自動指定專案 */
+  projectId?: string;
+  /** 選填：正規化後的商家別名 */
+  merchantAlias?: string;
 }
 
 export interface SettingRow {
@@ -505,5 +537,103 @@ export interface AppErrorLog {
   message: string;
   stack?: string;
   url?: string;
+}
+
+export type ConfidenceLevel = 'high' | 'medium' | 'low';
+
+export type AutoDecisionOutcome =
+  | 'auto_booked'
+  | 'review'
+  | 'skipped_non_tx'
+  | 'skipped_duplicate'
+  | 'skipped_ignored'
+  | 'failed'
+  | string;
+
+export interface AutoDecisionCandidate {
+  ruleId?: string;
+  categoryId?: string;
+  accountId?: string;
+  score?: number;
+  confidence?: ConfidenceLevel;
+  source?: string;
+  reason?: string;
+}
+
+/** 自動記帳決策日誌（僅保存本機，不跨裝置同步；不存完整原文，僅存雜湊與 <= 160 字元摘要） */
+export interface AutoDecision {
+  id: string;
+  ts: number;
+  source: string;
+  sourceEventId?: string;
+  txId?: string;
+  inboxItemId?: string;
+  outcome: AutoDecisionOutcome;
+  parserVersion?: string;
+  rawHash: string;
+  snippet: string;
+  matchedRuleId?: string;
+  confidence?: number;
+  confidenceLevel?: ConfidenceLevel;
+  candidates?: AutoDecisionCandidate[];
+  chosen?: {
+    type?: TxType;
+    categoryId?: string;
+    accountId?: string;
+    amountMinor?: number;
+    currency?: string;
+    date?: string;
+    merchant?: string;
+  };
+  duplicateOfTxId?: string;
+}
+
+export type FeedbackSignalType =
+  | 'confirm_clean'
+  | 'edit_field'
+  | 'skip_non_tx'
+  | 'skip_duplicate'
+  | 'skip_ignore'
+  | 'merge_duplicate'
+  | 'undo_delete'
+  | 'external_reconcile'
+  | 'external_einvoice';
+
+export type FeedbackField =
+  | 'category'
+  | 'account'
+  | 'amount'
+  | 'currency'
+  | 'date'
+  | 'merchant'
+  | 'note'
+  | 'type'
+  | string;
+
+/** 使用者或外部對帳回饋訊號（僅保存本機） */
+export interface FeedbackSignal {
+  id: string;
+  ts: number;
+  decisionId?: string;
+  ruleId?: string;
+  txId?: string;
+  signalType: FeedbackSignalType;
+  field?: FeedbackField;
+  weight: number;
+  beforeValue?: string;
+  afterValue?: string;
+  note?: string;
+}
+
+/** 商家別名對照（本機學習快取） */
+export interface MerchantAlias {
+  id: string;
+  rawKey: string;
+  alias: string;
+  categoryId?: string;
+  accountId?: string;
+  hits?: number;
+  createdAt: number;
+  updatedAt: number;
 }
 

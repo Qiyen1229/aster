@@ -3,12 +3,14 @@
  * 商家記憶索引快取 5 分鐘（記帳時每次打字都會查，不必每次讀整張表）；規則有變更時呼叫 invalidateAutocat()。
  */
 import { db, uid } from '@/db/schema';
-import type { Category, CategoryKind, CategoryRule } from '@/db/types';
+import type { Category, CategoryKind, CategoryRule, RuleStatus } from '@/db/types';
 import { addDays, todayKey } from '@/domain/period';
 import { matchCategory } from '@/domain/nlp-entities';
 import { mergeSuggestions, pinnedSuggestions, rankNoteSuggestions, type NoteSuggestion } from '@/domain/notesuggest';
 import { listPinned, pinNote } from '@/db/repo/pinned';
 import { buildMemory, matchRule, recallCategory, type MemoryIndex } from '@/domain/rules';
+import { normalizeMerchantAlias, type MerchantAliasOverride, type NormalizedMerchant } from '@/domain/merchantAlias';
+import { evaluateContextRules, type ContextInput, type ContextRule, type RankedCandidate } from '@/domain/contextRules';
 
 export interface CategorySuggestion {
   categoryId: string;
@@ -18,22 +20,107 @@ export interface CategorySuggestion {
   renameNote?: string;
 }
 
-let cache: { dbName: string; at: number; rules: CategoryRule[]; memory: MemoryIndex; accounts: MemoryIndex; cats: Category[] } | null = null;
+export interface AutocatContext {
+  source?: string;
+  card?: string;
+  currency?: string;
+  projectId?: string;
+  merchant?: string;
+}
+
+export interface DraftContextInput {
+  rawText: string;
+  merchant?: string;
+  kind?: 'expense' | 'income' | 'transfer';
+  amount?: number;
+  source?: string;
+  card?: string;
+  currency?: string;
+  projectId?: string;
+}
+
+export interface DraftContextEvaluation {
+  primary?: RankedCandidate;
+  secondCandidate?: RankedCandidate;
+  shadowPredictions: RankedCandidate[];
+  confidence: 'high' | 'medium' | 'low';
+  reasons: string[];
+  matchedRuleIds: string[];
+  merchantAlias: NormalizedMerchant;
+}
+
+export interface CreateScopedRuleInput {
+  keyword?: string;
+  match?: 'contains' | 'equals' | 'regex';
+  kind?: CategoryKind | 'any';
+  categoryId: string;
+  accountId?: string;
+  tagIds?: string[];
+  renameNote?: string;
+  source?: string;
+  card?: string;
+  currency?: string;
+  projectId?: string;
+  merchantAlias?: string;
+  minAmount?: number;
+  maxAmount?: number;
+  excludeKeyword?: string;
+  priority?: number;
+  /** 預設 'shadow'（觀察期），需明確傳入 'active' 才直接啟用 */
+  status?: RuleStatus;
+}
+
+let cache: {
+  dbName: string;
+  at: number;
+  rules: CategoryRule[];
+  memory: MemoryIndex;
+  accounts: MemoryIndex;
+  cats: Category[];
+  aliasOverrides: MerchantAliasOverride[];
+} | null = null;
 const TTL = 5 * 60 * 1000;
 
 export function invalidateAutocat(): void {
   cache = null;
 }
 
+function toContextRule(r: CategoryRule): ContextRule {
+  const status: ContextRule['status'] = r.enabled === false ? 'paused' : (r.status ?? 'active');
+  return {
+    id: r.id,
+    name: r.renameNote || r.merchantAlias || r.keyword || undefined,
+    status,
+    priority: r.priority,
+    source: r.source,
+    card: r.card,
+    merchantAlias: r.merchantAlias,
+    rawKeyword: r.keyword || undefined,
+    rawKeywordMatch: r.match,
+    excludeKeyword: r.excludeKeyword,
+    amountMin: r.minAmount,
+    amountMax: r.maxAmount,
+    currency: r.currency,
+    kind: r.kind,
+    projectId: r.projectId,
+    categoryId: r.categoryId || undefined,
+    accountId: r.accountId,
+    targetProjectId: r.projectId || undefined,
+    tagIds: r.tagIds,
+    noteTemplate: r.renameNote,
+  };
+}
+
 async function load() {
   const database = db;
   if (cache && cache.dbName === database.name && Date.now() - cache.at < TTL) return cache;
   const since = addDays(todayKey(), -365);
-  const [rules, txs, cats, accs] = await Promise.all([
+  const [rules, txs, cats, accs, aliases] = await Promise.all([
     db.rules.toArray(),
     db.transactions.where('date').aboveOrEqual(since).toArray(),
     db.categories.toArray(),
     db.accounts.toArray(),
+    db.merchant_aliases.toArray(),
   ]);
   const live = new Set(cats.filter((c) => !c.archived && !c.deletedAt).map((c) => c.id));
   const liveAcc = new Set(accs.filter((a) => !a.archived && !a.deletedAt).map((a) => a.id));
@@ -48,19 +135,73 @@ async function load() {
     dbName: database.name, at: Date.now(), rules: rules.filter((r) => !r.deletedAt && (!r.categoryId || live.has(r.categoryId))),
     memory: buildMemory(items), accounts: buildMemory(accItems),
     cats: cats.filter((c) => !c.archived && !c.deletedAt),
+    aliasOverrides: aliases.map((a) => ({ rawKey: a.rawKey, alias: a.alias })),
   };
   return cache;
 }
 
-/** 依備註／商家文字建議分類：規則優先（可用完整通知比對），其次是商家記憶，最後參考內建同義詞 */
-export async function suggestCategory(text: string, kind: CategoryKind, amount?: number, memoryText?: string): Promise<CategorySuggestion | null> {
-  if (!text.trim()) return null;
-  const { rules, memory, cats } = await load();
-  const memQuery = memoryText?.trim() || text;
-  const r = matchRule(rules, text, kind, amount);
+/** 多層情境規則評估（含正規化商家別名與觀察期規則預測），供收件匣與規則模擬器使用 */
+export async function evaluateDraftContext(input: DraftContextInput): Promise<DraftContextEvaluation> {
+  const { rules, aliasOverrides } = await load();
+  const merchantRaw = input.merchant?.trim() || input.rawText.trim();
+  const merchantAlias = normalizeMerchantAlias(merchantRaw, aliasOverrides);
+  const ctxInput: ContextInput = {
+    source: input.source,
+    card: input.card,
+    merchantAlias: merchantAlias.alias || undefined,
+    rawText: input.rawText,
+    amount: input.amount,
+    currency: input.currency,
+    kind: input.kind,
+    travelProjectId: input.projectId,
+  };
+  const evalResult = evaluateContextRules(ctxInput, rules.map(toContextRule));
+  return {
+    primary: evalResult.primary,
+    secondCandidate: evalResult.secondCandidate,
+    shadowPredictions: evalResult.shadowPredictions,
+    confidence: evalResult.confidence,
+    reasons: evalResult.reasons,
+    matchedRuleIds: evalResult.primary ? [evalResult.primary.rule.id] : [],
+    merchantAlias,
+  };
+}
+
+function isUnscopedRule(r: CategoryRule): boolean {
+  return !r.source && !r.card && !r.currency && r.projectId === undefined && !r.merchantAlias;
+}
+
+/** 依備註／商家文字建議分類：規則優先（支援多層情境與商家別名），其次是商家記憶，最後參考內建同義詞 */
+export async function suggestCategory(
+  text: string,
+  kind: CategoryKind,
+  amount?: number,
+  memoryText?: string,
+  context?: AutocatContext,
+): Promise<CategorySuggestion | null> {
+  if (!text.trim() && !context?.merchant?.trim()) return null;
+  const { rules, memory, cats, aliasOverrides } = await load();
+  const merchantNorm = normalizeMerchantAlias(context?.merchant?.trim() || memoryText?.trim() || text, aliasOverrides);
+  const memQuery = memoryText?.trim() || merchantNorm.alias || text;
+  const activeRules = rules.filter((r) => r.enabled !== false && (r.status ?? 'active') === 'active');
+  const ctxInput: ContextInput = {
+    source: context?.source,
+    card: context?.card,
+    merchantAlias: merchantNorm.alias || undefined,
+    rawText: text,
+    amount,
+    currency: context?.currency,
+    kind,
+    travelProjectId: context?.projectId,
+  };
+  const evalRes = evaluateContextRules(ctxInput, activeRules.map(toContextRule));
+  const r = (evalRes.primary ? activeRules.find((x) => x.id === evalRes.primary!.rule.id) : undefined)
+    ?? matchRule(activeRules.filter(isUnscopedRule), text, kind, amount);
   if (r) {
     const category = r.categoryId ? await db.categories.get(r.categoryId) : undefined;
-    const fallbackCat = (category && category.kind === kind && !category.archived && !category.deletedAt ? category.id : '') || recallCategory(memory, memQuery, kind) || '';
+    const recalled = recallCategory(memory, memQuery, kind)
+      ?? (merchantNorm.alias && merchantNorm.alias !== memQuery ? recallCategory(memory, merchantNorm.alias, kind) : undefined);
+    const fallbackCat = (category && category.kind === kind && !category.archived && !category.deletedAt ? category.id : '') || recalled || '';
     return {
       categoryId: fallbackCat,
       tagIds: r.tagIds ?? [],
@@ -69,27 +210,78 @@ export async function suggestCategory(text: string, kind: CategoryKind, amount?:
       renameNote: r.renameNote?.trim() || undefined,
     };
   }
-  const c = recallCategory(memory, memQuery, kind);
+  const c = recallCategory(memory, memQuery, kind)
+    ?? (merchantNorm.alias && merchantNorm.alias !== memQuery ? recallCategory(memory, merchantNorm.alias, kind) : undefined);
   if (c) return { categoryId: c, tagIds: [], source: 'memory' };
-  const builtin = matchCategory(memQuery, cats, kind) ?? (memQuery !== text ? matchCategory(text, cats, kind) : undefined);
+  const builtin = matchCategory(memQuery, cats, kind)
+    ?? (merchantNorm.alias ? matchCategory(merchantNorm.alias, cats, kind) : undefined)
+    ?? (memQuery !== text ? matchCategory(text, cats, kind) : undefined);
   return builtin ? { categoryId: builtin.category.id, tagIds: [], source: 'memory' } : null;
 }
 
 /**
  * 判斷帳戶：規則有指定帳戶 → 過去同一個商家最常用的帳戶 → 沒有則回傳 undefined（由呼叫端套用預設帳戶）
  */
-export async function suggestAccount(text: string, kind: CategoryKind = 'expense', amount?: number, memoryText?: string): Promise<{ accountId: string; source: 'rule' | 'memory'; ruleId?: string } | undefined> {
-  if (!text.trim()) return undefined;
-  const { rules, accounts } = await load();
-  const memQuery = memoryText?.trim() || text;
-  const r = matchRule(rules.filter((x) => x.accountId), text, kind, amount);
+export async function suggestAccount(
+  text: string,
+  kind: CategoryKind = 'expense',
+  amount?: number,
+  memoryText?: string,
+  context?: AutocatContext,
+): Promise<{ accountId: string; source: 'rule' | 'memory'; ruleId?: string } | undefined> {
+  if (!text.trim() && !context?.merchant?.trim()) return undefined;
+  const { rules, accounts, aliasOverrides } = await load();
+  const merchantNorm = normalizeMerchantAlias(context?.merchant?.trim() || memoryText?.trim() || text, aliasOverrides);
+  const memQuery = memoryText?.trim() || merchantNorm.alias || text;
+  const activeAccountRules = rules.filter((r) => r.enabled !== false && (r.status ?? 'active') === 'active' && !!r.accountId);
+  const ctxInput: ContextInput = {
+    source: context?.source,
+    card: context?.card,
+    merchantAlias: merchantNorm.alias || undefined,
+    rawText: text,
+    amount,
+    currency: context?.currency,
+    kind,
+    travelProjectId: context?.projectId,
+  };
+  const evalRes = evaluateContextRules(ctxInput, activeAccountRules.map(toContextRule));
+  const r = (evalRes.primary ? activeAccountRules.find((x) => x.id === evalRes.primary!.rule.id) : undefined)
+    ?? matchRule(activeAccountRules.filter(isUnscopedRule), text, kind, amount);
   if (r?.accountId) {
     const account = await db.accounts.get(r.accountId);
     if (account && !account.archived && !account.deletedAt && account.type !== 'loan') return { accountId: account.id, source: 'rule', ruleId: r.id };
   }
-  const a = recallCategory(accounts, memQuery, kind);
+  const a = recallCategory(accounts, memQuery, kind)
+    ?? (merchantNorm.alias && merchantNorm.alias !== memQuery ? recallCategory(accounts, merchantNorm.alias, kind) : undefined);
   const account = a ? await db.accounts.get(a) : undefined;
   return account && !account.archived && !account.deletedAt && account.type !== 'loan' ? { accountId: account.id, source: 'memory' } : undefined;
+}
+
+/** 一鍵建立情境規則（預設進入 'shadow' 觀察模式、version: 1） */
+export async function createScopedRule(input: CreateScopedRuleInput): Promise<CategoryRule> {
+  const status: RuleStatus = input.status ?? 'shadow';
+  return saveRule({
+    keyword: (input.keyword ?? input.merchantAlias ?? '').trim(),
+    match: input.match ?? 'contains',
+    kind: input.kind ?? 'expense',
+    categoryId: input.categoryId,
+    accountId: input.accountId,
+    tagIds: input.tagIds ?? [],
+    renameNote: input.renameNote,
+    source: input.source,
+    card: input.card,
+    currency: input.currency,
+    projectId: input.projectId,
+    merchantAlias: input.merchantAlias,
+    minAmount: input.minAmount,
+    maxAmount: input.maxAmount,
+    excludeKeyword: input.excludeKeyword,
+    priority: input.priority ?? 50,
+    enabled: true,
+    status,
+    version: 1,
+    statusReason: status === 'shadow' ? '使用者一鍵建立，進入觀察期' : undefined,
+  });
 }
 
 /** 規則被採用時累計命中次數（不影響排序，只給設定頁參考） */

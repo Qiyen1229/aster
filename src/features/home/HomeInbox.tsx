@@ -11,7 +11,9 @@ import { todayKey } from '@/domain/period';
 import { AUTH_ENABLED } from '@/stores/auth';
 import { snackUndo, useUI } from '@/stores/ui';
 import { useInboxCount } from '@/services/inboxCount';
+import type { FeedbackField } from '@/db/types';
 import type { InboxEntry } from '@/services/inbox';
+import { InboxDecisionMeta, ScopeRuleSheet, SplitSkipControl } from '@/features/inbox/InboxDecisionUI';
 import { Icon } from '@/ui/Icon';
 
 const SHOW = 3;
@@ -24,6 +26,8 @@ export default function HomeInbox() {
   const [entries, setEntries] = useState<InboxEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scopeEntry, setScopeEntry] = useState<InboxEntry | null>(null);
+  const [editedMap, setEditedMap] = useState<Record<number, Array<{ field: FeedbackField; beforeValue?: string; afterValue?: string }>>>({});
   const today = todayKey();
 
   const reload = useCallback(async () => {
@@ -51,11 +55,12 @@ export default function HomeInbox() {
   const book = async (e: InboxEntry) => {
     setBusy(true);
     try {
-      const [{ bookInboxEntries }, { deleteTransactions, deleteTransfers }] = await Promise.all([
+      const [{ confirmInboxEntry }, { deleteTransactions, deleteTransfers }] = await Promise.all([
         import('@/services/inbox'),
         import('@/db/repo/ledger'),
       ]);
-      const r = await bookInboxEntries([e]);
+      const editedFields = editedMap[e.item.id];
+      const r = await confirmInboxEntry(e, editedFields?.length ? { editedFields } : undefined);
       snackUndo(`已記下 ${r.count} 筆`, async () => {
         if (r.txIds.length) await deleteTransactions(r.txIds);
         if (r.transferIds.length) await deleteTransfers(r.transferIds);
@@ -68,17 +73,42 @@ export default function HomeInbox() {
     }
   };
 
-  const skip = async (e: InboxEntry) => {
+  const skip = async (e: InboxEntry, reason: 'non_tx' | 'duplicate' | 'ignore') => {
     setBusy(true);
     try {
-      const { ackInbox } = await import('@/services/inbox');
-      await ackInbox([e.item.id]);
+      const { skipInboxEntry } = await import('@/services/inbox');
+      await skipInboxEntry(e, reason);
       setEntries((l) => l?.filter((x) => x.item.id !== e.item.id) ?? null);
     } catch (err) {
       snack((err as Error).message);
     } finally {
       setBusy(false);
     }
+  };
+
+  const applySecondCandidate = (e: InboxEntry, cand: NonNullable<InboxEntry['secondCandidate']>) => {
+    const d = e.drafts[0];
+    if (!d) return;
+    const edits: Array<{ field: FeedbackField; beforeValue?: string; afterValue?: string }> = [];
+    if (cand.categoryId && cand.categoryId !== d.categoryId) {
+      edits.push({ field: 'category', beforeValue: d.categoryId, afterValue: cand.categoryId });
+    }
+    if (cand.accountId && cand.accountId !== d.accountId) {
+      edits.push({ field: 'account', beforeValue: d.accountId, afterValue: cand.accountId });
+    }
+    if (edits.length) {
+      setEditedMap((prev) => ({ ...prev, [e.item.id]: edits }));
+    }
+    setEntries((prev) => prev?.map((x) => (
+      x.item.id !== e.item.id ? x : {
+        ...x,
+        drafts: x.drafts.map((dr, idx) => (idx === 0 ? {
+          ...dr,
+          ...(cand.categoryId ? { categoryId: cand.categoryId } : {}),
+          ...(cand.accountId ? { accountId: cand.accountId } : {}),
+        } : dr)),
+      }
+    )) ?? null);
   };
 
   const edit = (e: InboxEntry) => {
@@ -131,18 +161,25 @@ export default function HomeInbox() {
                     {d ? `${shortDate(d.date, today)} · ${acc?.name ?? '?'}` : '看不懂金額，請點「入帳」或「編輯」補填'}
                     {e.review ? ` · ⚠️ ${e.review}` : e.dup ? ' · ⚠️ 可能重複' : ''}
                   </span>
+                  <InboxDecisionMeta
+                    entry={e}
+                    compact
+                    onApplySecondCandidate={(cand) => applySecondCandidate(e, cand)}
+                  />
                 </span>
                 {d && <span className={`num ${d.kind === 'income' ? 'pos' : 'neg'}`}>{formatMoney(toMinor(d.amount, cur), cur)}</span>}
                 <span className="inbox-actions">
                   <button className="pill accent-pill" disabled={busy} onClick={() => (d ? void book(e) : edit(e))}>入帳</button>
+                  {d && <button type="button" className="pill" disabled={busy} onClick={() => setScopeEntry(e)}>以後這類都這樣</button>}
                   <button className="pill" disabled={busy} onClick={() => edit(e)}>編輯</button>
-                  <button className="pill" disabled={busy} onClick={() => void skip(e)}>略過</button>
+                  <SplitSkipControl disabled={busy} onSkip={(reason) => skip(e, reason)} />
                 </span>
               </div>
             );
           })}
         </div>
       )}
+      <ScopeRuleSheet entry={scopeEntry} onClose={() => setScopeEntry(null)} onCreated={() => void reload()} />
     </section>
   );
 }

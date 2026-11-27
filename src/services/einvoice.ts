@@ -242,6 +242,7 @@ export async function importInvoices(list: Invoice[], opts: { defaultAccountId: 
 
   if (!prepared.length) return res;
 
+  const matchedWithDecision: Array<{ txId: string; decisionId: string }> = [];
   await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.attachments, db.durables, db.debts, db.stock_trades], async () => {
     const seenInBatch = new Set<string>();
     const used = new Set<string>();
@@ -278,6 +279,9 @@ export async function importInvoices(list: Invoice[], opts: { defaultAccountId: 
           note: hit.note || p.note,
           updatedAt: Date.now(),
         });
+        if (hit.decisionId) {
+          matchedWithDecision.push({ txId: hit.id, decisionId: hit.decisionId });
+        }
         seenInBatch.add(p.normNo);
         res.matched++;
         continue;
@@ -298,5 +302,20 @@ export async function importInvoices(list: Invoice[], opts: { defaultAccountId: 
       res.created++;
     }
   });
+  if (matchedWithDecision.length > 0) {
+    void import('./decisionLog')
+      .then(({ recordFeedback }) =>
+        Promise.all(
+          matchedWithDecision.map((m) =>
+            recordFeedback({
+              decisionId: m.decisionId,
+              txId: m.txId,
+              signalType: 'external_einvoice',
+            }).catch(() => undefined),
+          ),
+        ),
+      )
+      .catch(() => undefined);
+  }
   return res;
 }

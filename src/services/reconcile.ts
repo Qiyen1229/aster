@@ -9,6 +9,7 @@ import { addDays } from '@/domain/period';
 import { convertMinor, toMinor } from '@/domain/money';
 import { getRate } from './fx';
 import { suggestCategory } from './autocat';
+import { recordFeedback } from './decisionLog';
 import type { ParsedRow } from './importer';
 import type { StatementEntry } from './ai';
 import type { Account, Category } from '@/db/types';
@@ -126,8 +127,28 @@ export async function suggestForMissing(rows: StmtRow[]): Promise<Map<string, st
 export interface Fixes {
   missing: { row: StmtRow; categoryId: string }[];
   variances: Match[];
+  /** 已吻合的帳目（可選；有 decisionId 時會記錄 external_reconcile 回饋訊號） */
+  matched?: Match[];
   /** 補齊後要把帳戶餘額校正到這個數字（最小單位；負債帳戶為負數）。null＝不校正 */
   adjustTo: number | null;
+}
+
+/** 針對對帳吻合的帳目補送 external_reconcile 回饋訊號（最佳努力、不阻斷流程） */
+export async function confirmReconcileMatches(matches: Match[]): Promise<void> {
+  if (!matches.length) return;
+  const txIds = [...new Set(matches.map((m) => m.ledger.id))];
+  const txs = await db.transactions.bulkGet(txIds);
+  await Promise.all(
+    txs.map((tx) =>
+      tx?.decisionId
+        ? recordFeedback({
+            decisionId: tx.decisionId,
+            txId: tx.id,
+            signalType: 'external_reconcile',
+          }).catch(() => undefined)
+        : Promise.resolve(),
+    ),
+  );
 }
 
 /**
@@ -177,5 +198,9 @@ export async function applyFixes(account: Account, f: Fixes): Promise<string[]> 
       }
     }
   });
+  const reconcileTargets = [...(f.matched ?? []), ...f.variances];
+  if (reconcileTargets.length > 0) {
+    void confirmReconcileMatches(reconcileTargets).catch(() => undefined);
+  }
   return ids;
 }

@@ -17,11 +17,14 @@ import { detectCurrency } from '@/domain/nlp-amount';
 import { findDuplicate, type DupCandidate } from '@/domain/dedupe';
 import { formatMoney, toMinor } from '@/domain/money';
 import { addDays, toDateKey, todayKey } from '@/domain/period';
+import { detectTemplateDrift, parseSourceTemplate, SOURCE_TEMPLATES, TEMPLATE_VERSION, type ParsedSourceTx, type SourceId, type TemplateParseRecord } from '@/domain/sourceTemplates';
 import { db } from '@/db/schema';
+import type { AutoDecisionCandidate, ConfidenceLevel, FeedbackField } from '@/db/types';
 import { useSettings } from '@/stores/settings';
 import { notifyUser } from './notify';
 import { AUTH_ENABLED, useAuth } from '@/stores/auth';
-import { suggestAccount, learnImplicitMapping } from './autocat';
+import { evaluateDraftContext, suggestAccount, learnImplicitMapping } from './autocat';
+import { attachDecisionToTx, recordDecision, recordFeedback } from './decisionLog';
 import { getRate } from './fx';
 import { bookDrafts, fallbackAccount, parseContext, resolveDraft, type ResolvedDraft } from './quickentry';
 
@@ -62,6 +65,24 @@ export interface InboxEntry {
   review?: string;
   /** 多金額／點數折抵／外幣未換算，需人工確認或由 AI 救援 */
   ambiguous?: boolean;
+  /** 本機決策日誌 ID */
+  decisionId?: string;
+  /** 決策信心等級 */
+  confidence?: ConfidenceLevel;
+  /** 決策理由清單 */
+  decisionReasons?: string[];
+  /** 第二順位候選規則 */
+  secondCandidate?: { label: string; categoryId?: string; accountId?: string; ruleId?: string };
+  /** 觀察期（shadow）規則預測結果（只預覽不自動入帳） */
+  shadowMatch?: {
+    ruleId: string;
+    categoryId?: string;
+    accountId?: string;
+    renameNote?: string;
+    label: string;
+  };
+  /** 來源模板飄移警告 */
+  driftWarning?: string;
 }
 
 /** LINE 裡視為「官方帳號」的發送者：只有這些名稱出現在訊息裡、且像交易通知，才當作消費通知 */
@@ -473,12 +494,29 @@ function detectTopologyTransfer(
   return null;
 }
 
+function inferHintSource(item: Pick<InboxRaw, 'source' | 'card'>): SourceId | undefined {
+  if (item.source === 'applepay') return 'applepay';
+  if (item.card) {
+    const hit = SOURCE_TEMPLATES.find((t) => t.detectRe.test(item.card));
+    if (hit) return hit.id;
+  }
+  return undefined;
+}
+
 /** 把一則收件匣項目解析成帳目草稿 */
 export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): Promise<ResolvedDraft[]> {
   const { cardMap, defaultAccountId } = useSettings.getState().inbox;
   const date = itemDate(it, ctx.today);
+  const refYear = Number(date.slice(0, 4)) || undefined;
+  const tpl = !it.amount && it.text
+    ? parseSourceTemplate(it.text, {
+        hintSource: inferHintSource(it),
+        referenceYear: refYear,
+      })
+    : undefined;
+  const effectiveCard = it.card || tpl?.card || '';
   const base = defaultAccountId && ctx.accounts.some((a) => a.id === defaultAccountId) ? defaultAccountId : fallback;
-  const byCard = cardAccount(it.card, ctx, cardMap);
+  const byCard = cardAccount(effectiveCard, ctx, cardMap);
   const itemCurrency = it.currency ? it.currency.trim().toUpperCase() : undefined;
   let drafts: DraftEntry[];
   if (it.amount) {
@@ -495,17 +533,25 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
     }];
   } else {
     drafts = parseEntries(it.text, { ...ctx, today: date });
-    if (!drafts.length) return [];
-    // 通知／簡訊／Email：多個金額時優先取真實交易金額（避開餘額、額度、手續費），並保留轉出／拓樸轉帳優先於入帳
-    if (it.source === 'notify' || it.source === 'sms' || it.source === 'email') {
-      const merchant = it.merchant || noticeMerchant(it.text);
+    if (!drafts.length && !(tpl?.matched && tpl.txAmount && tpl.txAmount > 0)) return [];
+    // 通知／簡訊／Email：優先採信第一波來源模板，其次取真實交易金額（避開餘額、額度、手續費），並保留轉出／拓樸轉帳優先於入帳
+    if (it.source === 'notify' || it.source === 'sms' || it.source === 'email' || (tpl?.matched && tpl.txAmount && tpl.txAmount > 0)) {
+      const merchant = it.merchant || tpl?.merchant || noticeMerchant(it.text);
       const isBalanceOrFee = (d: DraftEntry) => /(?:餘額|結餘|可用額度|信用額度|手續費|(?:帳號|卡號)?(?:後|末)四碼)/.test(d.raw);
       const prefAmt = extractPreferredNoticeAmount(it.text, itemCurrency);
       const primary = drafts.find((d) => !isBalanceOrFee(d) && d.amount > 0)
         ?? drafts.find((d) => d.amount > 0)
         ?? drafts[0];
-      const chosenAmount = prefAmt.amount ?? primary.amount;
-      const chosenCurrency = prefAmt.currency ?? primary.currency ?? itemCurrency;
+      const chosenAmount = (tpl?.matched && tpl.txAmount && tpl.txAmount > 0 ? tpl.txAmount : undefined)
+        ?? prefAmt.amount
+        ?? primary?.amount
+        ?? 0;
+      if (!(chosenAmount > 0)) return [];
+      const chosenCurrency = (tpl?.matched ? tpl.txCurrency : undefined)
+        ?? prefAmt.currency
+        ?? primary?.currency
+        ?? itemCurrency;
+      const chosenDate = (tpl?.matched && tpl.txDate ? tpl.txDate : undefined) ?? primary?.date ?? date;
       // 排除「回饋將於次月入帳」「退款須知」等行銷／說明文字，避免把消費通知誤判為收入
       const strippedForIncome = it.text
         .replace(/(?:點數|回饋|紅利|LINE\s*POINTS)[^。\n]{0,16}入帳/gi, '')
@@ -513,8 +559,8 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
       // 優先排除出金語意（「您的轉帳已入帳至對方帳戶」「轉出」「扣款」「自動加值」）避免被「入帳」字眼反判為收入
       const isOutflow = /轉出|匯出|扣款|扣繳|自動加值|儲值|提款|提領|刷卡|消費|付款|已入帳至對方|入帳至對方|轉入他行/.test(strippedForIncome);
       const isExplicitIncome = /退款|退貨|退刷|跨行轉入|薪資|薪水|發薪/.test(strippedForIncome)
-        || (!isOutflow && (/入帳|進帳|存入|轉入/.test(strippedForIncome) || primary.kind === 'income'));
-      const fallbackNote = primary.note
+        || (!isOutflow && (/入帳|進帳|存入|轉入/.test(strippedForIncome) || primary?.kind === 'income'));
+      const fallbackNote = (primary?.note ?? it.text)
         .replace(/【[^】]{1,24}】/g, ' ')
         .replace(/(?:消費|刷卡|交易|付款|扣款|支付)通知\s*[:：]?/g, ' ')
         .replace(/(?:實際款項|交易明細).*$/g, ' ')
@@ -523,24 +569,36 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
         .replace(/\s+/g, ' ')
         .trim()
         .slice(0, 40);
-      const topo = detectTopologyTransfer(it.text, ctx.accounts, byCard ?? primary.accountId);
-      const resolvedKind = (primary.kind === 'transfer' && primary.toAccountId) || topo
-        ? 'transfer'
-        : isExplicitIncome
-          ? 'income'
-          : 'expense';
+      const topo = detectTopologyTransfer(it.text, ctx.accounts, byCard ?? primary?.accountId);
+      let resolvedKind: DraftEntry['kind'];
+      if ((primary?.kind === 'transfer' && primary.toAccountId) || topo) {
+        resolvedKind = 'transfer';
+      } else if (tpl?.matched && tpl.refundStatus === 'success') {
+        resolvedKind = 'income';
+      } else if (tpl?.matched && (tpl.refundStatus === 'pending' || tpl.refundStatus === 'cancelled')) {
+        resolvedKind = 'income';
+      } else if (isOutflow) {
+        resolvedKind = 'expense';
+      } else if (tpl?.matched && tpl.kind && tpl.kind !== 'transfer') {
+        resolvedKind = tpl.kind;
+      } else {
+        resolvedKind = isExplicitIncome ? 'income' : 'expense';
+      }
       drafts = [{
-        ...primary,
+        ...(primary ?? { date: chosenDate, dateGiven: true, note: fallbackNote, raw: it.text, kind: resolvedKind, amount: chosenAmount }),
+        date: chosenDate,
+        dateGiven: true,
         amount: chosenAmount,
         currency: chosenCurrency,
         note: merchant || fallbackNote,
         kind: resolvedKind,
-        ...(topo ? { accountId: topo.fromId ?? primary.accountId, toAccountId: topo.toId } : {}),
+        ...(topo ? { accountId: topo.fromId ?? primary?.accountId, toAccountId: topo.toId } : {}),
       }];
     }
   }
   const out: ResolvedDraft[] = [];
   const isNotice = it.source === 'notify' || it.source === 'sms' || it.source === 'email';
+  const contextSource = tpl && tpl.templateId !== 'unknown' ? tpl.templateId : it.source;
   for (const d of drafts) {
     let targetAcc: string | undefined;
     if (it.source === 'notify') {
@@ -548,20 +606,27 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
       const textAccs = findAccounts(it.text, ctx.accounts);
       const nonAppAccs = textAccs.filter((a) => {
         const accObj = ctx.accounts.find((acc) => acc.id === a.id);
-        return accObj && accObj.name.toLowerCase() !== (it.card || '').toLowerCase();
+        return accObj && accObj.name.toLowerCase() !== (effectiveCard || '').toLowerCase();
       });
       const bankAcc = nonAppAccs.find((a) => ctx.accounts.find((acc) => acc.id === a.id)?.type !== 'cash') ?? nonAppAccs[0];
       targetAcc = bankAcc?.id ?? byCard ?? d.accountId;
     } else if (it.source === 'email') {
-      const emailAccs = findAccounts(`${it.card ?? ''}\n${it.text ?? ''}`, ctx.accounts);
+      const emailAccs = findAccounts(`${effectiveCard}\n${it.text ?? ''}`, ctx.accounts);
       const bankAcc = emailAccs.find((a) => ctx.accounts.find((acc) => acc.id === a.id)?.type !== 'cash') ?? emailAccs[0];
       targetAcc = byCard ?? bankAcc?.id ?? d.accountId;
     } else {
       targetAcc = byCard ?? d.accountId;
     }
-    const cleanMerchant = (it.merchant || d.note || '').trim();
-    const matchText = [d.note, it.merchant, it.text].filter(Boolean).join('\n');
+    const cleanMerchant = (it.merchant || tpl?.merchant || d.note || '').trim();
+    const matchText = [d.note, it.merchant, tpl?.merchant, it.text].filter(Boolean).join('\n');
     const memoryText = cleanMerchant || d.note;
+    const autocatCtx = {
+      source: contextSource,
+      card: effectiveCard || undefined,
+      currency: d.currency ?? itemCurrency,
+      merchant: cleanMerchant || undefined,
+      projectId: useSettings.getState().travelModeProjectId || undefined,
+    };
     // 通知／簡訊／Email 容易夾帶銀行公告或行銷字眼（如「免管理費」、「帳單管理」），分類只採信乾淨商家／備註，不讓內文雜訊劫持
     const dKind = d.kind === 'income' ? 'income' : 'expense';
     const cleanCategoryId = isNotice && d.kind !== 'transfer'
@@ -569,11 +634,11 @@ export async function draftsFromItem(it: InboxRaw, ctx: Ctx, fallback: string): 
       : d.categoryId;
     // 使用者在自動分類規則明確「指定帳戶」時，優先於通知文字／卡片推測
     const ruleAcc = d.kind !== 'transfer' && matchText
-      ? await suggestAccount(matchText, dKind, d.amount, memoryText).catch(() => undefined)
+      ? await suggestAccount(matchText, dKind, d.amount, memoryText, autocatCtx).catch(() => undefined)
       : undefined;
     const explicitRuleAcc = ruleAcc?.source === 'rule' && ctx.accounts.some((a) => a.id === ruleAcc.accountId) ? ruleAcc.accountId : undefined;
     const preferredAcc = explicitRuleAcc ?? targetAcc;
-    const r = await resolveDraft({ ...d, currency: d.currency ?? itemCurrency, categoryId: cleanCategoryId, accountId: preferredAcc }, base, matchText, memoryText);
+    const r = await resolveDraft({ ...d, currency: d.currency ?? itemCurrency, categoryId: cleanCategoryId, accountId: preferredAcc }, base, matchText, memoryText, autocatCtx);
     out.push(
       explicitRuleAcc
         ? { ...r, accountId: explicitRuleAcc, accountSource: 'rule', ruleIds: [...new Set([...(r.ruleIds ?? []), ...(ruleAcc?.ruleId ? [ruleAcc.ruleId] : [])])] }
@@ -701,17 +766,208 @@ async function checkInboxFxRates(entries: InboxEntry[]): Promise<void> {
   }
 }
 
+const TEMPLATE_HISTORY_KEY = 'inbox.templateHistory';
+type StoredTemplateRecord = TemplateParseRecord & { itemId?: number };
+
+async function analyzeNoticeTemplateAndDrift(
+  item: InboxRaw,
+  today: string,
+  readOnly: boolean,
+): Promise<{ tpl?: ParsedSourceTx; driftWarning?: string; refundReview?: string }> {
+  if (!item.text || (item.source === 'applepay' && item.amount)) return {};
+  const date = itemDate(item, today);
+  const refYear = Number(date.slice(0, 4)) || undefined;
+  const tpl = parseSourceTemplate(item.text, {
+    hintSource: inferHintSource(item),
+    referenceYear: refYear,
+  });
+
+  let refundReview: string | undefined;
+  if (tpl.refundStatus === 'pending') {
+    refundReview = '退款處理中，尚未入帳，請確認後再記帳';
+  } else if (tpl.refundStatus === 'cancelled') {
+    refundReview = '退款已取消，請確認是否需要記帳';
+  }
+
+  let driftWarning: string | undefined;
+  if (tpl.templateId !== 'unknown') {
+    const isOtpOrNonTx = !tpl.matched && (/驗證碼|動態密碼|\bOTP\b/i.test(item.text) || !TXN_WORDS.test(item.text));
+    if (!isOtpOrNonTx) {
+      const saved = await db.meta.get(TEMPLATE_HISTORY_KEY).catch(() => undefined);
+      const history: StoredTemplateRecord[] = Array.isArray(saved?.value) ? [...saved.value] : [];
+      if (!readOnly && item.id > 0 && !history.some((h) => h.itemId === item.id && h.templateId === tpl.templateId)) {
+        history.push({ templateId: tpl.templateId, matched: tpl.matched, ts: Date.now(), itemId: item.id });
+        const trimmed = history.slice(-60);
+        await db.meta.put({ key: TEMPLATE_HISTORY_KEY, value: trimmed }).catch(() => undefined);
+      }
+      const drift = detectTemplateDrift(history, { templateId: tpl.templateId });
+      if (drift.drifted) {
+        driftWarning = drift.reason;
+      }
+    }
+  }
+
+  return { tpl, driftWarning, refundReview };
+}
+
+async function attachDecisionContext(
+  entries: InboxEntry[],
+  ctx: Ctx,
+  opts: { persist: boolean },
+): Promise<void> {
+  for (const e of entries) {
+    const d = e.drafts[0];
+    const rawText = [e.item.merchant, e.item.text].filter(Boolean).join('\n');
+    const tpl = rawText
+      ? parseSourceTemplate(rawText, { hintSource: inferHintSource(e.item) })
+      : undefined;
+    const evalSource = tpl && tpl.templateId !== 'unknown' ? tpl.templateId : e.item.source;
+    const evalCard = e.item.card || tpl?.card || undefined;
+    const evalRes = await evaluateDraftContext({
+      rawText,
+      merchant: e.item.merchant || tpl?.merchant || d?.note,
+      kind: d?.kind,
+      amount: d?.amount,
+      source: evalSource,
+      card: evalCard,
+      currency: d?.currency ?? e.item.currency ?? undefined,
+      projectId: d?.projectId,
+    }).catch(() => null);
+
+    if (evalRes) {
+      e.confidence = evalRes.confidence;
+      e.decisionReasons = evalRes.reasons;
+      if (evalRes.secondCandidate) {
+        const sc = evalRes.secondCandidate.rule;
+        const catName = sc.categoryId ? ctx.categories.find((c) => c.id === sc.categoryId)?.name : undefined;
+        const accName = sc.accountId ? ctx.accounts.find((a) => a.id === sc.accountId)?.name : undefined;
+        e.secondCandidate = {
+          label: sc.noteTemplate || catName || accName || sc.name || sc.rawKeyword || sc.merchantAlias || '備選建議',
+          categoryId: sc.categoryId,
+          accountId: sc.accountId,
+          ruleId: sc.id,
+        };
+      }
+      if (evalRes.shadowPredictions.length > 0) {
+        const sp = evalRes.shadowPredictions[0].rule;
+        const catName = sp.categoryId ? ctx.categories.find((c) => c.id === sp.categoryId)?.name : undefined;
+        const accName = sp.accountId ? ctx.accounts.find((a) => a.id === sp.accountId)?.name : undefined;
+        e.shadowMatch = {
+          ruleId: sp.id,
+          categoryId: sp.categoryId,
+          accountId: sp.accountId,
+          renameNote: sp.noteTemplate,
+          label: sp.noteTemplate || catName || accName || sp.name || sp.rawKeyword || sp.merchantAlias || '觀察期規則',
+        };
+        if (!evalRes.primary) {
+          e.review = e.review || '觀察期規則建議，請確認後入帳';
+        }
+      }
+    }
+
+    if (opts.persist) {
+      const candidates: AutoDecisionCandidate[] = [];
+      if (evalRes?.primary) {
+        candidates.push({
+          ruleId: evalRes.primary.rule.id,
+          categoryId: evalRes.primary.rule.categoryId,
+          accountId: evalRes.primary.rule.accountId,
+          score: evalRes.primary.score,
+          confidence: evalRes.confidence,
+          source: 'primary',
+          reason: evalRes.primary.reasons.join(', '),
+        });
+      }
+      if (evalRes?.secondCandidate) {
+        candidates.push({
+          ruleId: evalRes.secondCandidate.rule.id,
+          categoryId: evalRes.secondCandidate.rule.categoryId,
+          accountId: evalRes.secondCandidate.rule.accountId,
+          score: evalRes.secondCandidate.score,
+          source: 'second_candidate',
+          reason: evalRes.secondCandidate.reasons.join(', '),
+        });
+      }
+      for (const sp of evalRes?.shadowPredictions ?? []) {
+        candidates.push({
+          ruleId: sp.rule.id,
+          categoryId: sp.rule.categoryId,
+          accountId: sp.rule.accountId,
+          score: sp.score,
+          source: 'shadow',
+          reason: sp.reasons.join(', '),
+        });
+      }
+
+      const existingDec = e.item.id > 0
+        ? (await db.auto_decisions.where('inboxItemId').equals(String(e.item.id)).toArray().catch(() => [])).find((x) => !x.txId)
+        : undefined;
+
+      const outcome = e.dup?.level === 'strong' ? 'skipped_duplicate' : 'review';
+      const dec = await recordDecision({
+        id: existingDec?.id,
+        source: evalSource,
+        sourceEventId: e.item.source_event_id ?? undefined,
+        inboxItemId: String(e.item.id),
+        outcome,
+        parserVersion: tpl && tpl.templateId !== 'unknown' ? `${tpl.templateId}@${tpl.templateVersion}` : TEMPLATE_VERSION,
+        rawText,
+        matchedRuleId: evalRes?.primary?.rule.id,
+        confidence: evalRes?.primary ? Math.min(1, evalRes.primary.score / 100) : 0.3,
+        confidenceLevel: evalRes?.confidence ?? 'low',
+        candidates: candidates.length ? candidates : undefined,
+        chosen: d ? {
+          type: d.kind === 'transfer' ? undefined : d.kind,
+          categoryId: d.categoryId,
+          accountId: d.accountId,
+          amountMinor: d.amount ? toMinor(d.amount, d.currency ?? 'TWD') : undefined,
+          currency: d.currency ?? undefined,
+          date: d.date,
+          merchant: e.item.merchant || d.note,
+        } : undefined,
+        duplicateOfTxId: e.dup?.txId,
+      }).catch(() => null);
+
+      if (dec) {
+        e.decisionId = dec.id;
+        for (const draft of e.drafts) {
+          draft.decisionId = dec.id;
+        }
+      }
+    }
+  }
+}
+
 export async function loadInbox(): Promise<InboxEntry[]> {
   const [items, ctx, fallback] = await Promise.all([fetchInbox(), parseContext(), fallbackAccount()]);
   const out: InboxEntry[] = [];
   const dropped: InboxEntry[] = [];
   const { whitelist = [], blacklist = [] } = useSettings.getState().inbox;
   for (const item of items) {
+    const { driftWarning, refundReview } = await analyzeNoticeTemplateAndDrift(item, ctx.today, false);
     const drafts = await draftsFromItem(item, ctx, fallback).catch(() => []);
     const v = judgeNotice(item, drafts.length > 0, whitelist, blacklist);
-    if (v.trust === 'drop') { dropped.push({ item, drafts: [], review: '已忽略，但通知尚未清除，請重新整理或略過' }); continue; }
+    if (v.trust === 'drop') {
+      dropped.push({ item, drafts: [], review: '已忽略，但通知尚未清除，請重新整理或略過' });
+      void recordDecision({
+        source: item.source,
+        sourceEventId: item.source_event_id ?? undefined,
+        inboxItemId: String(item.id),
+        outcome: 'skipped_non_tx',
+        parserVersion: TEMPLATE_VERSION,
+        rawText: [item.merchant, item.text].filter(Boolean).join('\n'),
+      }).catch(() => undefined);
+      continue;
+    }
     const ambiguous = isNoticeAmbiguous(item);
-    out.push({ item, drafts, ...(ambiguous ? { ambiguous: true } : {}), ...(v.trust === 'review' ? { review: v.reason } : {}) });
+    const review = (v.trust === 'review' ? v.reason : undefined) || refundReview || driftWarning;
+    out.push({
+      item,
+      drafts,
+      ...(ambiguous ? { ambiguous: true } : {}),
+      ...(review ? { review } : {}),
+      ...(driftWarning ? { driftWarning } : {}),
+    });
   }
   if (dropped.length) {
     try { await ackInbox(dropped.map((e) => e.item.id)); }
@@ -719,6 +975,7 @@ export async function loadInbox(): Promise<InboxEntry[]> {
   }
   await checkInboxFxRates(out).catch(() => undefined);
   await markDuplicates(out, ctx.today).catch(() => undefined);
+  await attachDecisionContext(out, ctx, { persist: true }).catch(() => undefined);
   return out;
 }
 
@@ -735,15 +992,24 @@ export async function loadInboxReadOnly(): Promise<InboxEntry[]> {
   const [items, ctx, fallback] = await Promise.all([fetchInbox(), parseContext(), fallbackAccount()]);
   const out: InboxEntry[] = [];
   for (const item of items) {
+    const { driftWarning, refundReview } = await analyzeNoticeTemplateAndDrift(item, ctx.today, true);
     const drafts = await draftsFromItem(item, ctx, fallback).catch(() => []);
     const cfg = useSettings.getState().inbox;
     const v = judgeNotice(item, drafts.length > 0, cfg.whitelist ?? [], cfg.blacklist ?? []);
     if (v.trust === 'drop') continue;
     const ambiguous = isNoticeAmbiguous(item);
-    out.push({ item, drafts, ...(ambiguous ? { ambiguous: true } : {}), ...(v.trust === 'review' ? { review: v.reason } : {}) });
+    const review = (v.trust === 'review' ? v.reason : undefined) || refundReview || driftWarning;
+    out.push({
+      item,
+      drafts,
+      ...(ambiguous ? { ambiguous: true } : {}),
+      ...(review ? { review } : {}),
+      ...(driftWarning ? { driftWarning } : {}),
+    });
   }
   await checkInboxFxRates(out).catch(() => undefined);
   await markDuplicates(out, ctx.today).catch(() => undefined);
+  await attachDecisionContext(out, ctx, { persist: false }).catch(() => undefined);
   roCache = { at: Date.now(), dbName: db.name, policy, entries: structuredClone(out) };
   return out;
 }
@@ -773,6 +1039,14 @@ export async function mergeDuplicate(e: InboxEntry): Promise<boolean> {
   }
   await ackInbox([e.item.id]);
   learnCard(e.item.card, t.accountId);
+  if (e.decisionId) {
+    await db.auto_decisions.update(e.decisionId, { outcome: 'skipped_duplicate', duplicateOfTxId: t.id }).catch(() => undefined);
+  }
+  await recordFeedback({
+    decisionId: e.decisionId,
+    txId: t.id,
+    signalType: 'merge_duplicate',
+  }).catch(() => undefined);
   invalidateInboxReadOnly();
   return true;
 }
@@ -789,7 +1063,10 @@ export function learnCard(card: string | undefined, accountId: string | undefine
 }
 
 /** 一次記下多則；先寫入本機資料庫，入帳成功後才向伺服器認領刪除（避免入帳中途失敗導致伺服器資料永久遺失）。skipDuplicates：很可能重複的留在收件匣等你確認 */
-export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplicates?: boolean; travelProjectId?: string } = {}) {
+export async function bookInboxEntries(
+  entries: InboxEntry[],
+  opts: { skipDuplicates?: boolean; travelProjectId?: string; auto?: boolean; skipFeedback?: boolean } = {},
+) {
   const txIds: string[] = [], transferIds: string[] = [];
   const bookedItemIds: number[] = [], clearedItemIds: number[] = [], failedItemIds: number[] = [];
   let alreadyBooked = 0;
@@ -803,12 +1080,28 @@ export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplic
       ]);
       const existing = receipt || await db.transactions.get(`${sourceId}-0`) || await db.transfers.get(`${sourceId}-0`);
       const cfg = useSettings.getState().inbox;
-      if (!existing && (matchesBlacklist(e.item, cfg.blacklist ?? []) || !e.drafts.length || (opts.skipDuplicates && (e.dup?.level === 'strong' || e.review || e.ambiguous)))) continue;
-      const res = existing ? { txIds: [], transferIds: [] } : await bookDrafts(e.drafts, { sourceId, travelProjectId: opts.travelProjectId });
+      const hasActiveRuleMatch = e.drafts.some((d) => d.categorySource === 'rule' || d.accountSource === 'rule');
+      const blockedByAutoGuard = Boolean(opts.auto && (e.review || e.ambiguous || (e.shadowMatch && !hasActiveRuleMatch)));
+      if (!existing && (matchesBlacklist(e.item, cfg.blacklist ?? []) || !e.drafts.length || blockedByAutoGuard || (opts.skipDuplicates && (e.dup?.level === 'strong' || e.review || e.ambiguous)))) continue;
+      const draftsToBook = e.decisionId ? e.drafts.map((d) => ({ ...d, decisionId: d.decisionId ?? e.decisionId })) : e.drafts;
+      const res = existing ? { txIds: [], transferIds: [] } : await bookDrafts(draftsToBook, { sourceId, travelProjectId: opts.travelProjectId });
       txIds.push(...res.txIds);
       transferIds.push(...res.transferIds);
       if (!res.txIds.length && !res.transferIds.length) alreadyBooked++;
       if (!existing || !ackedReceipt) bookedItemIds.push(e.item.id);
+      if (e.decisionId && res.txIds.length > 0) {
+        await attachDecisionToTx(e.decisionId, res.txIds[0]).catch(() => undefined);
+        if (opts.auto) {
+          await db.auto_decisions.update(e.decisionId, { outcome: 'auto_booked' }).catch(() => undefined);
+        } else if (!opts.skipFeedback) {
+          await recordFeedback({
+            decisionId: e.decisionId,
+            ruleId: e.shadowMatch?.ruleId,
+            txId: res.txIds[0],
+            signalType: 'confirm_clean',
+          }).catch(() => undefined);
+        }
+      }
       const first = e.drafts[0];
       if (first && first.accountSource !== 'default' && !(e.item.source === 'notify' && (isLineChat(e.item.card) || isPaymentRelayCard(e.item.card)))) learnCard(e.item.card, first.accountId);
     } catch (err) {
@@ -835,6 +1128,81 @@ export async function bookInboxEntries(entries: InboxEntry[], opts: { skipDuplic
     count: txIds.length + transferIds.length, skipped: failedItemIds.length, failedItemIds, alreadyBooked,
     ackPending: bookedItemIds.length - clearedItemIds.length, clearedItemIds, txIds, transferIds,
   };
+}
+
+export interface ConfirmInboxEntryOptions {
+  travelProjectId?: string;
+  editedFields?: Array<{
+    field: FeedbackField;
+    beforeValue?: string;
+    afterValue?: string;
+  }>;
+  /** 若此項目有觀察期規則建議，使用者直接確認時是否計入該觀察期規則的 confirm_clean */
+  acceptShadowRule?: boolean;
+}
+
+/** 單筆人工確認入帳：依是否有編輯欄位記錄 confirm_clean 或 edit_field 回饋訊號 */
+export async function confirmInboxEntry(entry: InboxEntry, opts: ConfirmInboxEntryOptions = {}) {
+  const res = await bookInboxEntries([entry], {
+    travelProjectId: opts.travelProjectId,
+    auto: false,
+    skipFeedback: true,
+  });
+  const txId = res.txIds[0];
+  if (txId || res.clearedItemIds.includes(entry.item.id)) {
+    const shadowRuleId = opts.acceptShadowRule !== false ? entry.shadowMatch?.ruleId : undefined;
+    const onlyShadowMatched = Boolean(shadowRuleId && entry.decisionReasons?.includes('only_shadow_or_candidate_matched'));
+    if (opts.editedFields && opts.editedFields.length > 0) {
+      for (const edit of opts.editedFields) {
+        await recordFeedback({
+          decisionId: entry.decisionId,
+          ruleId: onlyShadowMatched ? shadowRuleId : undefined,
+          txId,
+          signalType: 'edit_field',
+          field: edit.field,
+          beforeValue: edit.beforeValue,
+          afterValue: edit.afterValue,
+        }).catch(() => undefined);
+      }
+    } else {
+      await recordFeedback({
+        decisionId: entry.decisionId,
+        ruleId: shadowRuleId,
+        txId,
+        signalType: 'confirm_clean',
+      }).catch(() => undefined);
+    }
+  }
+  return { ...res, decisionId: entry.decisionId };
+}
+
+export const bookSingleEntry = confirmInboxEntry;
+
+/** 略過收件匣項目並記錄明確的原因回饋訊號（非交易／重複／忽略） */
+export async function skipInboxEntry(
+  entry: InboxEntry,
+  reason: 'non_tx' | 'duplicate' | 'ignore',
+): Promise<void> {
+  const signalMap = {
+    non_tx: { signalType: 'skip_non_tx', outcome: 'skipped_non_tx' },
+    duplicate: { signalType: 'skip_duplicate', outcome: 'skipped_duplicate' },
+    ignore: { signalType: 'skip_ignore', outcome: 'skipped_ignored' },
+  } as const;
+  const { signalType, outcome } = signalMap[reason];
+  await ackInbox([entry.item.id]);
+  if (entry.decisionId) {
+    await db.auto_decisions.update(entry.decisionId, { outcome }).catch(() => undefined);
+    await recordFeedback({
+      decisionId: entry.decisionId,
+      signalType,
+    }).catch(() => undefined);
+  } else {
+    await recordFeedback({
+      signalType,
+      note: entry.item.merchant || entry.item.text.slice(0, 40),
+    }).catch(() => undefined);
+  }
+  invalidateInboxReadOnly();
 }
 
 /** 在記帳面板手動記好後呼叫：從收件匣移除、學習卡片，並隱式學習商家別名與分類規則 */
@@ -865,20 +1233,32 @@ export async function previewAutoBook(text: string, card = '', merchant = '', op
   whitelisted: boolean;
   drafts: ResolvedDraft[];
   dup?: InboxDup;
+  confidence?: ConfidenceLevel;
+  decisionReasons?: string[];
+  secondCandidate?: InboxEntry['secondCandidate'];
+  shadowMatch?: InboxEntry['shadowMatch'];
+  driftWarning?: string;
 }> {
   const [ctx, fallback] = await Promise.all([parseContext(), fallbackAccount()]);
   const fake: InboxRaw = { id: 0, source: opts.source ?? 'notify', text, amount: opts.amount ?? '', merchant, card, occurred: '', created_at: new Date().toISOString() };
   const cfg = useSettings.getState().inbox;
   const wl = cfg.whitelist ?? [];
   const bl = cfg.blacklist ?? [];
+  const { driftWarning } = await analyzeNoticeTemplateAndDrift(fake, ctx.today, true);
   const drafts = await draftsFromItem(fake, ctx, fallback);
-  const entry: InboxEntry = { item: fake, drafts };
+  const entry: InboxEntry = { item: fake, drafts, ...(driftWarning ? { driftWarning } : {}) };
   await markDuplicates([entry]);
+  await attachDecisionContext([entry], ctx, { persist: false }).catch(() => undefined);
   return {
     dup: entry.dup,
     verdict: judgeNotice(fake, drafts.length > 0, wl, bl),
     whitelisted: matchesWhitelist(fake, wl),
     drafts,
+    confidence: entry.confidence,
+    decisionReasons: entry.decisionReasons,
+    secondCandidate: entry.secondCandidate,
+    shadowMatch: entry.shadowMatch,
+    driftWarning: entry.driftWarning,
   };
 }
 
@@ -1004,7 +1384,7 @@ export async function processInboxOnStartup(): Promise<{ booked: number; pending
   await enrichAmbiguousInboxWithAi(autoReady);
   await checkInboxFxRates(autoReady).catch(() => undefined);
   await markDuplicates(entries);
-  const r = await bookInboxEntries(autoReady, { skipDuplicates: true });
+  const r = await bookInboxEntries(autoReady, { skipDuplicates: true, auto: true });
   const pending = entries.filter((e) => !r.clearedItemIds.includes(e.item.id)).length;
   useInboxCount.getState().set(pending);
   return { booked: r.count, pending, merged: 0 };

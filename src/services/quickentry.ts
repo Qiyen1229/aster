@@ -11,7 +11,7 @@ import { parseEntries, type DraftEntry } from '@/domain/nlp';
 import { todayKey } from '@/domain/period';
 import { toMinor } from '@/domain/money';
 import { useSettings } from '@/stores/settings';
-import { countRuleHit, suggestAccount, suggestCategory } from './autocat';
+import { countRuleHit, suggestAccount, suggestCategory, type AutocatContext } from './autocat';
 import { addTransaction, addTransfer, resolveAmounts, type TxInput, type TransferInput } from '@/db/repo/ledger';
 
 export interface ResolvedDraft extends DraftEntry {
@@ -22,6 +22,7 @@ export interface ResolvedDraft extends DraftEntry {
   categorySource: 'text' | 'rule' | 'memory' | 'default';
   accountSource: 'text' | 'rule' | 'memory' | 'default';
   ruleIds?: string[];
+  decisionId?: string;
 }
 
 /** 旅遊模式下未明寫專案／幣別的草稿，預設歸入旅遊專案（與記帳面板同一套規則）；草稿有寫就照草稿 */
@@ -53,17 +54,18 @@ export async function parseContext(today = todayKey()) {
 }
 
 /** 依備註補上分類、改寫名稱與帳戶；fallbackAccountId 是沒有任何線索時使用的帳戶；matchText 可傳入完整通知原文做雙向比對 */
-export async function resolveDraft(d: DraftEntry, fallbackAccountId: string, matchText?: string, memoryText?: string): Promise<ResolvedDraft> {
+export async function resolveDraft(d: DraftEntry, fallbackAccountId: string, matchText?: string, memoryText?: string, context?: AutocatContext): Promise<ResolvedDraft> {
   const kind = d.kind === 'income' ? 'income' : 'expense';
   const query = matchText?.trim() || d.note;
   const memQuery = memoryText?.trim() || d.note;
+  const ctx: AutocatContext | undefined = context ?? (d.currency ? { currency: d.currency } : undefined);
   let categoryId = d.categoryId;
   let note = d.note;
   let tagIds: string[] = [];
   const ruleIds = new Set<string>();
   let categorySource: ResolvedDraft['categorySource'] = categoryId ? 'text' : 'default';
   if (d.kind !== 'transfer' && query) {
-    const sug = await suggestCategory(query, kind, d.amount, memQuery).catch(() => null);
+    const sug = await suggestCategory(query, kind, d.amount, memQuery, ctx).catch(() => null);
     // 規則優先於文字裡的分類名稱（使用者特地設的）；商家記憶只在文字沒寫分類時使用
     if (sug && (sug.source === 'rule' || !categoryId)) {
       if (sug.categoryId) {
@@ -79,7 +81,7 @@ export async function resolveDraft(d: DraftEntry, fallbackAccountId: string, mat
   let accountId = d.accountId;
   let accountSource: ResolvedDraft['accountSource'] = accountId ? 'text' : 'default';
   if (!accountId && query) {
-    const acc = await suggestAccount(query, kind, d.amount, memQuery).catch(() => undefined);
+    const acc = await suggestAccount(query, kind, d.amount, memQuery, ctx).catch(() => undefined);
     if (acc) { accountId = acc.accountId; accountSource = acc.source; if (acc.ruleId) ruleIds.add(acc.ruleId); }
   }
   return { ...d, note, accountId: accountId ?? fallbackAccountId, categoryId, tagIds, categorySource, accountSource, ruleIds: [...ruleIds] };
@@ -195,6 +197,7 @@ export async function bookDrafts(list: ResolvedDraft[], opts: { sourceId?: strin
         id, type: d.kind, accountId: acc.id, categoryId: d.categoryId!, amountMinor: toMinor(d.amount, currency), currency,
         date: d.date, ts, note: d.note, tagIds: d.tagIds, projectId,
         accountSource: d.accountSource, categorySource: d.categorySource,
+        decisionId: d.decisionId,
       };
       prepared.push({ kind: 'tx', input, amounts: await resolveAmounts(input), rules });
     }

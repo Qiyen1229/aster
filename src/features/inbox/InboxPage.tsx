@@ -4,17 +4,18 @@
  * ② 待確認：捷徑送來的交易、通知、Siri 一句話 → 一鍵記帳、編輯後記帳、略過
  * （iPhone 捷徑設定已獨立至「設定」→「加入 iPhone 捷徑」）
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
 import { categoryLabel, useAccounts, useCategories } from '@/app/hooks';
 import { db } from '@/db/schema';
+import type { FeedbackField } from '@/db/types';
 import { formatMoney, fromMinor, toMinor } from '@/domain/money';
 import { shortDate } from '@/domain/nlp';
 import { todayKey } from '@/domain/period';
 import { deleteTransactions, deleteTransfers } from '@/db/repo/ledger';
 import {
-  ackInbox, bookInboxEntries, getInboxSyncState, inboxPrefix4, mergeDuplicate, loadInbox, markDuplicates, SOURCE_LABEL, useInboxCount,
+  ackInbox, bookInboxEntries, confirmInboxEntry, getInboxSyncState, inboxPrefix4, mergeDuplicate, loadInbox, markDuplicates, skipInboxEntry, SOURCE_LABEL, useInboxCount,
   type InboxEntry,
 } from '@/services/inbox';
 import { saveSetting } from '@/db/repo/settings';
@@ -29,6 +30,7 @@ import { AiMark, CatIcon, Icon } from '@/ui/Icon';
 import { bookForecast, confirmRulePending, loadForecast, registerForecast, skipForecast, skipRulePending, type ForecastData } from '@/services/forecast';
 import type { ForecastItem } from '@/domain/forecast';
 import { blankRule, RuleEditorSheet, type RuleDraft } from '@/features/settings/RuleEditorSheet';
+import { InboxDecisionMeta, ScopeRuleSheet, SplitSkipControl } from './InboxDecisionUI';
 
 const snack = (text: string, duration?: number) => useUI.getState().showSnack({ text, duration });
 
@@ -41,6 +43,8 @@ export default function InboxPage() {
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [ruleDraft, setRuleDraft] = useState<RuleDraft | null>(null);
+  const [scopeEntry, setScopeEntry] = useState<InboxEntry | null>(null);
+  const initialDraftsRef = useRef<Map<number, Array<{ categoryId?: string; accountId?: string; amount?: number }>>>(new Map());
   const today = todayKey();
 
   const recentAuto = useLiveQuery(async () => {
@@ -76,7 +80,13 @@ export default function InboxPage() {
 
   const reload = useCallback(async () => {
     try {
-      setEntries(await loadInbox());
+      const loaded = await loadInbox();
+      const map = new Map<number, Array<{ categoryId?: string; accountId?: string; amount?: number }>>();
+      for (const item of loaded) {
+        map.set(item.item.id, item.drafts.map((d) => ({ categoryId: d.categoryId, accountId: d.accountId, amount: d.amount })));
+      }
+      initialDraftsRef.current = map;
+      setEntries(loaded);
       setLoadError('');
     } catch (e) {
       const msg = (e as Error)?.message;
@@ -103,6 +113,40 @@ export default function InboxPage() {
       });
       await reload();
     } catch (e) { snack((e as Error).message); } finally { setBusy(false); }
+  };
+
+  const confirmSingle = async (e: InboxEntry) => {
+    setBusy(true);
+    try {
+      const origList = initialDraftsRef.current.get(e.item.id) ?? [];
+      const editedFields: Array<{ field: FeedbackField; beforeValue?: string; afterValue?: string }> = [];
+      e.drafts.forEach((d, idx) => {
+        const orig = origList[idx];
+        if (!orig) return;
+        if (d.categoryId !== orig.categoryId) {
+          editedFields.push({ field: 'category', beforeValue: orig.categoryId, afterValue: d.categoryId });
+        }
+        if (d.accountId !== orig.accountId) {
+          editedFields.push({ field: 'account', beforeValue: orig.accountId, afterValue: d.accountId });
+        }
+        if (d.amount !== orig.amount) {
+          editedFields.push({ field: 'amount', beforeValue: String(orig.amount ?? ''), afterValue: String(d.amount) });
+        }
+      });
+      const r = await confirmInboxEntry(e, { editedFields });
+      snackUndo(`已記下 ${r.count} 筆${r.alreadyBooked ? `，${r.alreadyBooked} 則先前已入帳` : ''}${r.skipped ? `，${r.skipped} 則入帳失敗，保留待確認` : ''}${r.ackPending ? `，${r.ackPending} 則已儲存但尚待清除通知` : ''}`, async () => {
+        if (r.txIds.length) await deleteTransactions(r.txIds);
+        if (r.transferIds.length) await deleteTransfers(r.transferIds);
+      });
+      await reload();
+    } catch (err) { snack((err as Error).message); } finally { setBusy(false); }
+  };
+
+  const applySecondCandidate = (itemId: number, cand: NonNullable<InboxEntry['secondCandidate']>) => {
+    updateDraft(itemId, 0, {
+      ...(cand.categoryId ? { categoryId: cand.categoryId } : {}),
+      ...(cand.accountId ? { accountId: cand.accountId } : {}),
+    });
   };
 
   const merge = async (e: InboxEntry) => {
@@ -188,9 +232,9 @@ export default function InboxPage() {
       snack('AI 已解析，確認後按「記帳」');
     } catch (err) { snack((err as Error).message); } finally { setAiBusyId(null); }
   };
-  const skip = async (e: InboxEntry) => {
+  const skip = async (e: InboxEntry, reason: 'non_tx' | 'duplicate' | 'ignore') => {
     try {
-      await ackInbox([e.item.id]);
+      await skipInboxEntry(e, reason);
       setEntries((l) => l?.filter((x) => x.item.id !== e.item.id) ?? null);
     } catch (err) { snack(`略過失敗，通知仍保留：${(err as Error).message}`); }
   };
@@ -296,13 +340,14 @@ export default function InboxPage() {
                       <span className="row-main">
                         <span className="row-title">{e.item.merchant || e.item.text.slice(0, 40) || '（沒有內容）'}</span>
                         <span className="row-sub" style={{ whiteSpace: 'normal' }}>{src.label} · {e.review || '看不懂金額，請手動記'}</span>
+                        <InboxDecisionMeta entry={e} />
                       </span>
                       <span className="inbox-actions">
                         {aiEnabledLocally() && (e.item.text || e.item.merchant) && <button className="pill accent-pill" disabled={aiBusyId === e.item.id} onClick={() => void aiParse(e)}>{aiBusyId === e.item.id ? '解析中…' : <><AiMark /> Cilo 解析</>}</button>}
                         <button className="pill" onClick={() => setRuleDraft(blankRule('expense', '', e.item.merchant || e.item.text.slice(0, 60)))}>存為規則</button>
                         <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
                         <button className="pill" onClick={() => edit(e)}>手動記</button>
-                        <button className="pill" onClick={() => void skip(e)} aria-label="略過">略過</button>
+                        <SplitSkipControl disabled={busy} onSkip={(reason) => skip(e, reason)} />
                       </span>
                     </div>
                   </SwipeRow>
@@ -351,6 +396,12 @@ export default function InboxPage() {
                                 .map((a) => ({ value: a.id, label: a.name }))}
                             />
                           </span>
+                          {i === 0 && (
+                            <InboxDecisionMeta
+                              entry={e}
+                              onApplySecondCandidate={(cand) => applySecondCandidate(e.item.id, cand)}
+                            />
+                          )}
                         </span>
                         <span className={`num ${d.kind === 'income' ? 'pos' : 'neg'}`}>{formatMoney(toMinor(d.amount, cur), cur)}</span>
                         {i === e.drafts.length - 1 && e.review && (
@@ -367,20 +418,22 @@ export default function InboxPage() {
                             {e.dup?.level === 'strong' ? (
                               <>
                                 <button className="pill accent-pill" onClick={() => void merge(e)}>合併（不重複記）</button>
-                                <button className="pill" disabled={busy} onClick={() => void book([e])}>仍要記帳</button>
+                                <button className="pill" disabled={busy} onClick={() => void confirmSingle(e)}>仍要記帳</button>
+                                <button type="button" className="pill" onClick={() => setScopeEntry(e)}>以後這類都這樣</button>
                                 <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
                                 <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
                                 <button className="pill" onClick={() => edit(e)}>編輯</button>
-                                <button className="pill" onClick={() => void skip(e)}>略過</button>
+                                <SplitSkipControl disabled={busy} onSkip={(reason) => skip(e, reason)} />
                               </>
                             ) : (
                               <>
-                                <button className="pill accent-pill" disabled={busy} onClick={() => void book([e])}>記帳</button>
+                                <button className="pill accent-pill" disabled={busy} onClick={() => void confirmSingle(e)}>記帳</button>
                                 {e.dup && <button className="pill" onClick={() => void merge(e)}>合併</button>}
+                                <button type="button" className="pill" onClick={() => setScopeEntry(e)}>以後這類都這樣</button>
                                 <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
                                 <button className="pill" onClick={() => void blockItem(e)}>封鎖</button>
                                 <button className="pill" onClick={() => edit(e)}>編輯</button>
-                                <button className="pill" onClick={() => void skip(e)}>略過</button>
+                                <SplitSkipControl disabled={busy} onSkip={(reason) => skip(e, reason)} />
                               </>
                             )}
                           </span>
@@ -425,6 +478,11 @@ export default function InboxPage() {
         onChange={setRuleDraft}
         onClose={() => setRuleDraft(null)}
         onSaved={() => void reload()}
+      />
+      <ScopeRuleSheet
+        entry={scopeEntry}
+        onClose={() => setScopeEntry(null)}
+        onCreated={() => void reload()}
       />
     </main>
   );
