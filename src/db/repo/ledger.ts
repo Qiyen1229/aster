@@ -204,7 +204,7 @@ async function durablesOnTxRestore(txId: string): Promise<void> {
 
 const UNDO_DELETE_WINDOW_MS = 7 * 86_400_000;
 
-export async function deleteTransactions(ids: string[]): Promise<void> {
+export async function deleteTransactions(ids: string[], opts?: { skipUndoFeedback?: boolean }): Promise<void> {
   const undoTargets: Array<{ id: string; decisionId: string }> = [];
   await db.transaction('rw', [db.transactions, db.transfers, db.accounts, db.durables, db.debts, db.stock_trades], async () => {
     const now = Date.now();
@@ -241,7 +241,7 @@ export async function deleteTransactions(ids: string[]): Promise<void> {
       await db.transactions.update(id, { deletedAt: now, updatedAt: now });
       await bump(tx.accountId, -txEffect(tx));
       await durablesOnTxDelete(id, now);
-      if (tx.decisionId && now - tx.createdAt <= UNDO_DELETE_WINDOW_MS) {
+      if (!opts?.skipUndoFeedback && tx.decisionId && now - tx.createdAt <= UNDO_DELETE_WINDOW_MS) {
         undoTargets.push({ id: tx.id, decisionId: tx.decisionId });
       }
     }

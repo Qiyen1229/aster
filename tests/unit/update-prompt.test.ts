@@ -114,7 +114,7 @@ describe('UpdatePrompt 更新提示', () => {
 
     expect(updateBtn!.disabled).toBe(true);
     expect(updateBtn!.textContent).toBe('更新中…');
-    expect(mocks.updateSW).toHaveBeenCalledWith(true);
+    expect(mocks.updateSW).toHaveBeenCalledWith(false);
     expect(waitingPostMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
 
     // 模擬 controllerchange 未觸發（iOS Safari / PWA 常見狀況），保險計時器仍應重載

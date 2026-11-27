@@ -348,6 +348,8 @@ export async function learnImplicitMapping(opts: {
     renameNote,
     enabled: true,
     priority: 50,
+    status: 'shadow',
+    version: 1,
   });
   return true;
 }

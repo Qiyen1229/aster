@@ -38,7 +38,8 @@ import { lifeLabel } from '@/domain/durable';
 import { LifeSpanSheet } from '../plan/LifeSpanSheet';
 import { addDebts, addLoan, decideWish, findOrCreatePerson, removeLoan, settleDebt, unsettleDebt } from '@/db/repo/plan';
 import { addDurable, durableOfTx, syncTxDurable } from '@/db/repo/durables';
-import { countRuleHit, recentNoteSuggestions, suggestCategory, type CategorySuggestion } from '@/services/autocat';
+import { countRuleHit, learnImplicitMapping, recentNoteSuggestions, suggestCategory, type CategorySuggestion } from '@/services/autocat';
+import { recordFeedback } from '@/services/decisionLog';
 import { findPinned, listPinned, pinTransaction, touchPinned, unpin } from '@/db/repo/pinned';
 import { haptic } from '@/services/haptics';
 import type { NoteSuggestion } from '@/domain/notesuggest';
@@ -141,6 +142,10 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
   });
   const [autoCat, setAutoCat] = useState<(CategorySuggestion & { prev: string }) | null>(null);
   const saved = useRef(false);
+  const editOriginRef = useRef<{
+    type: string; categoryId: string; accountId: string; amountMinor: number;
+    currency: string; date: string; note: string; merchant?: string; decisionId?: string;
+  } | null>(null);
   const subRowRef = useRef<HTMLDivElement>(null);
 
   useIsomorphicLayoutEffect(() => {
@@ -250,6 +255,17 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       if (editTxId) {
         const t = await db.transactions.get(editTxId);
         if (!t) { onClose(); return; }
+        editOriginRef.current = {
+          type: t.type,
+          categoryId: t.categoryId,
+          accountId: t.accountId,
+          amountMinor: t.amountMinor,
+          currency: t.currency,
+          date: t.date,
+          note: t.note,
+          merchant: t.merchant,
+          decisionId: t.decisionId,
+        };
         const linkedReason = t.stockTradeId
           ? '股票交易連動'
           : t.dividendId
@@ -393,6 +409,8 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
     setBusy(true);
     try {
       let notify = () => {};
+      const pendingEdits: Array<{ field: 'category' | 'account' | 'amount' | 'date' | 'type'; beforeValue: string; afterValue: string }> = [];
+      let pendingLearn: Parameters<typeof learnImplicitMapping>[0] | null = null;
       const sourceId = !editing && prefill?.inboxId ? `inbox-${prefill.inboxId}` : undefined;
       const manualSplit = mode === 'expense' && !editing && split.people.length ? computeSplit(toMinor(v, txCurrency), split, txCurrency) : null;
       if (manualSplit?.error) throw new Error(manualSplit.error);
@@ -407,6 +425,11 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         const targetId = await settleDebt(selectedDebt.id, loanViaAccount ? account!.id : undefined, {
           date, ts, note: note.trim() || undefined, amountMinor: paidAmt,
         });
+        if (editTxId) {
+          await deleteTransactions([editTxId], { skipUndoFeedback: true });
+          const orig = editOriginRef.current;
+          if (orig?.decisionId) pendingEdits.push({ field: 'type', beforeValue: orig.type, afterValue: mode });
+        }
         const isPartial = paidAmt < selectedDebt.amountMinor;
         notify = () => snackUndo(
           `${selectedDebt.direction === 'they_owe_me' ? '已收回' : '已還給'} ${who} ${formatMoney(paidAmt, selectedDebt.currency)}${isPartial ? '（部分還款）' : ''}`,
@@ -425,6 +448,11 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
           direction: mode === 'receivable' ? 'they_owe_me' : 'i_owe_them', personName: personName.trim(),
           amountMinor: amt, currency: txCurrency, date, ts, note, accountId: loanViaAccount ? account!.id : undefined,
         });
+        if (editTxId) {
+          await deleteTransactions([editTxId], { skipUndoFeedback: true });
+          const orig = editOriginRef.current;
+          if (orig?.decisionId) pendingEdits.push({ field: 'type', beforeValue: orig.type, afterValue: mode });
+        }
         const who = personName.trim();
         notify = () => snackUndo(mode === 'receivable' ? `已記下 ${who} 欠你 ${formatMoney(amt, txCurrency)}` : `已記下你欠 ${who} ${formatMoney(amt, txCurrency)}`,
           () => removeLoan(res.debtId));
@@ -444,6 +472,11 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         if (editTransferId) await updateTransfer(editTransferId, input);
         else {
           const tr = await addTransfer(input);
+          if (editTxId) {
+            await deleteTransactions([editTxId], { skipUndoFeedback: true });
+            const orig = editOriginRef.current;
+            if (orig?.decisionId) pendingEdits.push({ field: 'type', beforeValue: orig.type, afterValue: 'transfer' });
+          }
           notify = () => snackUndo('已新增轉帳', () => deleteTransfers([tr.id]));
         }
       } else {
@@ -474,6 +507,24 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
             const cat = catMap.get(catId);
             // 已連結但原本沒設期限、這次也沒選：只更新成本與購入日（-1），不要把物品刪掉
             await syncTxDurable(saved, durableYears > 0 ? durableYears : durableLinked ? -1 : 0, { name: note.trim() || cat?.name || '耐用品', icon: cat?.icon || '📦' });
+          }
+          const orig = editOriginRef.current;
+          if (orig?.decisionId) {
+            if (orig.categoryId !== catId) pendingEdits.push({ field: 'category', beforeValue: orig.categoryId, afterValue: catId });
+            if (orig.accountId !== acc.id) pendingEdits.push({ field: 'account', beforeValue: orig.accountId, afterValue: acc.id });
+            if (orig.amountMinor !== amt) pendingEdits.push({ field: 'amount', beforeValue: String(orig.amountMinor), afterValue: String(amt) });
+            if (orig.date !== date) pendingEdits.push({ field: 'date', beforeValue: orig.date, afterValue: date });
+            if (orig.type !== type) pendingEdits.push({ field: 'type', beforeValue: orig.type, afterValue: type });
+          }
+          if ((orig?.decisionId || orig?.merchant) && (mode === 'expense' || mode === 'income')
+            && (orig.categoryId !== catId || orig.accountId !== acc.id || orig.note.trim() !== note.trim())) {
+            pendingLearn = {
+              rawKeyword: orig.merchant || orig.note || note.trim(),
+              note: note.trim(),
+              categoryId: catId,
+              kind: mode,
+              accountId: acc.id,
+            };
           }
         }
         else if (sp && split.payer !== undefined) {
@@ -518,6 +569,17 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
       if (created) {
         notify();
         if (!editing) setSplit({ mode: split.mode, people: [] });
+        const origDecisionId = editOriginRef.current?.decisionId;
+        if (editTxId && origDecisionId && pendingEdits.length > 0) {
+          await Promise.all(
+            pendingEdits.map((ed) =>
+              recordFeedback({ decisionId: origDecisionId, txId: editTxId, signalType: 'edit_field', field: ed.field, beforeValue: ed.beforeValue, afterValue: ed.afterValue }).catch(() => undefined),
+            ),
+          );
+        }
+        if (pendingLearn) {
+          await learnImplicitMapping(pendingLearn).catch(() => undefined);
+        }
       } else useUI.getState().showSnack({ text: '這則通知已入帳，本次未重複新增' });
       if (account) settings.set('lastAccountId', account.id);
       if (prefill?.inboxId && !editing) {
@@ -764,6 +826,10 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                 onChange={(m) => {
                   const next = (m === 'loan' ? 'receivable' : m) as AddMode;
                   setMode(next);
+                  if (next === 'transfer' && !toAccountId) {
+                    const other = accounts.find((a) => a.id !== accountId);
+                    if (other) setToAccountId(other.id);
+                  }
                   if (next === 'adjust') setExpr('');
                   if (next !== 'expense' && next !== 'income') setMoreOpen(false);
                   if (next === 'expense' || next === 'income') {
@@ -772,7 +838,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                     setCatPicking(!catPickedByKind.current[next]);
                   }
                 }}
-                options={editing ? MODES.filter((m) => m.value === 'expense' || m.value === 'income') : mode === 'adjust' ? [...MODES, { value: 'adjust', label: '調整' }] : MODES}
+                options={editing && linkedLock ? MODES.filter((m) => m.value === 'expense' || m.value === 'income') : mode === 'adjust' ? [...MODES, { value: 'adjust', label: '調整' }] : MODES}
                 ariaLabel="記帳類型"
               />
             ) : (
@@ -820,7 +886,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                     onClose();
                   }} />
               )}
-              {!editTransferId && !(editTxId && mode === 'adjust') && isLoanMode(mode) && !editing && (
+              {!editTransferId && !(editTxId && mode === 'adjust') && isLoanMode(mode) && (
                 <div style={{ marginBottom: 6 }}>
                   <Segmented
                     value={loanSettle ? 'settle' : mode}

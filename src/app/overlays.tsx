@@ -224,10 +224,23 @@ export function UpdatePrompt({ locked = false }: { locked?: boolean }) {
   const handleUpdate = async () => {
     if (updating || !updateFn) return;
     setUpdating(true);
-    await applyServiceWorkerUpdate({
-      updateSW: updateFn,
-      registration: regRef.current,
-    });
+    // 先收起任何開啟中的記帳/操作彈窗，避免 iOS PWA 重載時 DOM/焦點鎖死
+    const ui = useUI.getState();
+    if (ui.add.open) ui.closeAdd();
+    if (ui.actions) ui.closeActions();
+    const guardTimer = setTimeout(() => {
+      setUpdating(false);
+      useUI.getState().showSnack({ text: '請手動重新整理頁面以套用新版' });
+    }, 5000);
+    try {
+      await applyServiceWorkerUpdate({
+        updateSW: updateFn,
+        registration: regRef.current,
+      });
+    } finally {
+      // 若尚未導向離開，於 guardTimer 到期前維持更新中避免連點
+      void guardTimer;
+    }
   };
 
   useEffect(() => {

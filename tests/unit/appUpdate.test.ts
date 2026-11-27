@@ -70,7 +70,7 @@ describe('applyServiceWorkerUpdate', () => {
 
     await applyServiceWorkerUpdate({ updateSW, registration, fallbackMs: 2000, onReload });
 
-    expect(updateSW).toHaveBeenCalledWith(true);
+    expect(updateSW).toHaveBeenCalledWith(false);
     expect(waitingPost).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     expect(onReload).not.toHaveBeenCalled();
 
@@ -116,7 +116,7 @@ describe('applyServiceWorkerUpdate', () => {
     const p = applyServiceWorkerUpdate({ updateSW: hangingUpdateSW, registration, fallbackMs: 2000, onReload });
     await Promise.resolve();
 
-    expect(hangingUpdateSW).toHaveBeenCalledWith(true);
+    expect(hangingUpdateSW).toHaveBeenCalledWith(false);
     expect(waitingPost).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     expect(onReload).not.toHaveBeenCalled();
 
