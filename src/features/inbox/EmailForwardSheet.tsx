@@ -205,13 +205,13 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       )}
 
       {step === 1 && (
-        <section className="card wiz-panel">
-          <h3 className="wiz-panel-title">步驟 1：輸入你的 Gmail</h3>
-          <p className="muted" style={{ marginTop: 0, fontSize: '0.86rem', lineHeight: 1.5 }}>
+        <section className="wiz-panel" style={{ padding: '4px 0' }}>
+          <h3 className="wiz-panel-title" style={{ marginBottom: 6 }}>步驟 1：輸入你的 Gmail</h3>
+          <p className="muted" style={{ margin: '0 0 12px', fontSize: '0.86rem', lineHeight: 1.55 }}>
             輸入要轉寄銀行／支付通知的 Gmail，Aster 會為你產生一組專屬轉寄地址。
           </p>
           <form onSubmit={handleSetup}>
-            <label className="field" style={{ marginBottom: 10 }}>
+            <label className="field" style={{ marginBottom: 12, borderRadius: 14 }}>
               <span className="label">你的 Gmail</span>
               <input
                 type="email"
@@ -221,24 +221,26 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
                 required
               />
             </label>
-            <button type="submit" className="btn primary" style={{ width: '100%' }} disabled={busy}>
+            <button type="submit" className="btn primary" disabled={busy}>
               {busy ? '產生中…' : binding ? '更新並產生新的轉寄地址' : '產生專屬轉寄地址'}
             </button>
           </form>
 
           {binding && (
-            <div className="wiz-guide-box" style={{ marginTop: 12 }}>
-              <div className="muted" style={{ fontSize: '0.8rem', marginBottom: 6 }}>你的專屬轉寄地址</div>
-              <div className="copy-row">
-                <code style={{ wordBreak: 'break-all' }}>{binding.forward_address}</code>
-                <button type="button" className="pill" onClick={() => void copyText(binding.forward_address, '轉寄地址')}>
+            <div className="card" style={{ marginTop: 14, padding: 14 }}>
+              <div className="muted" style={{ fontSize: '0.78rem', marginBottom: 8 }}>你的專屬轉寄地址</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 12, background: 'var(--surface-2)' }}>
+                <code style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', overflowWrap: 'anywhere', lineHeight: 1.35 }}>
+                  {binding.forward_address}
+                </code>
+                <button type="button" className="btn tinted small" onClick={() => void copyText(binding.forward_address, '轉寄地址')}>
                   複製
                 </button>
               </div>
               <button
                 type="button"
                 className="btn tinted"
-                style={{ width: '100%', marginTop: 10 }}
+                style={{ marginTop: 12 }}
                 onClick={() => setStep(2)}
               >
                 下一步：驗證轉寄地址
@@ -249,27 +251,29 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       )}
 
       {step === 2 && binding && (
-        <section className="card wiz-panel">
-          <h3 className="wiz-panel-title">步驟 2：驗證轉寄地址</h3>
-          <div className="wiz-guide-box">
-            <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.86rem', lineHeight: 1.65 }}>
+        <section className="wiz-panel" style={{ padding: '4px 0' }}>
+          <h3 className="wiz-panel-title" style={{ marginBottom: 10 }}>步驟 2：驗證轉寄地址</h3>
+          <div className="card" style={{ padding: 14 }}>
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.85rem', lineHeight: 1.65 }}>
               <li>用電腦版瀏覽器打開 <b>Gmail → 設定 → 查看所有設定 → 轉寄和 POP/IMAP</b>。</li>
               <li>點選「<b>新增轉寄地址</b>」，貼上以下專屬地址：</li>
             </ol>
-            <div className="copy-row" style={{ marginTop: 8 }}>
-              <code style={{ wordBreak: 'break-all' }}>{binding.forward_address}</code>
-              <button type="button" className="pill" onClick={() => void copyText(binding.forward_address, '轉寄地址')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, padding: '8px 10px', borderRadius: 12, background: 'var(--surface-2)' }}>
+              <code style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', overflowWrap: 'anywhere', lineHeight: 1.35 }}>
+                {binding.forward_address}
+              </code>
+              <button type="button" className="btn tinted small" onClick={() => void copyText(binding.forward_address, '轉寄地址')}>
                 複製
               </button>
             </div>
-            <p className="muted" style={{ margin: '8px 0 0', fontSize: '0.82rem', lineHeight: 1.5 }}>
-              提醒：新增後請維持「<b>停用轉寄</b>」，不要開啟全部信件轉寄，下一步我們會用篩選器只轉寄消費通知。
+            <p className="muted" style={{ margin: '10px 0 0', fontSize: '0.8rem', lineHeight: 1.5 }}>
+              提醒：新增後請維持「<b>停用轉寄</b>」，不要開啟全部信件轉寄，下一步會用篩選器只轉寄消費通知。
             </p>
           </div>
 
           {hasVerification ? (
-            <div className="wiz-verify-status ok" style={{ marginTop: 12 }}>
-              <div>已收到 Gmail 轉寄驗證信！請完成確認：</div>
+            <div className="wiz-verify-status ok" style={{ marginTop: 12, padding: 14, borderRadius: 16 }}>
+              <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>已收到 Gmail 轉寄驗證信！請完成確認：</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
                 {binding.verify_url && (
                   <button
@@ -292,26 +296,38 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
               </div>
             </div>
           ) : (
-            <div className="wiz-verify-status" style={{ marginTop: 12 }}>
-              <div>等待 Gmail 驗證信中…（每 3 秒自動檢查）</div>
+            <div
+              className="card"
+              style={{ marginTop: 12, padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '0.86rem', fontWeight: 600 }}>等待 Gmail 驗證信中…</div>
+                <div className="muted" style={{ fontSize: '0.76rem', marginTop: 2 }}>每 3 秒自動檢查</div>
+              </div>
               <button
                 type="button"
-                className="btn secondary small"
-                style={{ marginTop: 8 }}
+                className="btn tinted small"
                 disabled={checking}
                 onClick={() => void pollNow()}
               >
-                {checking ? '檢查中…' : '立即檢查驗證信'}
+                {checking ? '檢查中…' : '立即檢查'}
               </button>
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button type="button" className="btn secondary" onClick={() => setStep(1)}>上一步</button>
+          <div className="btn-row" style={{ marginTop: 14 }}>
+            <button
+              type="button"
+              className="btn secondary"
+              style={{ flex: '0 0 auto', width: 'auto', minWidth: 88, padding: '0 16px' }}
+              onClick={() => setStep(1)}
+            >
+              上一步
+            </button>
             <button
               type="button"
               className="btn primary"
-              style={{ flex: 1 }}
+              style={{ flex: 1, width: 'auto', minWidth: 0, fontSize: '0.95rem', whiteSpace: 'nowrap' }}
               disabled={busy}
               onClick={() => void handleConfirmVerified()}
             >
@@ -322,30 +338,42 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       )}
 
       {step === 3 && binding && (
-        <section className="card wiz-panel">
-          <h3 className="wiz-panel-title">步驟 3：設定 Gmail 篩選器</h3>
-          <p className="muted" style={{ marginTop: 0, fontSize: '0.86rem', lineHeight: 1.5 }}>
+        <section className="wiz-panel" style={{ padding: '4px 0' }}>
+          <h3 className="wiz-panel-title" style={{ marginBottom: 6 }}>步驟 3：設定 Gmail 篩選器</h3>
+          <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.85rem', lineHeight: 1.5 }}>
             建議只轉寄銀行／行動支付的消費與入帳通知，避免一般信件或廣告也送進收件匣。
           </p>
-          <div className="wiz-guide-box">
-            <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.86rem', lineHeight: 1.65 }}>
+          <div className="card" style={{ padding: 14 }}>
+            <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.85rem', lineHeight: 1.65 }}>
               <li>在 Gmail 搜尋框右側點選「<b>顯示搜尋選項</b>」。</li>
               <li>在「<b>包含字詞</b>」貼上以下台灣常見銀行與支付關鍵字：</li>
             </ol>
-            <div className="copy-row" style={{ marginTop: 8 }}>
-              <code style={{ fontSize: '0.78rem', wordBreak: 'break-word' }}>{GMAIL_FILTER_TEMPLATE}</code>
-              <button type="button" className="pill" onClick={() => void copyText(GMAIL_FILTER_TEMPLATE, '篩選器關鍵字')}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, padding: '8px 10px', borderRadius: 12, background: 'var(--surface-2)' }}>
+              <code style={{ flex: 1, minWidth: 0, fontSize: '0.78rem', overflowWrap: 'anywhere', lineHeight: 1.4 }}>{GMAIL_FILTER_TEMPLATE}</code>
+              <button type="button" className="btn tinted small" onClick={() => void copyText(GMAIL_FILTER_TEMPLATE, '篩選器關鍵字')}>
                 複製
               </button>
             </div>
-            <ol start={3} style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: '0.86rem', lineHeight: 1.65 }}>
-              <li>點選「<b>建立篩選器</b>」→ 勾選「<b>轉寄給</b>」→ 選擇 <code>{binding.forward_address}</code>。</li>
+            <ol start={3} style={{ margin: '10px 0 0', paddingLeft: 18, fontSize: '0.85rem', lineHeight: 1.65 }}>
+              <li>點選「<b>建立篩選器</b>」→ 勾選「<b>轉寄給</b>」→ 選擇 <code style={{ overflowWrap: 'anywhere' }}>{binding.forward_address}</code>。</li>
             </ol>
           </div>
 
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button type="button" className="btn secondary" onClick={() => setStep(2)}>上一步</button>
-            <button type="button" className="btn primary" style={{ flex: 1 }} onClick={() => setStep(4)}>
+          <div className="btn-row" style={{ marginTop: 14 }}>
+            <button
+              type="button"
+              className="btn secondary"
+              style={{ flex: '0 0 auto', width: 'auto', minWidth: 88, padding: '0 16px' }}
+              onClick={() => setStep(2)}
+            >
+              上一步
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              style={{ flex: 1, width: 'auto', minWidth: 0, fontSize: '0.95rem', whiteSpace: 'nowrap' }}
+              onClick={() => setStep(4)}
+            >
               下一步：測試通知與完成
             </button>
           </div>
@@ -353,43 +381,56 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       )}
 
       {step === 4 && binding && (
-        <section className="card wiz-panel">
-          <h3 className="wiz-panel-title">步驟 4：測試通知與完成</h3>
-          <p className="muted" style={{ marginTop: 0, fontSize: '0.86rem', lineHeight: 1.5 }}>
-            可從 Gmail 手動轉寄一封銀行消費通知信到 <code>{binding.forward_address}</code> 測試，或等待下一筆通知自動寄達。
+        <section className="wiz-panel" style={{ padding: '4px 0' }}>
+          <h3 className="wiz-panel-title" style={{ marginBottom: 6 }}>步驟 4：測試通知與完成</h3>
+          <p className="muted" style={{ margin: '0 0 12px', fontSize: '0.85rem', lineHeight: 1.5 }}>
+            可從 Gmail 手動轉寄一封銀行消費通知信到 <code style={{ overflowWrap: 'anywhere' }}>{binding.forward_address}</code> 測試，或等待下一筆通知自動寄達。
           </p>
 
-          <div className={`wiz-verify-status${isConnected ? ' ok' : ''}`}>
-            {isConnected ? (
-              <div>
-                已連線 · 已接收 {binding.received_count} 筆
-                {binding.last_received_at && (
-                  <div className="muted" style={{ fontSize: '0.78rem', marginTop: 4 }}>
-                    最近接收：{formatLocalTime(binding.last_received_at)}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div>
-                等待接收測試通知信中…（每 3 秒自動檢查）
-                <div>
-                  <button
-                    type="button"
-                    className="btn secondary small"
-                    style={{ marginTop: 8 }}
-                    disabled={checking}
-                    onClick={() => void pollNow()}
-                  >
-                    {checking ? '檢查中…' : '立即檢查連線'}
-                  </button>
+          {isConnected ? (
+            <div className="wiz-verify-status ok" style={{ padding: 14, borderRadius: 16 }}>
+              <div style={{ fontWeight: 600 }}>已連線 · 已接收 {binding.received_count} 筆</div>
+              {binding.last_received_at && (
+                <div className="muted" style={{ fontSize: '0.78rem', marginTop: 4 }}>
+                  最近接收：{formatLocalTime(binding.last_received_at)}
                 </div>
+              )}
+            </div>
+          ) : (
+            <div
+              className="card"
+              style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: '0.86rem', fontWeight: 600 }}>等待接收測試通知信中…</div>
+                <div className="muted" style={{ fontSize: '0.76rem', marginTop: 2 }}>每 3 秒自動檢查</div>
               </div>
-            )}
-          </div>
+              <button
+                type="button"
+                className="btn tinted small"
+                disabled={checking}
+                onClick={() => void pollNow()}
+              >
+                {checking ? '檢查中…' : '立即檢查'}
+              </button>
+            </div>
+          )}
 
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button type="button" className="btn secondary" onClick={() => setStep(3)}>上一步</button>
-            <button type="button" className="btn primary" style={{ flex: 1 }} onClick={onClose}>
+          <div className="btn-row" style={{ marginTop: 14 }}>
+            <button
+              type="button"
+              className="btn secondary"
+              style={{ flex: '0 0 auto', width: 'auto', minWidth: 88, padding: '0 16px' }}
+              onClick={() => setStep(3)}
+            >
+              上一步
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              style={{ flex: 1, width: 'auto', minWidth: 0, fontSize: '0.95rem', whiteSpace: 'nowrap' }}
+              onClick={onClose}
+            >
               完成
             </button>
           </div>
