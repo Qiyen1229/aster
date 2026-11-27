@@ -4,7 +4,8 @@ import { openShortcutImport, shortcutIcloudUrl, SHORTCUTS } from '@/services/inb
 describe('加入捷徑：直接開 iCloud 分享連結', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('兩個捷徑都有各自不同的 iCloud 連結（32 位小寫十六進位）', () => {
+  it('兩個捷徑（銀行與支付通知、Apple Pay）不含 Siri，且各有不同的 iCloud 連結（32 位小寫十六進位）', () => {
+    expect(SHORTCUTS.map((s) => s.key)).toEqual(['auto', 'applepay']);
     const ids = SHORTCUTS.map((s) => s.icloud);
     expect(new Set(ids).size).toBe(2);
     for (const id of ids) expect(id).toMatch(/^[0-9a-f]{32}$/);

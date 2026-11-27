@@ -235,8 +235,24 @@ export const hookUrl = () => `${getApiOrigin() || location.origin}/api/hook/inbo
 
 /** 預先做好、簽署過的捷徑（scripts/make-shortcuts.py 產生 public/shortcuts/aster-<key>.shortcut）；name＝匯入後的捷徑名稱 */
 export const SHORTCUTS = [
-  { key: 'auto', name: 'Aster 自動記帳', icon: '⚡', title: '銀行 App／LINE Pay／街口／Apple Pay 自動記帳', automation: '通知與錢包', icloud: 'd965a9d8a48642aea3bb847b6525cdaa', hint: '最推薦：刷實體卡、網購、LINE Pay、街口、Apple Pay 跳通知自動記（加入後需至「自動化」勾選銀行與 LINE）' },
-  { key: 'voice', name: 'Aster 隨手記', icon: '🎙', title: '對 Siri 說一句話記帳 ＋ 分享選單記帳', automation: null, icloud: 'c9f38f3363294443918b040e21156d46', hint: '先說「嘿 Siri，Aster 隨手記」，等 Siri 問「要記什麼？」再說花費；也可綁定動作按鈕／背面輕點，或在任何 App 分享文字記帳' },
+  {
+    key: 'auto',
+    name: 'Aster 自動記帳',
+    icon: '⚡',
+    title: '銀行與支付通知',
+    automation: '收到通知',
+    icloud: 'd965a9d8a48642aea3bb847b6525cdaa',
+    hint: '自動擷取銀行 App、LINE Pay、街口與簡訊消費通知',
+  },
+  {
+    key: 'applepay',
+    name: 'Aster Apple Pay 記帳',
+    icon: '💳',
+    title: 'Apple Pay 感應付款',
+    automation: '交易',
+    icloud: 'dc25d518b4614234870199310c7425c2',
+    hint: '感應刷卡後，自動將金額、商家與卡片送進 Aster',
+  },
 ] as const;
 
 type ShortcutDef = (typeof SHORTCUTS)[number];
@@ -244,7 +260,7 @@ export const shortcutFileUrl = (s: ShortcutDef) => `/shortcuts/aster-${s.key}.sh
 
 /**
  * 加入捷徑：直接開 iCloud 分享連結（https://www.icloud.com/shortcuts/<id>），iOS 會用通用連結交給「捷徑」App，跳出「加入捷徑」。
- * 六個捷徑都是通用範本（不含你的連結碼或權杖；連結碼是匯入時才貼上的），所以全部使用者共用同一組 iCloud 連結。
+ * 兩個捷徑都是通用範本（不含你的連結碼或權杖；連結碼是匯入時才貼上的），所以全部使用者共用同一組 iCloud 連結。
  * 不要用 `shortcuts://import-shortcut?url=<iCloud 連結>`：那個網址要的是「.shortcut 檔案網址」，給 iCloud 網頁連結會顯示「檔案的格式不正確」；
  * 給自架的檔案網址則是「提供的捷徑 URL 無效」。檔案版（`shortcutFileUrl`）只留作備用下載。
  * 捷徑內容更新時：用 scripts/make-shortcuts.py 重做 → 匯入 Mac「捷徑」App → 分享 →「拷貝 iCloud 連結」→ 換掉這裡的 `icloud` 識別碼。
@@ -271,8 +287,37 @@ export function savedLink(): { id: number; code: string } | null {
   } catch { return null; }
 }
 
+interface AsterHookNativePlugin {
+  syncCredentials(opts: { hookUrl: string; token: string }): Promise<void>;
+  clearCredentials(): Promise<void>;
+}
+
+async function syncNativeHookCredentials(code: string): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    const cap = await import('@capacitor/core');
+    if (typeof cap.registerPlugin !== 'function') return;
+    const parsed = new URL(code);
+    const token = parsed.searchParams.get('t') ?? '';
+    if (!token) return;
+    const plugin = cap.registerPlugin<AsterHookNativePlugin>('AsterHook');
+    await plugin.syncCredentials({ hookUrl: `${parsed.origin}${parsed.pathname}`, token });
+  } catch { /* 非原生或外掛尚未註冊時略過 */ }
+}
+
+async function clearNativeHookCredentials(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  try {
+    const cap = await import('@capacitor/core');
+    if (typeof cap.registerPlugin !== 'function') return;
+    const plugin = cap.registerPlugin<AsterHookNativePlugin>('AsterHook');
+    await plugin.clearCredentials();
+  } catch { /* 略過 */ }
+}
+
 export function forgetLink() {
   try { localStorage.removeItem(linkKey()); } catch { /* 私密瀏覽 */ }
+  void clearNativeHookCredentials();
 }
 
 /**
@@ -298,10 +343,14 @@ export function deviceLabel(nav: Pick<Navigator, 'userAgent'> = navigator, scr: 
 /** 取得這台裝置的連結碼；沒有就建立一組以裝置名稱命名的權杖 */
 export async function ensureLink(): Promise<{ id: number; code: string; created?: InboxToken }> {
   const saved = savedLink();
-  if (saved) return saved;
+  if (saved) {
+    void syncNativeHookCredentials(saved.code);
+    return saved;
+  }
   const r = await createToken(deviceLabel());
   const link = { id: r.item.id, code: linkCode(r.token) };
   try { localStorage.setItem(linkKey(), JSON.stringify(link)); } catch { /* 私密瀏覽：這次仍可用 */ }
+  void syncNativeHookCredentials(link.code);
   return { ...link, created: r.item };
 }
 

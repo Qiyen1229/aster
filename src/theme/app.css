@@ -3719,6 +3719,30 @@ html.voice-holding .sheet, html.voice-holding .sheet-backdrop { pointer-events: 
 .wiz-auto-steps li { margin-bottom: 4px; }
 .wiz-auto-item + .wiz-auto-item { margin-top: 10px; padding-top: 10px; border-top: 0.5px solid var(--sep); }
 
+/* ───── 自動記帳捷徑 Hub 與 3 步驟引導 ───── */
+.shortcut-hub-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.shortcut-channel-card { padding: 14px; }
+.shortcut-channel-head { display: flex; align-items: center; gap: 12px; }
+.shortcut-channel-meta { flex: 1; min-width: 0; }
+.shortcut-channel-title { font-size: 1rem; font-weight: 700; color: var(--text); }
+.shortcut-channel-sub { font-size: 0.8rem; margin-top: 2px; line-height: 1.4; }
+.shortcut-channel-foot { margin-top: 10px; padding-top: 10px; border-top: 0.5px solid var(--sep); display: flex; align-items: center; }
+.shortcut-status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 600; color: var(--text-2); }
+.shortcut-status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.shortcut-status-badge.is-connected { color: var(--accent-text); }
+.shortcut-status-badge.is-connected .shortcut-status-dot { background: #30D158; }
+.shortcut-status-badge.is-pending .shortcut-status-dot { background: var(--warning); }
+
+.wiz-stepper { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
+.wiz-step-pill { padding: 8px 6px; border-radius: var(--radius-s); border: 0.5px solid var(--sep); background: var(--surface-2); color: var(--text-2); font-size: 0.78rem; font-weight: 600; text-align: center; cursor: pointer; }
+.wiz-step-pill.active { border-color: var(--accent); background: var(--accent-soft, var(--surface-3)); color: var(--accent-text, var(--text)); }
+.wiz-step-pill.done { color: var(--accent-text, var(--text)); }
+.wiz-panel { padding: 14px; }
+.wiz-panel-title { margin: 0 0 6px; font-size: 0.96rem; }
+.wiz-guide-box { margin-top: 8px; padding: 12px; border-radius: var(--radius-s); background: var(--surface-2); border: 0.5px solid var(--sep); }
+.wiz-verify-status { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-s); background: var(--surface-2); font-size: 0.85rem; font-weight: 600; color: var(--text-2); }
+.wiz-verify-status.ok { color: #30D158; border: 0.5px solid rgba(48, 209, 88, 0.35); }
+
 /* ───── v4.1.8 釘選常用 ───── */
 .pinned-row .row-title, .pinned-row .row-sub { display: block; }
 .pinned-row .row-main { background: transparent; border: 0; padding: 0; color: inherit; font: inherit; }

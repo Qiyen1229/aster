@@ -1,162 +1,260 @@
 /**
- * iPhone 捷徑安裝精靈：六個做好、簽署過的捷徑，一個一個「加入」，從「捷徑」App 回來就自動打勾，接著提示下一個。
- * iPhone 不允許 App 代為建立「自動化」，所以 Apple Pay／簡訊兩個捷徑加入後，精靈會用勾選清單帶你做完那一步。
- * 勾選狀態只存在這台裝置（localStorage，依使用者區分），不會上傳；它只是「你做到哪了」的備忘，不是偵測。
+ * 3 步驟捷徑引導設定抽屜（Sheet）：
+ * 步驟 1：一鍵加入捷徑（原生 App 略過連結碼複製貼上；Web/PWA 自動複製並提示貼上）
+ * 步驟 2：開啟 iOS 自動化（明確引導至「捷徑 → 自動化」分頁、設為「立即執行」、提醒勾選「訊息」與銀行、勿加 Gmail/Outlook）
+ * 步驟 3：即時連線驗收（透過傳送測試或檢查 listTokens() use_count 增加確認實際送達，不使用假 visibilitychange 自動通過）
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { SHORTCUTS } from '@/services/inbox';
-import { useAuth } from '@/stores/auth';
+import { Capacitor } from '@capacitor/core';
+import { useEffect, useState } from 'react';
+import { SHORTCUTS, type InboxToken } from '@/services/inbox';
+import { Sheet } from '@/ui/Sheet';
 
-type Def = (typeof SHORTCUTS)[number];
-type Done = { added: string[]; auto: string[] };
+export type ShortcutDef = (typeof SHORTCUTS)[number];
 
-const key = () => `clure.inbox.wizard.${useAuth.getState().user?.id ?? 0}`;
-const PENDING = 'clure.inbox.wizard.pending';
-
-function load(): Done {
-  try {
-    const v = JSON.parse(localStorage.getItem(key()) ?? 'null') as Done | null;
-    return { added: Array.isArray(v?.added) ? v!.added : [], auto: Array.isArray(v?.auto) ? v!.auto : [] };
-  } catch { return { added: [], auto: [] }; }
+export interface ShortcutWizardProps {
+  open: boolean;
+  onClose: () => void;
+  shortcut: ShortcutDef | null;
+  preparing: boolean;
+  hasLink: boolean;
+  tokens: InboxToken[] | null;
+  onAdd: (s: ShortcutDef) => Promise<void>;
+  onSendTest: (channelKey: ShortcutDef['key']) => Promise<boolean>;
+  onRefreshTokens: () => Promise<InboxToken[]>;
 }
-function save(d: Done) { try { localStorage.setItem(key(), JSON.stringify(d)); } catch { /* 私密瀏覽 */ } }
 
-export function ShortcutWizard({ preparing, onAdd, hasLink }: { preparing: boolean; onAdd: (s: Def) => Promise<void>; hasLink: boolean }) {
-  const [done, setDone] = useState<Done>(load);
-  const [justAdded, setJustAdded] = useState<string | null>(null);
+const PENDING_KEY = 'clure.inbox.wizard.pending';
+
+export function countTokenUses(tokens: InboxToken[] | null): number {
+  if (!tokens?.length) return 0;
+  return tokens.reduce((sum, t) => sum + (t.use_count ?? (t.last_used_at ? 1 : 0)), 0);
+}
+
+export function ShortcutWizard({
+  open,
+  onClose,
+  shortcut,
+  preparing,
+  hasLink,
+  tokens,
+  onAdd,
+  onSendTest,
+  onRefreshTokens,
+}: ShortcutWizardProps) {
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [pendingKey, setPendingKey] = useState<string | null>(() => {
-    try { return sessionStorage.getItem(PENDING); } catch { return null; }
+    try { return sessionStorage.getItem(PENDING_KEY); } catch { return null; }
   });
-  const listRef = useRef<HTMLDivElement>(null);
+  const [joined, setJoined] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [baselineCount, setBaselineCount] = useState<number>(0);
+  const [verified, setVerified] = useState(false);
 
-  const mark = useCallback((k: string, what: keyof Done, on: boolean) => {
-    setDone((d) => {
-      const next = { ...d, [what]: on ? [...new Set([...d[what], k])] : d[what].filter((x) => x !== k) };
-      save(next);
-      return next;
-    });
-  }, []);
+  const isNative = Capacitor.isNativePlatform();
+  const currentUseCount = countTokenUses(tokens);
 
-  // 從「捷徑」App 回到 Aster：顯示待確認提示，由使用者明確點「確認已加入」後才打勾（不自動假設匯入成功）
+  // 每次開啟新渠道時重置引導狀態與驗收基準線
+  useEffect(() => {
+    if (!open || !shortcut) return;
+    setStep(1);
+    setJoined(false);
+    setTesting(false);
+    setChecking(false);
+    setVerified(false);
+    setBaselineCount(countTokenUses(tokens));
+  }, [open, shortcut?.key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 若 listTokens() 回傳的 use_count 比基準高，代表實際連線送達成功
+  useEffect(() => {
+    if (open && step === 3 && currentUseCount > baselineCount) {
+      setVerified(true);
+    }
+  }, [open, step, currentUseCount, baselineCount]);
+
+  // 從「捷徑」App 返回前景時只顯示待確認提示，絕不自動打勾
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       try {
-        const k = sessionStorage.getItem(PENDING);
+        const k = sessionStorage.getItem(PENDING_KEY);
         if (k) setPendingKey(k);
       } catch { /* 忽略 */ }
     };
     document.addEventListener('visibilitychange', onVisible);
-    onVisible();
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, []);
 
-  const add = async (s: Def) => {
-    try { sessionStorage.setItem(PENDING, s.key); } catch { /* 忽略 */ }
-    setPendingKey(s.key);
+  if (!shortcut) return null;
+
+  const isPendingThis = pendingKey === shortcut.key;
+
+  const clearPending = () => {
+    setPendingKey(null);
+    try { sessionStorage.removeItem(PENDING_KEY); } catch { /* 忽略 */ }
+  };
+
+  const handleAdd = async () => {
+    try { sessionStorage.setItem(PENDING_KEY, shortcut.key); } catch { /* 忽略 */ }
+    setPendingKey(shortcut.key);
     try {
-      await onAdd(s);
+      await onAdd(shortcut);
     } catch {
-      dismissPending();
+      clearPending();
     }
   };
 
-  const confirmPending = () => {
-    if (!pendingKey) return;
-    mark(pendingKey, 'added', true);
-    setJustAdded(pendingKey);
-    setPendingKey(null);
-    try { sessionStorage.removeItem(PENDING); } catch { /* 忽略 */ }
+  const confirmJoined = () => {
+    clearPending();
+    setJoined(true);
+    setStep(2);
   };
 
-  const dismissPending = () => {
-    setPendingKey(null);
-    try { sessionStorage.removeItem(PENDING); } catch { /* 忽略 */ }
+  const handleSendTest = async () => {
+    setTesting(true);
+    try {
+      const ok = await onSendTest(shortcut.key);
+      const updated = await onRefreshTokens();
+      if (ok && countTokenUses(updated) > baselineCount) {
+        setVerified(true);
+      } else if (ok && countTokenUses(updated) > 0) {
+        setVerified(true);
+      }
+    } finally {
+      setTesting(false);
+    }
   };
 
-  const left = SHORTCUTS.filter((s) => !done.added.includes(s.key));
-  const next = left[0];
-  const pct = Math.round(((SHORTCUTS.length - left.length) / SHORTCUTS.length) * 100);
-  const needAuto = SHORTCUTS.filter((s) => s.automation && done.added.includes(s.key) && !done.auto.includes(s.key));
-  const pendingShortcut = pendingKey ? SHORTCUTS.find((s) => s.key === pendingKey) : undefined;
+  const handleRecheck = async () => {
+    setChecking(true);
+    try {
+      const updated = await onRefreshTokens();
+      if (countTokenUses(updated) > baselineCount) {
+        setVerified(true);
+      }
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const stepLabels: { n: 1 | 2 | 3; label: string }[] = [
+    { n: 1, label: '1. 加入捷徑' },
+    { n: 2, label: '2. 開啟自動化' },
+    { n: 3, label: '3. 連線驗收' },
+  ];
 
   return (
-    <div className="card inbox-oneclick" ref={listRef}>
-      <div className="wiz-head">
-        <b>已加入 {SHORTCUTS.length - left.length}／{SHORTCUTS.length}</b>
-        <div className="wiz-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${pct}%` }} /></div>
+    <Sheet open={open} onClose={onClose} title={`設定：${shortcut.title}`}>
+      <div className="wiz-stepper" role="tablist" aria-label="設定步驟">
+        {stepLabels.map((s) => (
+          <button
+            key={s.n}
+            type="button"
+            role="tab"
+            aria-selected={step === s.n}
+            className={`wiz-step-pill${step === s.n ? ' active' : ''}${step > s.n ? ' done' : ''}`}
+            onClick={() => setStep(s.n)}
+          >
+            {s.label}
+          </button>
+        ))}
       </div>
-      {pendingShortcut && (
-        <div className="wiz-next" role="status" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-          <span>已從「捷徑」App 返回？請確認是否已加入「<b>{pendingShortcut.name}</b>」：</span>
-          <span style={{ display: 'flex', gap: 6 }}>
-            <button type="button" className="pill accent-pill" onClick={confirmPending}>確認已加入</button>
-            <button type="button" className="pill" onClick={dismissPending}>還沒加入</button>
-          </span>
+
+      {step === 1 && (
+        <div className="card wiz-panel">
+          <p className="wiz-panel-title"><b>步驟 1／3：一鍵加入「{shortcut.name}」</b></p>
+          <p className="muted" style={{ marginTop: 4 }}>
+            {isNative
+              ? '已為這台裝置同步專用憑證，點下方按鈕即可直接匯入捷徑，不需手動複製貼上連結碼。'
+              : '點下方按鈕會自動複製你的連結碼並切換到「捷徑」App；跳出「設定捷徑」時，長按輸入框 →「貼上」→「加入捷徑」。'}
+          </p>
+          {!hasLink && !isNative && (
+            <p className="muted" style={{ fontSize: '0.8rem' }}>
+              第一次加入時會自動建立這台裝置專用的連結碼（僅能寫入收件匣，無法讀取帳本）。
+            </p>
+          )}
+          <button type="button" className="btn" disabled={preparing} onClick={() => void handleAdd()}>
+            {preparing ? '準備中…' : `加入「${shortcut.name}」`}
+          </button>
+
+          {isPendingThis && (
+            <div className="wiz-next" role="status" style={{ marginTop: 12 }}>
+              <span>已從「捷徑」App 返回？請確認是否已加入「<b>{shortcut.name}</b>」：</span>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button type="button" className="pill accent-pill" onClick={confirmJoined}>確認已加入</button>
+                <button type="button" className="pill" onClick={clearPending}>還沒加入</button>
+              </div>
+            </div>
+          )}
+
+          {!isPendingThis && (
+            <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className={joined ? 'btn secondary small' : 'muted'}
+                style={joined ? undefined : { background: 'none', border: 0, fontSize: '0.82rem', cursor: 'pointer', padding: '4px 0' }}
+                onClick={() => setStep(2)}
+              >
+                {joined ? '下一步：開啟自動化 →' : '已經加入過了，直接下一步 →'}
+              </button>
+            </div>
+          )}
         </div>
       )}
-      {!pendingShortcut && justAdded && next && (
-        <p className="wiz-next" role="status">✅ 「{SHORTCUTS.find((s) => s.key === justAdded)?.name}」已標記為加入。下一個：<b>{next.title}</b></p>
-      )}
-      <ol className="oneclick-steps">
-        <li>按「<b>加入</b>」：自動複製你的<b>連結碼</b>並切換到「捷徑」App，跳出「加入捷徑」</li>
-        <li>按「<b>設定捷徑</b>」，長按輸入框 →「<b>貼上</b>」，再按「<b>加入捷徑</b>」</li>
-        <li>回到 Aster（左上角「◀ Aster」）後點「<b>確認已加入</b>」打勾，接著加下一個</li>
-      </ol>
-      {next && (
-        <button className="btn" style={{ margin: '4px 0 10px' }} disabled={preparing} onClick={() => void add(next)}>
-          {preparing ? '準備中…' : `依序加入：${next.title}`}
-        </button>
-      )}
-      {SHORTCUTS.map((s) => {
-        const added = done.added.includes(s.key);
-        return (
-          <div key={s.key} className={`oneclick-item${added ? ' is-done' : ''}`}>
-            <div className="oneclick-row">
-              <button className={`wiz-check${added ? ' on' : ''}`} aria-pressed={added} aria-label={`${s.title}：${added ? '已加入（點一下取消標記）' : '尚未加入'}`}
-                onClick={() => mark(s.key, 'added', !added)}>{added ? '✓' : ''}</button>
-              <span className="row-main">
-                <span className="row-title">{s.title}</span>
-                <span className="row-sub" style={{ whiteSpace: 'normal' }}>{s.hint}</span>
-              </span>
-              <button className={`pill${added ? '' : ' accent-pill'}`} disabled={preparing} onClick={() => void add(s)}>{added ? '重新加入' : '加入'}</button>
-            </div>
-            {s.key === 'voice' && added && (
-              <p className="muted oneclick-note">
-                對 Siri 說「<b>{s.name}</b>，午餐 120」即可語音記帳；也可以在任何 App 選取文字或帳單點分享 ➔ 選擇「<b>{s.name}</b>」。
-              </p>
+
+      {step === 2 && (
+        <div className="card wiz-panel">
+          <p className="wiz-panel-title"><b>步驟 2／3：在「捷徑 → 自動化」分頁啟用</b></p>
+          <div className="wiz-guide-box">
+            {shortcut.key === 'auto' ? (
+              <ol className="wiz-auto-steps">
+                <li>打開 iPhone「捷徑」App，切換到底部 <b>「捷徑 → 自動化」</b> 分頁。</li>
+                <li>開啟預先建立的「收到通知」自動化，並將執行方式設為 <b>「立即執行」</b>（建議關閉執行時通知）。</li>
+                <li>點入觸發的 App 清單，務必勾選 <b>「訊息」</b> 與常用銀行／支付 App（LINE Pay、街口等），<b>請勿加入 Gmail 或 Outlook</b>。</li>
+              </ol>
+            ) : (
+              <ol className="wiz-auto-steps">
+                <li>打開 iPhone「捷徑」App，切換到底部 <b>「捷徑 → 自動化」</b> 分頁。</li>
+                <li>開啟預先建立的 <b>「交易」</b> 自動化（可全選要追蹤的卡片），將執行方式設為 <b>「立即執行」</b>。</li>
+                <li>若清單內沒有自動化，點右上角「＋」→「交易」→「立即執行」→「執行捷徑：<b>{shortcut.name}</b>」。</li>
+              </ol>
             )}
           </div>
-        );
-      })}
-      {needAuto.length > 0 && (
-        <div className="wiz-auto" role="group" aria-label="還差一步：啟用自動化">
-          <b>還差一步：啟用自動化</b>
-          {needAuto.map((s) => (
-            <div key={s.key} className="wiz-auto-item">
-              <p className="wiz-auto-title"><b>{s.title}</b></p>
-              <ol className="wiz-auto-steps" style={{ paddingLeft: '1.2rem' }}>
-                <li style={{ listStyle: 'none', margin: '2px 0 4px -1.2rem', fontWeight: 600, color: 'var(--accent)' }}>
-                  💡 推薦方式（已內建銀行、LINE 與 Apple Pay 觸發條件，直接在捷徑內開啟即可）：
-                </li>
-                <li>打開「捷徑」App，找到剛加入的「<b>{s.name}</b>」進入編輯。</li>
-                <li>將最上方觸發區塊的「<b>自動化操作</b>」切換為開啟（建議關閉下方的「<b>通知</b>」避免每次跳提示）。</li>
-                <li>若要增減監聽的銀行 App 或 LINE，點 App 列表右側「<b>＋</b>」即可調整。</li>
-                <li style={{ listStyle: 'none', margin: '8px 0 4px -1.2rem', fontWeight: 600, color: 'var(--text-2)' }}>
-                  備用方式（若捷徑上方未出現觸發區塊，手動建立步驟）：
-                </li>
-                <li>打開「捷徑」App ➔ 下方「自動化」➔ 點「＋」➔ 選「<b>收到通知</b>」（或「交易」）。</li>
-                <li>勾選銀行 App 與 <b>LINE</b> ➔ 選「<b>立即執行</b>」➔ 下一步選「執行捷徑」並指定「<b>{s.name}</b>」。</li>
-              </ol>
-              <p className="muted" style={{ margin: '4px 0 8px', fontSize: '0.8rem' }}>
-                💡 設定後可到下方「<b>已連結的裝置</b>」確認是否顯示「已傳送 N 次資料」，確認捷徑有成功送出。
-              </p>
-              <button className="pill accent-pill" onClick={() => mark(s.key, 'auto', true)}>我做好了 ✓</button>
-            </div>
-          ))}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+            <a className="btn secondary" href="shortcuts://">打開「捷徑」App</a>
+            <button type="button" className="btn" onClick={() => setStep(3)}>我已開啟自動化，下一步 →</button>
+          </div>
         </div>
       )}
-      {!hasLink && <p className="muted" style={{ margin: '8px 0 0', fontSize: '0.8rem' }}>第一次按「加入」時，會自動建立專用的連結碼（只能寄資料進來、不能讀帳）。</p>}
-    </div>
+
+      {step === 3 && (
+        <div className="card wiz-panel">
+          <p className="wiz-panel-title"><b>步驟 3／3：即時連線驗收</b></p>
+          <p className="muted" style={{ marginTop: 4 }}>
+            點擊「傳送測試」驗證這台裝置能正常送出資料到 Aster 收件匣，或實際觸發一次通知後點「重新檢查連線」。
+          </p>
+          <div className={`wiz-verify-status${verified ? ' ok' : ''}`} role="status">
+            {verified
+              ? `✅ 連線驗收通過 · 已接收 ${currentUseCount} 筆資料`
+              : currentUseCount > 0
+                ? `已接收 ${currentUseCount} 筆資料 · 請點「傳送測試」或觸發一次以確認本次設定`
+                : '尚未接收到資料（待驗收）'}
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+            <button type="button" className="btn" disabled={testing || checking} onClick={() => void handleSendTest()}>
+              {testing ? '傳送中…' : '傳送測試'}
+            </button>
+            <button type="button" className="btn secondary" disabled={testing || checking} onClick={() => void handleRecheck()}>
+              {checking ? '檢查中…' : '重新檢查連線'}
+            </button>
+          </div>
+          {verified && (
+            <button type="button" className="btn" style={{ marginTop: 10 }} onClick={onClose}>
+              完成設定
+            </button>
+          )}
+        </div>
+      )}
+    </Sheet>
   );
 }
