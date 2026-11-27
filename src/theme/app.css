@@ -3743,116 +3743,506 @@ html.voice-holding .sheet, html.voice-holding .sheet-backdrop { pointer-events: 
 .wiz-verify-status { margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-s); background: var(--surface-2); font-size: 0.85rem; font-weight: 600; color: var(--text-2); }
 .wiz-verify-status.ok { color: #30D158; border: 0.5px solid rgba(48, 209, 88, 0.35); }
 
-/* ---------- 教學精靈仿真動畫播放元件 ---------- */
+/* ---------- 教學精靈仿真動畫播放元件（iPhone 實機／Gmail 網頁版模擬） ---------- */
 .gdemo-wrap { margin: 10px 0 12px; }
 .gdemo-stage {
-  border-radius: 16px; overflow: hidden;
-  background: linear-gradient(160deg, color-mix(in srgb, var(--surface-2) 92%, #000), var(--surface-2));
+  border-radius: 18px; overflow: hidden;
+  background: #0c0e13;
   border: 0.5px solid var(--glass-border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
 }
 .gdemo-topbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 10px; border-bottom: 0.5px solid var(--sep);
-  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  padding: 7px 12px; border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
 }
-.gdemo-dots { display: inline-flex; gap: 4px; }
-.gdemo-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); opacity: 0.6; }
-.gdemo-badge { font-size: 0.68rem; font-weight: 600; color: var(--accent-text); letter-spacing: 0.02em; }
-.gdemo-body { position: relative; height: 138px; padding: 10px 12px; overflow: hidden; display: grid; place-items: center; }
-.gdemo-phone, .gdemo-browser { width: 100%; max-width: 280px; display: flex; flex-direction: column; gap: 7px; }
-.gdemo-ui-title { font-size: 0.8rem; font-weight: 700; text-align: center; color: var(--text); }
-.gdemo-input {
-  padding: 6px 9px; border-radius: 9px; font-size: 0.72rem; color: var(--text-3);
-  background: var(--surface); border: 0.5px solid var(--sep); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+.gdemo-device-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.7rem; font-weight: 600; color: #e2e8f0; letter-spacing: 0.02em;
 }
-.gdemo-input.filled { color: var(--text); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
-.gdemo-cta {
-  align-self: center; padding: 6px 16px; border-radius: 10px; font-size: 0.76rem; font-weight: 700;
-  background: var(--accent); color: var(--on-accent); text-align: center; transition: transform 220ms ease, background 220ms ease;
+.gdemo-device-tag i {
+  width: 6px; height: 6px; border-radius: 50%; background: #30D158;
+  box-shadow: 0 0 6px rgba(48, 209, 88, 0.7);
 }
-.gdemo-cta.sm { padding: 5px 12px; font-size: 0.72rem; }
-.gdemo-cta.muted { background: var(--surface-3); color: var(--text-2); }
-.gdemo-cta.done { background: #30D158; color: #0b1910; }
-.gdemo-cta.active { transform: scale(0.95); }
-.gdemo-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 5px 8px; border-radius: 8px; background: var(--surface); font-size: 0.72rem; color: var(--text);
+.gdemo-badge { font-size: 0.68rem; font-weight: 600; color: var(--accent-text); }
+
+.gdemo-viewport {
+  position: relative; padding: 12px 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 25%, rgba(64, 156, 255, 0.11), transparent 70%), #0a0c10;
 }
-.gdemo-switch {
-  width: 28px; height: 16px; border-radius: 99px; background: var(--surface-3);
-  padding: 2px; display: inline-flex; align-items: center; transition: background 240ms ease; flex-shrink: 0;
+.gdemo-viewport.is-desktop { padding: 12px; }
+
+/* ── 真實 iPhone 外框與螢幕 ── */
+.gdemo-iphone {
+  width: 214px; height: 274px; padding: 5px;
+  border-radius: 30px; background: linear-gradient(145deg, #4b505c, #24272e);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.65), inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
-.gdemo-switch i { width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform 240ms ease; }
-.gdemo-switch.on { background: #30D158; }
-.gdemo-switch.on i { transform: translateX(12px); }
-.gdemo-pill-row {
-  display: flex; align-items: center; justify-content: center; gap: 4px;
-  padding: 4px 8px; border-radius: 8px; font-size: 0.72rem; background: var(--surface); color: var(--text-2);
+.gdemo-iphone-screen {
+  position: relative; width: 100%; height: 100%;
+  border-radius: 25px; overflow: hidden; background: #000000; color: #ffffff;
+  display: flex; flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
 }
-.gdemo-pill-row.active { color: var(--accent-text); border: 0.5px solid var(--accent); }
-.gdemo-tabbar {
-  display: flex; justify-content: space-around; padding-top: 4px; border-top: 0.5px solid var(--sep);
-  font-size: 0.68rem; color: var(--text-3);
+.gdemo-ios-status {
+  height: 22px; padding: 4px 12px 0; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 9px; font-weight: 700; color: #fff;
 }
-.gdemo-tabbar .on { color: var(--accent-text); font-weight: 700; }
-.gdemo-status {
-  padding: 8px 10px; border-radius: 10px; text-align: center; font-size: 0.75rem; font-weight: 600;
-  background: var(--surface); color: var(--text-2); border: 0.5px solid var(--sep);
+.gdemo-ios-time { width: 26px; letter-spacing: -0.02em; }
+.gdemo-ios-island {
+  width: 54px; height: 13px; border-radius: 99px; background: #000;
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  display: flex; align-items: center; justify-content: flex-end; padding-right: 4px;
 }
-.gdemo-status.ok { color: #30D158; border-color: rgba(48, 209, 88, 0.45); background: rgba(48, 209, 88, 0.1); }
-.gdemo-btn-pair { display: flex; align-items: center; justify-content: center; gap: 8px; }
-.gdemo-copy-box {
-  display: flex; align-items: center; justify-content: space-between; gap: 6px;
-  padding: 5px 8px; border-radius: 8px; background: var(--surface); font-size: 0.7rem; color: var(--text);
-  opacity: 0.35; transition: opacity 220ms ease;
+.gdemo-ios-island i { width: 4px; height: 4px; border-radius: 50%; background: #1a2438; }
+.gdemo-ios-signals { display: inline-flex; align-items: center; gap: 3px; color: #fff; }
+.gdemo-ios-bat {
+  padding: 0 3px; border-radius: 3px; background: #fff; color: #000;
+  font-size: 7.5px; font-weight: 800; line-height: 10px;
 }
-.gdemo-copy-box.show { opacity: 1; }
-.gdemo-mini-btn { padding: 2px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
-.gdemo-ghead {
-  display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px;
-  background: var(--surface); font-size: 0.7rem;
+.gdemo-ios-body {
+  position: relative; flex: 1; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column;
 }
-.gdemo-glogo { font-weight: 700; color: #ea4335; flex-shrink: 0; }
-.gdemo-gsearch { flex: 1; min-width: 0; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gdemo-gsearch.filled { color: var(--text); }
-.gdemo-gear { font-size: 0.85rem; color: var(--text-2); padding: 1px 4px; border-radius: 5px; }
-.gdemo-gear.active { background: var(--accent-soft); color: var(--accent-text); }
-.gdemo-gcontent { display: flex; flex-direction: column; gap: 6px; }
-.gdemo-gline, .gdemo-gcompose {
-  padding: 6px 8px; border-radius: 8px; background: var(--surface); font-size: 0.71rem; color: var(--text-2);
+.gdemo-ios-home {
+  width: 68px; height: 3px; border-radius: 99px;
+  background: rgba(255, 255, 255, 0.8); margin: 4px auto 5px; flex-shrink: 0;
+}
+
+/* ── iOS Aster 頁面 & 彈出「設定捷徑」Sheet ── */
+.gdemo-ios-aster {
+  position: relative; flex: 1; display: flex; flex-direction: column;
+  padding: 6px 10px; background: #0f1116;
+}
+.gdemo-ios-icloud {
+  flex: 1; display: flex; flex-direction: column; justify-content: space-between;
+  padding: 2px 0 4px;
+}
+.gdemo-icloud-center {
+  display: flex; flex-direction: column; align-items: center; text-align: center; gap: 5px;
+  padding: 12px 8px; border-radius: 14px; background: #1c1c1e;
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+.gdemo-sc-icon.lg { width: 36px; height: 36px; border-radius: 9px; }
+.gdemo-ios-nav {
+  display: flex; align-items: center; gap: 6px; padding-bottom: 6px;
+  font-size: 9.5px; font-weight: 700; color: #f1f5f9;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+.gdemo-ios-back { font-size: 13px; color: #0a84ff; line-height: 1; }
+.gdemo-ios-aster-card {
+  margin-top: 8px; padding: 9px; border-radius: 12px;
+  background: #1c1c1e; border: 0.5px solid rgba(255, 255, 255, 0.08);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.gdemo-ios-aster-title { font-size: 9.5px; font-weight: 700; color: #fff; }
+.gdemo-ios-aster-desc { font-size: 8px; color: #98989f; line-height: 1.35; }
+.gdemo-ios-btn {
+  padding: 6px 8px; border-radius: 9px; text-align: center;
+  background: #0a84ff; color: #fff; font-size: 9px; font-weight: 700;
+  transition: transform 180ms ease, background 180ms ease;
+}
+.gdemo-ios-btn.sm { flex: 1; padding: 5px 6px; font-size: 8.5px; }
+.gdemo-ios-btn.muted { background: #2c2c2e; color: #cbd5e1; }
+.gdemo-ios-btn.pressed { transform: scale(0.95); background: #006be0; }
+.gdemo-ios-btn.done { background: #30D158; color: #081c0f; }
+.gdemo-ios-btn-row { display: flex; gap: 6px; }
+
+.gdemo-ios-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 84%;
+  background: #1c1c1e; border-radius: 16px 16px 0 0;
+  border-top: 0.5px solid rgba(255, 255, 255, 0.18);
+  padding: 5px 10px 8px; display: flex; flex-direction: column; gap: 7px;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.75);
+  animation: gdemo-slide-up 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes gdemo-slide-up {
+  from { transform: translateY(24px); opacity: 0.4; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.gdemo-ios-grabber {
+  width: 28px; height: 3px; border-radius: 99px;
+  background: rgba(255, 255, 255, 0.28); margin: 0 auto;
+}
+.gdemo-ios-sheet-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 9px; color: #fff;
+}
+.gdemo-ios-sheet-head .muted { color: #0a84ff; font-size: 8.5px; }
+.gdemo-sc-hero {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-radius: 10px; background: #2c2c2e;
+}
+.gdemo-sc-icon {
+  width: 24px; height: 24px; border-radius: 6px; background: #111;
+  display: grid; place-items: center; flex-shrink: 0;
+}
+.gdemo-sc-name { font-size: 9.5px; font-weight: 700; color: #fff; }
+.gdemo-sc-sub { font-size: 7.5px; color: #98989f; }
+.gdemo-sc-field-wrap { position: relative; display: flex; flex-direction: column; gap: 3px; }
+.gdemo-sc-label { font-size: 8px; font-weight: 600; color: #98989f; }
+.gdemo-sc-input {
+  padding: 6px 8px; border-radius: 8px; background: #2c2c2e;
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  font-size: 8px; color: #8e8e93; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gdemo-sc-input.filled { color: #fff; border-color: #0a84ff; background: rgba(10, 132, 255, 0.14); }
+.gdemo-ios-menu {
+  position: absolute; top: -23px; left: 50%; transform: translateX(-50%); z-index: 3;
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
+  border-radius: 7px; background: #3a3a3c; color: #fff; font-size: 8px; font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+}
+.gdemo-ios-menu i { width: 0.5px; height: 10px; background: rgba(255, 255, 255, 0.25); }
+.gdemo-ios-menu .hi { color: #64d2ff; padding: 1px 4px; border-radius: 4px; }
+.gdemo-ios-menu .hi.pressed { background: rgba(100, 210, 255, 0.28); color: #fff; }
+
+/* ── iOS 捷徑 & 自動化 App（還原真實截圖） ── */
+.gdemo-sc-app {
+  flex: 1; display: flex; flex-direction: column; padding: 6px 9px 4px;
+  background: #000; color: #fff;
+}
+.gdemo-sc-topbar {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;
+}
+.gdemo-sc-circle {
+  width: 18px; height: 18px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  display: grid; place-items: center; font-size: 10px; color: #fff;
+}
+.gdemo-sc-bigtitle { font-size: 14px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 6px; }
+.gdemo-sc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; flex: 1; align-content: start; }
+.gdemo-sc-tile {
+  padding: 8px; border-radius: 10px; background: linear-gradient(145deg, #1b7f79, #114c54);
+  display: flex; flex-direction: column; gap: 6px; font-size: 8.5px;
+}
+.gdemo-sc-tile.muted { background: #1c1c1e; color: #98989f; }
+.gdemo-sc-auto-wrap { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.gdemo-sc-section { font-size: 8.5px; font-weight: 600; color: #98989f; padding-left: 2px; }
+.gdemo-sc-list {
+  border-radius: 11px; background: #1c1c1e; overflow: hidden;
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+.gdemo-sc-row {
+  display: flex; align-items: center; gap: 6px; padding: 7px;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.07);
+}
+.gdemo-sc-row:last-child { border-bottom: 0; }
+.gdemo-sc-badges {
+  display: inline-flex; align-items: center; gap: 2px; font-size: 7px; color: #98989f; flex-shrink: 0;
+}
+.gdemo-sc-badges i {
+  width: 14px; height: 14px; border-radius: 4px; font-style: normal;
+  display: grid; place-items: center; font-size: 8px; color: #fff; font-weight: 700;
+}
+.gdemo-sc-badges .b-wallet { background: #0a84ff; }
+.gdemo-sc-badges .b-kb { background: #ff453a; }
+.gdemo-sc-badges .b-bell { background: #ff3b30; }
+.gdemo-sc-badges .b-aster { background: #2dd4bf; color: #042f2e; }
+.gdemo-sc-row-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.gdemo-sc-row-txt b { font-size: 7.6px; line-height: 1.2; color: #fff; font-weight: 600; }
+.gdemo-sc-row-txt span { font-size: 7px; color: #8e8e93; }
+.gdemo-ios-switch {
+  width: 24px; height: 14px; border-radius: 99px; background: #39393d;
+  padding: 1.5px; display: inline-flex; align-items: center; flex-shrink: 0;
+  transition: background 220ms ease;
+}
+.gdemo-ios-switch i {
+  width: 11px; height: 11px; border-radius: 50%; background: #fff;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.gdemo-ios-switch.on { background: #34C759; }
+.gdemo-ios-switch.on i { transform: translateX(10px); }
+.gdemo-ios-switch.auto-on { animation: gdemo-sw-bg 1500ms ease forwards; }
+.gdemo-ios-switch.auto-on i { animation: gdemo-sw-knob 1500ms cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+@keyframes gdemo-sw-bg {
+  0%, 32% { background: #39393d; }
+  45%, 100% { background: #34C759; }
+}
+@keyframes gdemo-sw-knob {
+  0%, 32% { transform: translateX(0); }
+  45%, 100% { transform: translateX(10px); }
+}
+.gdemo-sc-fab {
+  width: 22px; height: 22px; border-radius: 50%; margin: auto auto 4px;
+  background: #2c2c2e; color: #fff; font-size: 13px; font-weight: 500;
+  display: grid; place-items: center;
+  border: 0.5px solid rgba(255, 255, 255, 0.14);
+}
+.gdemo-sc-action-mini {
+  display: flex; align-items: center; gap: 5px; padding: 5px 7px;
+  border-radius: 8px; background: #1c1c1e; font-size: 7.5px; color: #e5e5ea;
+}
+.gdemo-sc-action-mini i {
+  width: 13px; height: 13px; border-radius: 3.5px; font-style: normal;
+  display: grid; place-items: center; font-size: 7.5px; font-weight: 800;
+  background: #2dd4bf; color: #042f2e; flex-shrink: 0;
+}
+.gdemo-sc-action-mini b {
+  padding: 0 3px; border-radius: 3px; background: rgba(10, 132, 255, 0.22); color: #64d2ff;
+}
+
+.gdemo-sc-tabbar {
+  margin-top: auto; padding: 5px 4px 2px;
+  border-top: 0.5px solid rgba(255, 255, 255, 0.1);
+  display: flex; justify-content: space-around; font-size: 8px; color: #8e8e93;
+}
+.gdemo-sc-tabbar .on { color: #0a84ff; font-weight: 700; }
+
+.gdemo-sc-editor { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.gdemo-sc-ed-title { font-size: 8.5px; font-weight: 700; color: #fff; }
+.gdemo-sc-done { font-size: 8.5px; font-weight: 700; color: #0a84ff; }
+.gdemo-sc-trigger-card {
+  padding: 7px; border-radius: 10px; background: #1c1c1e;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.gdemo-sc-trig-head, .gdemo-sc-trig-foot { font-size: 8px; color: #e5e5ea; }
+.gdemo-sc-app-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.gdemo-sc-app-chips span {
+  padding: 1.5px 5px; border-radius: 5px; font-size: 7.5px; font-weight: 700; color: #fff;
+}
+.gdemo-sc-app-chips .c-wallet { background: #0a84ff; }
+.gdemo-sc-app-chips .c-msg { background: #30d158; color: #052e16; }
+.gdemo-sc-app-chips .c-line { background: #06c755; }
+.gdemo-sc-app-chips .c-bank { background: #e11d48; }
+.gdemo-sc-app-chips .c-jk { background: #dc2626; }
+.gdemo-sc-radio-card {
+  border-radius: 10px; background: #1c1c1e; overflow: hidden;
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+}
+.gdemo-sc-radio {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 9px; font-size: 8.5px; color: #d1d1d6;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+.gdemo-sc-radio:last-child { border-bottom: 0; }
+.gdemo-sc-radio.active { color: #fff; font-weight: 700; background: rgba(10, 132, 255, 0.16); }
+.gdemo-sc-radio b { color: #0a84ff; }
+.gdemo-sc-checklist { display: flex; flex-direction: column; gap: 5px; }
+.gdemo-sc-chk {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px; border-radius: 8px; background: #1c1c1e; font-size: 8px;
+}
+.gdemo-sc-chk.on b { color: #30d158; }
+.gdemo-sc-chk.off { color: #ff453a; background: rgba(255, 69, 58, 0.12); }
+
+/* ── iPhone 驗收與複製元素 ── */
+.gdemo-ios-status-box {
+  padding: 8px; border-radius: 9px; background: #2c2c2e;
+  text-align: center; font-size: 8.5px; font-weight: 600; color: #facc15;
+}
+.gdemo-ios-status-box.ok {
+  background: rgba(48, 209, 88, 0.16); color: #30d158;
+  border: 0.5px solid rgba(48, 209, 88, 0.45);
+}
+.gdemo-packet-bar { height: 3px; border-radius: 99px; background: #2c2c2e; overflow: hidden; }
+.gdemo-packet-bar i {
+  display: block; width: 45%; height: 100%; background: #0a84ff;
+  animation: gdemo-slide-x 900ms ease-in-out infinite;
+}
+@keyframes gdemo-slide-x {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(240%); }
+}
+.gdemo-ios-copy-card {
+  padding: 7px; border-radius: 9px; background: #2c2c2e;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.gdemo-ios-copy-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.gdemo-ios-copy-row code { font-size: 7.5px; color: #e2e8f0; }
+.gdemo-ios-mini {
+  padding: 2px 6px; border-radius: 5px; background: rgba(10, 132, 255, 0.25);
+  color: #64d2ff; font-size: 7.5px; font-weight: 700;
+}
+.gdemo-ios-mini.done { background: #30d158; color: #052e16; }
+.gdemo-ios-toast {
+  align-self: center; padding: 3px 8px; border-radius: 99px;
+  background: rgba(255, 255, 255, 0.92); color: #111; font-size: 7.5px; font-weight: 700;
+}
+
+/* ── Desktop Gmail 網頁版模擬器 ── */
+.gdemo-browser-win {
+  width: 100%; max-width: 344px; height: 226px;
+  border-radius: 12px; overflow: hidden; background: #ffffff; color: #1f1f1f;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+  display: flex; flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.gdemo-chrome-bar {
+  height: 20px; padding: 0 8px; background: #e9eef6;
+  display: flex; align-items: center; gap: 8px; border-bottom: 0.5px solid #d5dbe5;
+}
+.gdemo-win-dots { display: inline-flex; gap: 4px; }
+.gdemo-win-dots i { width: 6px; height: 6px; border-radius: 50%; }
+.gdemo-url-pill {
+  flex: 1; text-align: center; font-size: 7.5px; color: #475569;
+  background: #fff; border-radius: 99px; padding: 1px 8px;
+}
+.gdemo-gmail-screen { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.gdemo-gm-layout { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.gdemo-gm-head {
+  height: 28px; padding: 0 8px; background: #f6f8fc;
+  display: flex; align-items: center; gap: 6px; border-bottom: 0.5px solid #e2e8f0;
+}
+.gdemo-gm-brand { display: inline-flex; align-items: center; gap: 3px; font-size: 9px; font-weight: 700; color: #444746; }
+.gdemo-gm-m {
+  padding: 1px 4px; border-radius: 3px; background: #ea4335; color: #fff; font-size: 7.5px; font-weight: 800;
+}
+.gdemo-gm-search {
+  flex: 1; height: 19px; padding: 0 7px; border-radius: 99px; background: #eaf1fb;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 7.5px; color: #5f6368;
+}
+.gdemo-gm-sliders { padding: 1px 3px; border-radius: 4px; }
+.gdemo-gm-sliders.active { background: #d3e3fd; color: #0b57d0; }
+.gdemo-gm-gear { font-size: 10px; color: #444746; padding: 1px 3px; border-radius: 4px; }
+.gdemo-gm-gear.active { background: #d3e3fd; color: #0b57d0; }
+.gdemo-gm-avatar {
+  width: 15px; height: 15px; border-radius: 50%; background: #0b57d0; color: #fff;
+  font-size: 7.5px; font-weight: 700; display: grid; place-items: center;
+}
+.gdemo-gm-body { flex: 1; min-height: 0; display: flex; background: #fff; }
+.gdemo-gm-side {
+  width: 50px; padding: 6px 4px; background: #f6f8fc; border-right: 0.5px solid #e2e8f0;
+  display: flex; flex-direction: column; gap: 4px; font-size: 7px; color: #444746;
+  flex-shrink: 0;
+}
+.gdemo-gm-compose-btn {
+  padding: 4px 5px; border-radius: 7px; background: #c2e7ff; color: #001d35;
+  font-weight: 700; text-align: center; margin-bottom: 2px;
+}
+.gdemo-gm-side span.on { padding: 2px 4px; border-radius: 99px; background: #d3e3fd; color: #0b57d0; font-weight: 700; }
+.gdemo-gm-main { position: relative; flex: 1; min-width: 0; padding: 6px 8px; }
+
+.gdemo-gm-list { display: flex; flex-direction: column; gap: 4px; }
+.gdemo-gm-mail {
+  display: flex; gap: 6px; padding: 5px 6px; border-radius: 6px;
+  background: #f8fafc; border: 0.5px solid #e2e8f0; font-size: 7.5px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.gdemo-gline.active { color: var(--accent-text); border: 0.5px solid color-mix(in srgb, var(--accent) 55%, transparent); }
-.gdemo-status-chip { padding: 4px 8px; border-radius: 8px; font-size: 0.7rem; background: var(--surface); color: var(--text-2); }
-.gdemo-status-chip.ok { color: #30D158; background: rgba(48, 209, 88, 0.14); font-weight: 600; }
+.gdemo-gm-quick-drawer {
+  position: absolute; top: 4px; right: 6px; width: 106px; padding: 7px;
+  border-radius: 8px; background: #fff; border: 0.5px solid #cbd5e1;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16); display: flex; flex-direction: column; gap: 5px;
+}
+.gdemo-gm-qd-title { font-size: 7.5px; font-weight: 700; color: #444746; }
+.gdemo-gm-qd-btn {
+  padding: 4px 6px; border-radius: 99px; border: 0.5px solid #747775;
+  text-align: center; font-size: 7.5px; font-weight: 700; color: #0b57d0;
+}
 
-/* 明顯但不過大的模擬指標 */
+.gdemo-gm-settings { display: flex; flex-direction: column; gap: 6px; }
+.gdemo-gm-tabs {
+  display: flex; gap: 6px; border-bottom: 0.5px solid #e2e8f0; padding-bottom: 3px;
+  font-size: 6.8px; color: #5f6368; white-space: nowrap; overflow: hidden;
+}
+.gdemo-gm-tabs .on { color: #0b57d0; font-weight: 700; border-bottom: 1.5px solid #0b57d0; padding-bottom: 2px; }
+.gdemo-gm-set-row { display: flex; align-items: center; gap: 6px; font-size: 7.8px; }
+.gdemo-gm-outline-btn {
+  padding: 3px 7px; border-radius: 4px; border: 0.5px solid #94a3b8;
+  background: #f8fafc; color: #1f1f1f; font-size: 7.2px; font-weight: 600;
+}
+.gdemo-gm-radio-line { font-size: 7.2px; color: #475569; }
+.gdemo-gm-modal {
+  position: absolute; left: 16px; right: 16px; top: 34px; padding: 8px;
+  border-radius: 8px; background: #fff; border: 0.5px solid #cbd5e1;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22); display: flex; flex-direction: column; gap: 5px;
+}
+.gdemo-gm-modal-title { font-size: 8px; font-weight: 700; color: #1f1f1f; }
+.gdemo-gm-modal-input {
+  padding: 4px 6px; border-radius: 4px; border: 1px solid #0b57d0; font-size: 7.5px; color: #1f1f1f;
+}
+.gdemo-gm-modal-actions { display: flex; justify-content: flex-end; gap: 8px; font-size: 7.5px; }
+.gdemo-gm-modal-actions b {
+  padding: 2px 8px; border-radius: 4px; background: #0b57d0; color: #fff;
+}
+.gdemo-gm-verify-card {
+  margin-top: 6px; padding: 6px 8px; border-radius: 7px;
+  background: #ecfdf5; border: 0.5px solid #34d399;
+  display: flex; flex-direction: column; gap: 4px; font-size: 7.5px; color: #065f46;
+}
+.gdemo-gm-verify-card b {
+  align-self: flex-start; padding: 3px 8px; border-radius: 5px; background: #0b57d0; color: #fff;
+}
+
+.gdemo-gm-filter-pop {
+  position: absolute; left: 6px; right: 6px; top: 4px; padding: 8px;
+  border-radius: 8px; background: #fff; border: 0.5px solid #cbd5e1;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; gap: 6px;
+}
+.gdemo-gm-f-row { display: flex; align-items: center; gap: 6px; font-size: 7.2px; color: #444746; }
+.gdemo-gm-f-row span { width: 42px; flex-shrink: 0; }
+.gdemo-gm-f-row i {
+  flex: 1; height: 15px; border-bottom: 0.5px solid #cbd5e1; font-style: normal;
+  font-size: 7.2px; color: #0b57d0; line-height: 15px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.gdemo-gm-f-row i.filled { border-bottom-color: #0b57d0; font-weight: 600; }
+.gdemo-gm-f-check { display: flex; align-items: center; gap: 5px; font-size: 7.5px; color: #0b57d0; font-weight: 700; }
+.gdemo-gm-f-foot { display: flex; justify-content: flex-end; font-size: 7.5px; color: #5f6368; }
+.gdemo-gm-f-foot .hi { color: #0b57d0; font-weight: 700; }
+.gdemo-gm-blue-btn {
+  padding: 3px 9px; border-radius: 99px; background: #0b57d0; color: #fff; font-size: 7.5px; font-weight: 700;
+}
+.gdemo-gm-blue-btn.pressed { transform: scale(0.95); background: #0842a0; }
+
+.gdemo-gm-thread { display: flex; flex-direction: column; gap: 5px; }
+.gdemo-gm-subj { font-size: 8.5px; font-weight: 700; color: #1f1f1f; }
+.gdemo-gm-snippet {
+  padding: 6px; border-radius: 6px; background: #f8fafc; font-size: 7.5px; color: #475569;
+}
+.gdemo-gm-reply-bar { display: flex; gap: 6px; font-size: 7.5px; }
+.gdemo-gm-reply-bar span {
+  padding: 3px 8px; border-radius: 99px; border: 0.5px solid #94a3b8; color: #444746;
+}
+.gdemo-gm-reply-bar span.active { border-color: #0b57d0; color: #0b57d0; background: #e8f0fe; font-weight: 700; }
+.gdemo-gm-fwd-box {
+  padding: 6px; border-radius: 7px; border: 0.5px solid #cbd5e1; background: #fff;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.gdemo-gm-fwd-to { display: flex; gap: 5px; font-size: 7.2px; color: #5f6368; border-bottom: 0.5px solid #e2e8f0; padding-bottom: 3px; }
+.gdemo-gm-fwd-to b { color: #0b57d0; }
+.gdemo-gm-fwd-actions { display: flex; justify-content: flex-start; }
+.gdemo-gm-aster-ok {
+  padding: 4px 8px; border-radius: 7px; background: #ecfdf5; border: 0.5px solid #34d399;
+  color: #065f46; font-size: 7.5px; font-weight: 700;
+}
+
+/* 明顯但不過大的模擬滑鼠指標（相對於實機螢幕） */
 .gdemo-cursor {
-  position: absolute; z-index: 5; pointer-events: none;
+  position: absolute; z-index: 12; pointer-events: none;
   transform: translate(-3px, -2px);
-  transition: left 480ms cubic-bezier(0.22, 1, 0.36, 1), top 480ms cubic-bezier(0.22, 1, 0.36, 1), transform 180ms ease;
+  transition: left 380ms cubic-bezier(0.22, 1, 0.36, 1), top 380ms cubic-bezier(0.22, 1, 0.36, 1);
   filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
 }
-.gdemo-cursor.is-click { animation: gdemo-tap 900ms ease-in-out infinite; }
+.gdemo-cursor.is-click { animation: gdemo-tap 560ms ease-in-out 380ms 1; }
 .gdemo-ripple {
   position: absolute; left: -6px; top: -6px; width: 18px; height: 18px; border-radius: 50%;
-  border: 2px solid var(--accent); opacity: 0; animation: gdemo-ripple 900ms ease-out infinite;
+  border: 2px solid #38bdf8; opacity: 0; animation: gdemo-ripple 580ms ease-out 380ms 1;
 }
 @keyframes gdemo-tap {
   0%, 100% { transform: translate(-3px, -2px) scale(1); }
   45% { transform: translate(-3px, -2px) scale(0.84); }
 }
 @keyframes gdemo-ripple {
-  0% { transform: scale(0.5); opacity: 0.9; }
-  100% { transform: scale(1.7); opacity: 0; }
+  0% { transform: scale(0.5); opacity: 0.95; }
+  100% { transform: scale(1.75); opacity: 0; }
 }
 .gdemo-caption {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 7px 12px; border-top: 0.5px solid var(--sep); font-size: 0.76rem; color: var(--text-2);
+  padding: 8px 12px; border-top: 0.5px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.78rem; color: #e2e8f0; background: rgba(255, 255, 255, 0.03);
 }
-.gdemo-step-dots { display: inline-flex; gap: 4px; flex-shrink: 0; }
-.gdemo-step-dots i { width: 5px; height: 5px; border-radius: 99px; background: var(--surface-3); transition: width 220ms ease, background 220ms ease; }
-.gdemo-step-dots i.on { width: 14px; background: var(--accent); }
+.gdemo-step-dots { display: inline-flex; gap: 5px; flex-shrink: 0; }
+.gdemo-step-dots button {
+  width: 6px; height: 6px; padding: 0; border: 0; border-radius: 99px;
+  background: rgba(255, 255, 255, 0.25); cursor: pointer;
+  transition: width 220ms ease, background 220ms ease;
+}
+.gdemo-step-dots button.on { width: 16px; background: var(--accent); }
 
 /* ───── v4.1.8 釘選常用 ───── */
 .pinned-row .row-title, .pinned-row .row-sub { display: block; }
