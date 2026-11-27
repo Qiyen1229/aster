@@ -188,9 +188,7 @@ export default function ShortcutsPage() {
       <header className="topbar">
         <button className="icon-btn" aria-label="返回" onClick={() => navigate(-1)}><Icon name="chevronL" /></button>
         <h1>自動記帳捷徑</h1>
-        <button className="icon-btn" aria-label="進階設定與裝置管理" onClick={() => setAdvancedOpen(true)}>
-          <Icon name="more" />
-        </button>
+        <span aria-hidden="true" />
       </header>
 
       <p className="muted" style={{ margin: '4px 4px 12px', fontSize: '0.88rem', lineHeight: 1.55 }}>

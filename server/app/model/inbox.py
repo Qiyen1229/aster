@@ -36,7 +36,7 @@ class InboxBooking(Base):
 
 
 class InboxItem(Base):
-    """一則待記帳項目。App 確認記帳或略過後刪除；30 天沒處理自動清除。"""
+    """一則待記帳項目。App 確認記帳或略過後刪除；24 小時沒處理自動清除。"""
 
     __tablename__ = "inbox_items"
     __table_args__ = {"sqlite_autoincrement": True}

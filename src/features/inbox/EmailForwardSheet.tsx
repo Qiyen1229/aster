@@ -15,6 +15,7 @@ import {
 } from '@/services/inbox';
 import { ask, useUI } from '@/stores/ui';
 import { Sheet } from '@/ui/Sheet';
+import { GuideDemoVideo } from './GuideDemoVideo';
 
 export const GMAIL_FILTER_TEMPLATE =
   '消費 OR 刷卡 OR 扣款 OR 付款 OR 入帳 OR 轉帳 OR 交易通知 OR LINE Pay OR 街口 OR 悠遊付 OR 國泰世華 OR 中國信託 OR 玉山 OR 台新 OR 富邦 OR 永豐';
@@ -207,6 +208,7 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       {step === 1 && (
         <section className="wiz-panel" style={{ padding: '4px 0' }}>
           <h3 className="wiz-panel-title" style={{ marginBottom: 6 }}>步驟 1：輸入你的 Gmail</h3>
+          <GuideDemoVideo scene="email-step1" />
           <p className="muted" style={{ margin: '0 0 12px', fontSize: '0.86rem', lineHeight: 1.55 }}>
             輸入要轉寄銀行／支付通知的 Gmail，Aster 會為你產生一組專屬轉寄地址。
           </p>
@@ -253,6 +255,7 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       {step === 2 && binding && (
         <section className="wiz-panel" style={{ padding: '4px 0' }}>
           <h3 className="wiz-panel-title" style={{ marginBottom: 10 }}>步驟 2：驗證轉寄地址</h3>
+          <GuideDemoVideo scene="email-step2" />
           <div className="card" style={{ padding: 14 }}>
             <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.85rem', lineHeight: 1.65 }}>
               <li>用電腦版瀏覽器打開 <b>Gmail → 設定 → 查看所有設定 → 轉寄和 POP/IMAP</b>。</li>
@@ -340,6 +343,7 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       {step === 3 && binding && (
         <section className="wiz-panel" style={{ padding: '4px 0' }}>
           <h3 className="wiz-panel-title" style={{ marginBottom: 6 }}>步驟 3：設定 Gmail 篩選器</h3>
+          <GuideDemoVideo scene="email-step3" />
           <p className="muted" style={{ margin: '0 0 10px', fontSize: '0.85rem', lineHeight: 1.5 }}>
             建議只轉寄銀行／行動支付的消費與入帳通知，避免一般信件或廣告也送進收件匣。
           </p>
@@ -383,6 +387,7 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       {step === 4 && binding && (
         <section className="wiz-panel" style={{ padding: '4px 0' }}>
           <h3 className="wiz-panel-title" style={{ marginBottom: 6 }}>步驟 4：測試通知與完成</h3>
+          <GuideDemoVideo scene="email-step4" />
           <div className="card" style={{ padding: 14, marginBottom: 12 }}>
             <div style={{ fontSize: '0.86rem', fontWeight: 600, marginBottom: 6 }}>如何手動轉寄測試信</div>
             <ol style={{ margin: 0, paddingLeft: 18, fontSize: '0.84rem', lineHeight: 1.65 }}>

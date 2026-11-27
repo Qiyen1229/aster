@@ -8,6 +8,7 @@ import { Capacitor } from '@capacitor/core';
 import { useEffect, useState } from 'react';
 import { SHORTCUTS, type InboxToken } from '@/services/inbox';
 import { Sheet } from '@/ui/Sheet';
+import { GuideDemoVideo } from './GuideDemoVideo';
 
 export type ShortcutDef = (typeof SHORTCUTS)[number];
 
@@ -163,6 +164,7 @@ export function ShortcutWizard({
       {step === 1 && (
         <div className="card wiz-panel">
           <p className="wiz-panel-title"><b>步驟 1／3：一鍵加入「{shortcut.name}」</b></p>
+          <GuideDemoVideo scene="shortcut-step1" />
           <p className="muted" style={{ marginTop: 4 }}>
             {isNative
               ? '已為這台裝置同步專用憑證，點下方按鈕即可直接匯入捷徑，不需手動複製貼上連結碼。'
@@ -205,6 +207,7 @@ export function ShortcutWizard({
       {step === 2 && (
         <div className="card wiz-panel">
           <p className="wiz-panel-title"><b>步驟 2／3：在「捷徑 → 自動化」分頁啟用</b></p>
+          <GuideDemoVideo scene="shortcut-step2" />
           <div className="wiz-guide-box">
             <ol className="wiz-auto-steps">
               <li>打開 iPhone「捷徑」App，切換到底部 <b>「捷徑 → 自動化」</b> 分頁。</li>
@@ -222,6 +225,7 @@ export function ShortcutWizard({
       {step === 3 && (
         <div className="card wiz-panel">
           <p className="wiz-panel-title"><b>步驟 3／3：即時連線驗收</b></p>
+          <GuideDemoVideo scene="shortcut-step3" />
           <p className="muted" style={{ marginTop: 4 }}>
             點擊「傳送測試」驗證這台裝置能正常送出資料到 Aster 收件匣，或實際觸發一次通知後點「重新檢查連線」。
           </p>

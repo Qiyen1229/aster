@@ -3,7 +3,7 @@
 - 權杖格式 clr_ 加 32 個隨機字元，資料庫只存 SHA-256；建立時回傳一次，之後只顯示末四碼
 - 權杖只能「送進收件匣」，不能讀取任何帳目
 - 確認（ack）時才刪除，並回傳實際刪除的 id；帳目寫入與防重複由客戶端處理
-- 30 天沒處理的項目自動清除；每人最多 500 筆待處理、10 組權杖
+- 24 小時沒處理的項目自動清除；每人最多 500 筆待處理、10 組權杖
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from app.service.errors import ServiceError
 TOKEN_PREFIX = "clr_"
 MAX_TOKENS = 10
 MAX_PENDING = 500
-RETENTION = timedelta(days=30)
+RETENTION = timedelta(hours=24)
 RETRY_DEDUPE_WINDOW = timedelta(seconds=60)
 
 _HARD_NOISE_RE = re.compile(
