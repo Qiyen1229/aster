@@ -77,6 +77,7 @@ describe('SortableList 左側 ≡ 拖曳手柄排序', () => {
 
     await act(async () => {
       window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientY: 100 }));
+      await new Promise((r) => requestAnimationFrame(r));
     });
     expect(host.querySelector('.sort-insert-line')).toBeTruthy();
 

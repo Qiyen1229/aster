@@ -4428,7 +4428,7 @@ button.accent, button.muted { min-height: 44px; }
   border: 0.5px solid var(--glass-border);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   overflow: hidden;
-  transition: all 180ms ease;
+  transition: opacity 160ms ease, border-color 160ms ease;
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
