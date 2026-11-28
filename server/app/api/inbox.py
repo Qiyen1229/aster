@@ -8,13 +8,14 @@ from __future__ import annotations
 import hmac
 import logging
 
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_client, get_current_user, get_db, rate_limit
 from app.core.config import get_settings
 from app.core.rate_limit import RateLimiter
 from app.core.request_info import ClientInfo
+from app.db import session_scope
 from app.model import User
 from app.schema.auth import MessageResponse
 from app.schema.inbox import (
@@ -83,8 +84,22 @@ def ack(body: AckRequest, user: User = Depends(get_current_user), db: Session = 
     return AckResult(ids=InboxService(db).ack(user, body.ids))
 
 
+def _dispatch_inbox_push(user_id: int, item_id: int) -> None:
+    """在背景發送收件匣推播，避免 WebPush 外部連線延遲導致 iPhone 捷徑要求逾時。"""
+    try:
+        from app.service.push_service import PushService
+
+        for bg_db in session_scope():
+            PushService(bg_db).send_to_user(
+                user_id,
+                {"title": "📥 收件匣有新項目", "body": "打開 Aster 確認記帳", "url": "/inbox", "tag": f"inbox:{item_id}"},
+            )
+    except Exception:  # noqa: BLE001 — 推播失敗不能影響收件
+        log.exception("收件匣推播失敗")
+
+
 @hook_router.post("/inbox", response_model=HookResult, summary="iPhone 捷徑送進收件匣")
-def hook(body: HookItem, client: ClientInfo = Depends(get_client), authorization: str | None = Header(None), x_aster_token: str | None = Header(None),
+def hook(body: HookItem, background_tasks: BackgroundTasks, client: ClientInfo = Depends(get_client), authorization: str | None = Header(None), x_aster_token: str | None = Header(None),
          x_clure_token: str | None = Header(None),
          t: str | None = Query(None, max_length=80), db: Session = Depends(get_db)) -> HookResult:
     # 匯入式捷徑只有一個「連結碼」（網址＋?t=權杖），手動設定的捷徑則用 Authorization 標頭；X-Clure-Token 是更名前的標頭
@@ -98,12 +113,8 @@ def hook(body: HookItem, client: ClientInfo = Depends(get_client), authorization
         return HookResult(message="已略過非消費通知")
     if status == "duplicate" or item is None:
         return HookResult(message="已收到（重複通知略過）")
-    # 立即推播：有訂閱背景推播的裝置會收到通知，點開直達收件匣。內容不含金額與商家（與 E2EE 推播一致）；失敗不影響收件
-    try:
-        from app.service.push_service import PushService
-        PushService(db).send_to_user(user.id, {"title": "📥 收件匣有新項目", "body": "打開 Aster 確認記帳", "url": "/inbox", "tag": f"inbox:{item.id}"})
-    except Exception:  # noqa: BLE001 — 推播失敗不能影響捷徑收件
-        log.exception("收件匣推播失敗")
+    # 改由背景工作發送推播，讓捷徑立即收到 200 回應不逾時
+    background_tasks.add_task(_dispatch_inbox_push, user.id, item.id)
     if body.source == "siri" and body.text:
         return HookResult(message=f"已記進 Aster 收件匣：{body.text[:40]}")
     return HookResult(message="已送到 Aster，打開 App 確認記帳")
@@ -149,6 +160,7 @@ def delete_email_forward(
 @hook_router.post("/email", response_model=HookResult, summary="Cloudflare Email Worker 轉寄收信 Webhook")
 def hook_email(
     body: EmailForwardHookIn,
+    background_tasks: BackgroundTasks,
     client: ClientInfo = Depends(get_client),
     x_aster_webhook_secret: str | None = Header(None),
     db: Session = Depends(get_db),
@@ -168,12 +180,5 @@ def hook_email(
     if status == "duplicate" or item is None:
         return HookResult(message="已收到（重複通知略過）")
 
-    try:
-        from app.service.push_service import PushService
-        PushService(db).send_to_user(
-            user.id,
-            {"title": "📥 收件匣有新項目", "body": "打開 Aster 確認記帳", "url": "/inbox", "tag": f"inbox:{item.id}"},
-        )
-    except Exception:  # noqa: BLE001 — 推播失敗不能影響收信結果
-        log.exception("Email Webhook 收件匣推播失敗")
+    background_tasks.add_task(_dispatch_inbox_push, user.id, item.id)
     return HookResult(message="已送到 Aster，打開 App 確認記帳")
