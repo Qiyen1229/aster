@@ -40,7 +40,7 @@ const SWIPE_UP_PX = 34; // 往上滑超過這個距離＝叫出 AI
 const HOME = '/'; // 滑動選取時，中間首頁按鈕的代號
 
 export function TabBar({ hidden = false }: { hidden?: boolean } = {}) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
   const openAdd = useUI((s) => s.openAdd);
   const plusMode = isLedgerPath(pathname);
@@ -360,10 +360,10 @@ export function TabBar({ hidden = false }: { hidden?: boolean } = {}) {
     } else setLensShown(false);
     if (!to || cancelled) return;
     if (to === HOME) {
-      if (pathname !== HOME) startTransition(() => { markDockNav(); navigate(HOME); });
+      if (pathname !== HOME || search) startTransition(() => { markDockNav(); navigate(HOME); });
       return;
     }
-    if (to !== activeTo) startTransition(() => { markDockNav(); navigate(to); });
+    if (pathname !== to || search) startTransition(() => { markDockNav(); navigate(to); });
   };
   const onCapUp = (e: React.PointerEvent<HTMLDivElement>) => finishScrub(e, false);
   const onCapCancel = (e: React.PointerEvent<HTMLDivElement>) => finishScrub(e, true);
