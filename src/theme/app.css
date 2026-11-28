@@ -4211,25 +4211,29 @@ html.voice-holding .sheet, html.voice-holding .sheet-backdrop { pointer-events: 
   color: #065f46; font-size: 7.5px; font-weight: 700;
 }
 
-/* 明顯但不過大的模擬滑鼠指標（相對於實機螢幕） */
+/* 明顯但不過大的模擬滑鼠指標（純 transform/opacity 動畫，避免 iOS WebKit left/top + drop-shadow 產生殘影） */
 .gdemo-cursor {
   position: absolute; z-index: 12; pointer-events: none;
-  transform: translate(-3px, -2px);
-  transition: left 380ms cubic-bezier(0.22, 1, 0.36, 1), top 380ms cubic-bezier(0.22, 1, 0.36, 1);
-  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.55));
+  transform: translate3d(-5px, -3px, 0);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
-.gdemo-cursor.is-click { animation: gdemo-tap 560ms ease-in-out 380ms 1; }
+.gdemo-cursor.is-click { animation: gdemo-tap 700ms cubic-bezier(0.22, 1, 0.36, 1) 180ms 1; }
 .gdemo-ripple {
-  position: absolute; left: -6px; top: -6px; width: 18px; height: 18px; border-radius: 50%;
-  border: 2px solid #38bdf8; opacity: 0; animation: gdemo-ripple 580ms ease-out 380ms 1;
+  position: absolute; left: -9px; top: -9px; width: 28px; height: 28px; border-radius: 50%;
+  border: 2.5px solid #38bdf8; opacity: 0;
+  will-change: transform, opacity;
+  animation: gdemo-ripple 720ms ease-out 260ms 1;
 }
 @keyframes gdemo-tap {
-  0%, 100% { transform: translate(-3px, -2px) scale(1); }
-  45% { transform: translate(-3px, -2px) scale(0.84); }
+  0% { transform: translate3d(-5px, -3px, 0) scale(1); }
+  40% { transform: translate3d(-5px, -3px, 0) scale(0.82); }
+  100% { transform: translate3d(-5px, -3px, 0) scale(1); }
 }
 @keyframes gdemo-ripple {
-  0% { transform: scale(0.5); opacity: 0.95; }
-  100% { transform: scale(1.75); opacity: 0; }
+  0% { transform: scale(0.4); opacity: 0.95; }
+  100% { transform: scale(1.65); opacity: 0; }
 }
 .gdemo-real-frame {
   position: relative;

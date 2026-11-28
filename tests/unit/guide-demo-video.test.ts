@@ -29,7 +29,7 @@ describe('GuideDemoVideo 真實截圖與動態指標教學', () => {
     { scene: 'shortcut-step1', expectedSteps: 3, expectedImgPrefix: '/guides/sc-1' },
     { scene: 'shortcut-step2', expectedSteps: 3, expectedImgPrefix: '/guides/sc-2' },
     { scene: 'email-step2', expectedSteps: 4, expectedImgPrefix: '/guides/gm-2' },
-    { scene: 'email-step3', expectedSteps: 3, expectedImgPrefix: '/guides/gm-3' },
+    { scene: 'email-step3', expectedSteps: 4, expectedImgPrefix: '/guides/gm-3' },
     { scene: 'email-step4', expectedSteps: 3, expectedImgPrefix: '/guides/gm-4' },
   ];
 
@@ -47,7 +47,7 @@ describe('GuideDemoVideo 真實截圖與動態指標教學', () => {
       expect(host.querySelector('.gdemo-badge')?.textContent).toBe(`步驟 1／${expectedSteps}`);
 
       await act(async () => {
-        vi.advanceTimersByTime(1850);
+        vi.advanceTimersByTime(3500);
       });
       expect(host.querySelector('.gdemo-badge')?.textContent).toBe(`步驟 2／${expectedSteps}`);
 
@@ -72,7 +72,7 @@ describe('GuideDemoVideo 真實截圖與動態指標教學', () => {
     expect(host.querySelector('.gdemo-badge')?.textContent).toBe('步驟 1／4');
 
     await act(async () => {
-      vi.advanceTimersByTime(1850 * 2);
+      vi.advanceTimersByTime(3500 * 2);
     });
     expect(host.querySelector('.gdemo-badge')?.textContent).toBe('步驟 3／4');
   });

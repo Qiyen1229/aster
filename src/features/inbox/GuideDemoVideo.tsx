@@ -24,18 +24,20 @@ interface FrameDef {
   phase: number;
 }
 
+const FRAME_MS = 3500;
+
 const SCENE_FRAMES: Record<GuideDemoScene, FrameDef[]> = {
   'shortcut-step1': [
     {
       img: '/guides/sc-1a.jpg',
       caption: '打開 iCloud 捷徑後，點下方藍色「設定捷徑」',
-      cursor: { x: 50, y: 92, click: true },
+      cursor: { x: 50, y: 96, click: true },
       phase: 0,
     },
     {
       img: '/guides/sc-1b.jpg',
       caption: '長按「Text」輸入框，選擇「貼上」專屬連結碼',
-      cursor: { x: 28, y: 23, click: true },
+      cursor: { x: 16, y: 24, click: true },
       phase: 1,
     },
     {
@@ -49,19 +51,19 @@ const SCENE_FRAMES: Record<GuideDemoScene, FrameDef[]> = {
     {
       img: '/guides/sc-2a.jpg',
       caption: '在「自動化」分頁確認「自動化操作」為綠色開啟',
-      cursor: { x: 86, y: 65, click: true },
+      cursor: { x: 86, y: 74, click: true },
       phase: 0,
     },
     {
       img: '/guides/sc-2a.jpg',
       caption: '點上方 App 列表確認已勾選銀行／支付通知來源',
-      cursor: { x: 50, y: 36, click: true },
+      cursor: { x: 42, y: 54, click: true },
       phase: 1,
     },
     {
       img: '/guides/sc-2a.jpg',
       caption: '下方「感應任何卡片時」也可依需求開啟 ✓',
-      cursor: { x: 45, y: 83, click: true },
+      cursor: { x: 34, y: 96, click: true },
       phase: 2,
     },
   ],
@@ -75,25 +77,25 @@ const SCENE_FRAMES: Record<GuideDemoScene, FrameDef[]> = {
     {
       img: '/guides/gm-2a.jpg',
       caption: '點 Gmail 右上角齒輪 ⚙ →「查看所有設定」',
-      cursor: { x: 85, y: 16, click: true },
+      cursor: { x: 86, y: 16, click: true },
       phase: 0,
     },
     {
       img: '/guides/gm-2b.jpg',
-      caption: '切到「轉寄和 POP/IMAP」→ 點「新增轉寄地址」',
-      cursor: { x: 50, y: 39, click: true },
+      caption: '切到「轉寄和 POP/IMAP」分頁',
+      cursor: { x: 45, y: 41, click: true },
       phase: 1,
     },
     {
       img: '/guides/gm-2c.jpg',
-      caption: '貼上專屬轉寄地址並點「下一步」送出驗證',
-      cursor: { x: 64, y: 76, click: true },
+      caption: '點「新增轉寄地址」貼上專屬地址，再點「下一步」',
+      cursor: { x: 59, y: 80, click: true },
       phase: 2,
     },
     {
       img: '/guides/gm-2d.jpg',
       caption: '完成 Gmail 驗證後，維持「停用轉寄」即可 ✓',
-      cursor: { x: 32, y: 22, click: true },
+      cursor: { x: 26, y: 28, click: true },
       phase: 3,
     },
   ],
@@ -106,34 +108,40 @@ const SCENE_FRAMES: Record<GuideDemoScene, FrameDef[]> = {
     },
     {
       img: '/guides/gm-3b.jpg',
-      caption: '在「包含字詞」貼上關鍵字 → 點「建立篩選器」',
-      cursor: { x: 71, y: 86, click: true },
+      caption: '在「包含字詞」欄位貼上消費與銀行關鍵字',
+      cursor: { x: 42, y: 39, click: true },
       phase: 1,
+    },
+    {
+      img: '/guides/gm-3b.jpg',
+      caption: '點右下角「建立篩選器」進入動作設定',
+      cursor: { x: 69, y: 84, click: true },
+      phase: 2,
     },
     {
       img: '/guides/gm-3c.jpg',
       caption: '勾選「轉寄給」專屬地址並點「建立篩選器」✓',
-      cursor: { x: 82, y: 87, click: true },
-      phase: 2,
+      cursor: { x: 77, y: 88, click: true },
+      phase: 3,
     },
   ],
   'email-step4': [
     {
       img: '/guides/gm-4a.jpg',
-      caption: '打開銀行消費通知信，點右上角 ⋮ →「轉寄」（或下方轉寄）',
-      cursor: { x: 85, y: 21, click: true },
+      caption: '打開銀行消費通知信，點右上角 ⋮ →「轉寄」',
+      cursor: { x: 83, y: 21, click: true },
       phase: 0,
     },
     {
       img: '/guides/gm-4b.jpg',
-      caption: '收件者貼上專屬轉寄地址，點左下角藍色「傳送」',
-      cursor: { x: 12, y: 92, click: true },
+      caption: '在「收件者」欄位貼上專屬轉寄地址',
+      cursor: { x: 28, y: 17, click: true },
       phase: 1,
     },
     {
       img: '/guides/gm-4b.jpg',
-      caption: '送出後回到 Aster，狀態會顯示「已連線 · 1 筆」✓',
-      cursor: { x: 12, y: 92 },
+      caption: '點左下角藍色「傳送」，回到 Aster 即會顯示「已連線」✓',
+      cursor: { x: 12, y: 90, click: true },
       phase: 2,
     },
   ],
@@ -152,17 +160,18 @@ function CursorPointer({
 }) {
   return (
     <div
+      key={stepKey}
       className={`gdemo-cursor${click ? ' is-click' : ''}`}
       style={{ left: `${x}%`, top: `${y}%` }}
       aria-hidden="true"
     >
-      {click && <span key={stepKey} className="gdemo-ripple" />}
+      {click && <span className="gdemo-ripple" />}
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
         <path
           d="M5.5 3.2L19 12.2l-6.1 1.4 2.7 5.5-2.2 1.1-2.7-5.5L6.5 19V3.2Z"
           fill="#FFFFFF"
           stroke="#111318"
-          strokeWidth="1.9"
+          strokeWidth="2.1"
           strokeLinejoin="round"
         />
       </svg>
@@ -228,7 +237,7 @@ export function GuideDemoVideo({ scene }: { scene: GuideDemoScene }) {
     setIdx(0);
     const id = window.setInterval(() => {
       setIdx((i) => (i + 1) % frames.length);
-    }, 1850);
+    }, FRAME_MS);
     return () => window.clearInterval(id);
   }, [scene, frames.length]);
 
