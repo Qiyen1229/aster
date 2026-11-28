@@ -14,29 +14,25 @@ import { useUI } from '@/stores/ui';
 import { EmptyState, Segmented, Switch } from '@/ui/controls';
 import { CustomSelect } from '@/ui/form';
 import { Icon } from '@/ui/Icon';
+import { DragHandle, SortableList } from '@/ui/SortableList';
 import type { InvestSettings, QuoteSettings } from '@/db/repo/settings';
 
 function Order({ title, value, onChange }: { title: string; value: string[]; onChange: (v: string[]) => void }) {
-  const move = (i: number, d: -1 | 1) => {
-    const j = i + d;
-    if (j < 0 || j >= value.length) return;
-    const n = [...value];
-    [n[i], n[j]] = [n[j], n[i]];
-    onChange(n);
-  };
   return (
     <>
-      <div className="section-title">{title}（由上而下依序嘗試）</div>
-      <div className="list">
-        {value.map((id, i) => (
-          <div key={id} className="row">
+      <div className="section-title">{title}（按住左側 ≡ 拖曳調整優先順序）</div>
+      <SortableList
+        items={value}
+        getKey={(id) => id}
+        onReorder={onChange}
+        renderItem={(id, i, { handleProps }) => (
+          <div className="row">
+            <DragHandle handleProps={handleProps} />
             <span className="num muted" style={{ width: 20 }}>{i + 1}</span>
             <span className="row-main">{providerById(id)?.label ?? id}{providerById(id)?.keyName ? <span className="row-sub">需要 API Key</span> : null}</span>
-            <button className="icon-btn plain" aria-label="上移" onClick={() => move(i, -1)}><Icon name="up" size={18} /></button>
-            <button className="icon-btn plain" aria-label="下移" onClick={() => move(i, 1)}><Icon name="down" size={18} /></button>
           </div>
-        ))}
-      </div>
+        )}
+      />
     </>
   );
 }

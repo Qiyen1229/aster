@@ -22,6 +22,7 @@ import { ExplainButton } from '@/ui/Explain';
 import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
 import { CustomSelect } from '@/ui/form';
 import { CatIcon, Icon, iconEmoji } from '@/ui/Icon';
+import { DragHandle, SortableList } from '@/ui/SortableList';
 import { AccountSheet } from './AccountSheet';
 import { lazy, Suspense } from 'react';
 import { usePortfolio } from '@/services/portfolio';
@@ -62,13 +63,12 @@ export default function AccountsPage() {
 
   const groups = ACCOUNT_TYPES.map((t) => ({ ...t, items: visible.filter((a) => a.type === t.type) })).filter((g) => g.items.length);
 
-  const move = async (a: Account, dir: -1 | 1) => {
+  const reorderGroup = async (groupType: Account['type'], nextGroupItems: Account[]) => {
     const ordered = [...all].sort((x, y) => x.sort - y.sort);
-    const i = ordered.findIndex((x) => x.id === a.id);
-    const j = i + dir;
-    if (j < 0 || j >= ordered.length) return;
-    [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
-    await reorderAccounts(ordered.map((x) => x.id));
+    const groupIds = new Set(nextGroupItems.map((x) => x.id));
+    let gi = 0;
+    const merged = ordered.map((x) => (x.type === groupType && groupIds.has(x.id) ? nextGroupItems[gi++] : x));
+    await reorderAccounts(merged.map((x) => x.id));
   };
 
   return (
@@ -107,27 +107,38 @@ export default function AccountsPage() {
             groups.map((g) => (
               <section key={g.type}>
                 <div className="section-title"><CatIcon icon={g.icon} size={18} style={{ verticalAlign: -3, marginRight: 6 }} />{g.label}</div>
-                <div className="list">
-                  {g.items.map((a) => (
-                    <div key={a.id} style={{ position: 'relative' }}>
-                      <button className="row with-icon" onClick={() => (sorting ? undefined : navigate(`/accounts/${a.id}`))}>
+                {sorting ? (
+                  <SortableList
+                    items={g.items}
+                    getKey={(a) => a.id}
+                    onReorder={(next) => reorderGroup(g.type, next)}
+                    renderItem={(a, _i, { handleProps }) => (
+                      <div className="row with-icon">
+                        <DragHandle handleProps={handleProps} />
                         <span className="cat-icon" style={{ ['--c' as string]: a.color }} aria-hidden="true"><CatIcon icon={a.icon} /></span>
                         <div className="row-main">
                           <div className="row-title">{a.name}{a.archived ? '（已封存）' : ''}</div>
                           <div className="row-sub">{a.currency}{!a.includeInNetWorth ? ' · 不計入淨資產' : ''}{a.type === 'credit' && a.credit ? <CreditSub account={a} /> : null}</div>
                         </div>
                         <Amount minor={a.balanceMinor} currency={a.currency} tone={a.balanceMinor < 0 ? 'neg' : 'none'} className="num" />
-                        {!sorting && <Icon name="chevronR" className="row-chev" />}
-                      </button>
-                      {sorting && (
-                        <div style={{ position: 'absolute', right: 8, top: 0, bottom: 0, display: 'flex', alignItems: 'center', background: 'var(--surface)' }}>
-                          <button className="icon-btn plain" aria-label={`${a.name} 上移`} onClick={() => void move(a, -1)}><Icon name="up" /></button>
-                          <button className="icon-btn plain" aria-label={`${a.name} 下移`} onClick={() => void move(a, 1)}><Icon name="down" /></button>
+                      </div>
+                    )}
+                  />
+                ) : (
+                  <div className="list">
+                    {g.items.map((a) => (
+                      <button key={a.id} className="row with-icon" onClick={() => navigate(`/accounts/${a.id}`)}>
+                        <span className="cat-icon" style={{ ['--c' as string]: a.color }} aria-hidden="true"><CatIcon icon={a.icon} /></span>
+                        <div className="row-main">
+                          <div className="row-title">{a.name}{a.archived ? '（已封存）' : ''}</div>
+                          <div className="row-sub">{a.currency}{!a.includeInNetWorth ? ' · 不計入淨資產' : ''}{a.type === 'credit' && a.credit ? <CreditSub account={a} /> : null}</div>
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                        <Amount minor={a.balanceMinor} currency={a.currency} tone={a.balanceMinor < 0 ? 'neg' : 'none'} className="num" />
+                        <Icon name="chevronR" className="row-chev" />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </section>
             ))
           )}

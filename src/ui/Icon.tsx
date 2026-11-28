@@ -237,6 +237,13 @@ const ICON_NODES: Record<string, React.ReactNode> = {
       <circle cx="15" cy="19" r="1.2" fill="currentColor" stroke="none" />
     </>
   ),
+  dragBars: (
+    <>
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h16" />
+    </>
+  ),
   info: (
     <>
       <circle cx="12" cy="12" r="10" />
