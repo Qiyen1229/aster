@@ -68,10 +68,10 @@ const SCENE_FRAMES: Record<GuideDemoScene, FrameDef[]> = {
     },
   ],
   'shortcut-step3': [
-    { caption: '點擊「傳送測試」發送驗證封包', cursor: { x: 32, y: 46, click: true }, phase: 0 },
-    { caption: '測試封包正傳送至 Aster 收件匣…', cursor: { x: 50, y: 34 }, phase: 1 },
-    { caption: '顯示「連線驗收通過 · 已接收 1 筆」', cursor: { x: 50, y: 34, click: true }, phase: 2 },
-    { caption: '點「完成設定」即可開始自動記帳 ✓', cursor: { x: 50, y: 59, click: true }, phase: 3 },
+    { caption: '點擊「傳送測試」發送驗證封包', cursor: { x: 28, y: 80, click: true }, phase: 0 },
+    { caption: '測試封包正傳送至 Aster 收件匣…', cursor: { x: 50, y: 50 }, phase: 1 },
+    { caption: '顯示「連線驗收通過 · 已接收 1 筆」', cursor: { x: 50, y: 50, click: true }, phase: 2 },
+    { caption: '點「完成設定」即可開始自動記帳 ✓', cursor: { x: 72, y: 80, click: true }, phase: 3 },
   ],
   'email-step2': [
     {
@@ -151,80 +151,77 @@ function CursorPointer({
   x,
   y,
   click,
-  stepKey,
 }: {
   x: number;
   y: number;
   click?: boolean;
-  stepKey: string;
 }) {
   return (
-    <div
-      key={stepKey}
-      className={`gdemo-cursor${click ? ' is-click' : ''}`}
-      style={{ left: `${x}%`, top: `${y}%` }}
-      aria-hidden="true"
-    >
-      {click && <span className="gdemo-ripple" />}
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-        <path
-          d="M5.5 3.2L19 12.2l-6.1 1.4 2.7 5.5-2.2 1.1-2.7-5.5L6.5 19V3.2Z"
-          fill="#FFFFFF"
-          stroke="#111318"
-          strokeWidth="2.1"
-          strokeLinejoin="round"
-        />
-      </svg>
+    <div className="gdemo-cursor-layer" aria-hidden="true">
+      <div
+        className="gdemo-cursor-mover"
+        style={{ transform: `translate3d(${x}%, ${y}%, 0)` }}
+      >
+        <div className={`gdemo-cursor${click ? ' is-click' : ''}`}>
+          {click && <span className="gdemo-ripple" />}
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M5.5 3.2L19 12.2l-6.1 1.4 2.7 5.5-2.2 1.1-2.7-5.5L6.5 19V3.2Z"
+              fill="#FFFFFF"
+              stroke="#111318"
+              strokeWidth="2.1"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+      </div>
     </div>
   );
 }
 
-/** 步驟 3 連線驗收無實機截圖，保留 Aster 驗收狀態示意 */
+/** 步驟 3 連線驗收卡片（貼近 Aster 真實深色 UI） */
 function ShortcutStep3VerifyView({
   phase,
   cursor,
-  stepKey,
 }: {
   phase: number;
   cursor: FrameDef['cursor'];
-  stepKey: string;
 }) {
   return (
-    <div className="gdemo-iphone">
-      <div className="gdemo-iphone-screen">
-        <div className="gdemo-ios-status">
-          <span className="gdemo-ios-time">9:41</span>
-          <span className="gdemo-ios-island">
-            <i />
-          </span>
-          <span className="gdemo-ios-signals">
-            <span className="gdemo-ios-bat">88</span>
-          </span>
-        </div>
-        <div className="gdemo-ios-body">
-          <div className="gdemo-ios-aster">
-            <div className="gdemo-aster-sheet" style={{ marginTop: 14 }}>
-              <div className="gdemo-aster-sheet-head">步驟 3 / 3：連線驗收</div>
-              <div className={`gdemo-ios-status-box${phase >= 2 ? ' ok' : ''}`}>
-                {phase === 0 && '尚未收到測試封包'}
-                {phase === 1 && '傳送測試封包中…'}
-                {phase >= 2 && '● 連線驗收通過 · 已接收 1 筆 ✓'}
-              </div>
-              {phase === 1 && (
-                <div className="gdemo-packet-bar">
-                  <i />
-                </div>
-              )}
-              <div className="gdemo-aster-row-btns">
-                <span className={`gdemo-aster-sec${phase === 0 ? ' pressed' : ''}`}>傳送測試</span>
-                <span className={`gdemo-aster-cta${phase === 3 ? ' pressed' : ''}`}>完成設定</span>
-              </div>
-            </div>
-          </div>
-          <CursorPointer x={cursor.x} y={cursor.y} click={cursor.click} stepKey={stepKey} />
-        </div>
-        <div className="gdemo-ios-home" />
+    <div className="gdemo-s3-card">
+      <div className="gdemo-s3-head">
+        <span>步驟 3 / 3：連線驗收</span>
+        <span className="gdemo-s3-pill">收件匣狀態</span>
       </div>
+
+      <div className={`gdemo-s3-status${phase >= 2 ? ' ok' : ''}`}>
+        <div className="gdemo-s3-status-row">
+          <i className={`gdemo-s3-dot${phase === 1 ? ' sending' : phase >= 2 ? ' ok' : ''}`} />
+          <span>
+            {phase === 0 && '等待測試封包'}
+            {phase === 1 && '傳送測試封包中…'}
+            {phase >= 2 && '連線驗收通過 · 已接收 1 筆 ✓'}
+          </span>
+        </div>
+        {phase === 1 ? (
+          <div className="gdemo-packet-bar">
+            <i />
+          </div>
+        ) : (
+          <div className="gdemo-s3-sub">
+            {phase === 0
+              ? '點下方「傳送測試」確認捷徑與 Aster 連線正常'
+              : '已收到捷徑測試資料，日後消費通知會自動送進收件匣'}
+          </div>
+        )}
+      </div>
+
+      <div className="gdemo-s3-actions">
+        <span className={`gdemo-s3-btn-sec${phase === 0 ? ' pressed' : ''}`}>傳送測試</span>
+        <span className={`gdemo-s3-btn-pri${phase === 3 ? ' pressed' : ''}`}>完成設定</span>
+      </div>
+
+      <CursorPointer x={cursor.x} y={cursor.y} click={cursor.click} />
     </div>
   );
 }
@@ -270,14 +267,12 @@ export function GuideDemoVideo({ scene }: { scene: GuideDemoScene }) {
                 x={f.cursor.x}
                 y={f.cursor.y}
                 click={f.cursor.click}
-                stepKey={`${scene}-${idx}`}
               />
             </div>
           ) : (
             <ShortcutStep3VerifyView
               phase={f.phase}
               cursor={f.cursor}
-              stepKey={`${scene}-${idx}`}
             />
           )}
         </div>

@@ -62,12 +62,12 @@ describe('GuideDemoVideo 真實截圖與動態指標教學', () => {
     },
   );
 
-  it('shortcut-step3 應顯示 iPhone 連線驗收示意與模擬指標並推進 4 個階段', async () => {
+  it('shortcut-step3 應顯示連線驗收卡片與模擬指標並推進 4 個階段', async () => {
     await act(async () => {
       root!.render(React.createElement(GuideDemoVideo, { scene: 'shortcut-step3' }));
     });
 
-    expect(host.querySelector('.gdemo-iphone')).toBeTruthy();
+    expect(host.querySelector('.gdemo-s3-card')).toBeTruthy();
     expect(host.querySelector('.gdemo-cursor')).toBeTruthy();
     expect(host.querySelector('.gdemo-badge')?.textContent).toBe('步驟 1／4');
 
