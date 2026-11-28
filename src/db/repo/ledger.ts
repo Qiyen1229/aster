@@ -4,7 +4,7 @@
  */
 import Dexie from 'dexie';
 import { db, uid } from '../schema';
-import type { Transaction, Transfer, TxType } from '../types';
+import type { Debt, Person, Transaction, Transfer, TxType } from '../types';
 import { allocate, convertMinor } from '@/domain/money';
 import { transferEffects, txEffect } from '@/domain/ledger';
 import { getRate } from '@/services/fx';
@@ -139,10 +139,157 @@ export async function addTransaction(input: TxInput, prepared?: Awaited<ReturnTy
   return (await db.transactions.get(targetId)) ?? row;
 }
 
-export async function updateTransaction(id: string, input: TxInput, opts?: { allowLinked?: boolean }): Promise<Transaction> {
+export interface SplitShareInput {
+  personName: string;
+  amountMinor: number;
+  debtId?: string;
+}
+
+async function applySplitShares(
+  tx: Transaction,
+  shares: SplitShareInput[],
+  opts?: { note?: string; date?: string; oldCurrency?: string },
+): Promise<Transaction> {
+  if (tx.type !== 'expense') {
+    if (shares.length > 0 || tx.split) throw new Error('只有支出帳目可以分帳');
+    return tx;
+  }
+  if ((tx.stockTradeId || tx.dividendId || tx.transferId) && shares.length > 0) {
+    throw new Error('連動帳目不支援分帳');
+  }
+
+  const byIds = tx.split?.debtIds?.length
+    ? (await db.debts.bulkGet(tx.split.debtIds)).filter((d): d is Debt => !!d && !d.deletedAt)
+    : [];
+  const byTxId = await db.debts.where('transactionId').equals(tx.id).filter((d) => !d.deletedAt).toArray();
+  const existingMap = new Map<string, Debt>();
+  for (const d of [...byIds, ...byTxId]) existingMap.set(d.id, d);
+  const existingDebts = [...existingMap.values()];
+
+  const settledDebts = existingDebts.filter((d) => d.settled === 1);
+  const settledSum = settledDebts.reduce((s, d) => s + d.amountMinor, 0);
+  if (settledSum > tx.amountMinor) {
+    throw new Error(`帳目總金額不可小於已結清的分帳金額（${settledSum}）`);
+  }
+  if (opts?.oldCurrency && opts.oldCurrency !== tx.currency && settledDebts.length > 0) {
+    throw new Error('已有已結清的分帳，不可變更幣別');
+  }
+
+  const tsNow = Date.now();
+  const matchedIds = new Set<string>();
+  const finalDebtIds: string[] = [];
+  let othersSum = 0;
+
+  const getOrCreatePerson = async (name: string): Promise<Person> => {
+    const n = name.trim();
+    if (!n) throw new Error('分帳對象名稱不可為空');
+    const exist = await db.people.where('name').equals(n).first();
+    if (exist) return exist;
+    const p: Person = { id: uid(), name: n, createdAt: tsNow, updatedAt: tsNow };
+    await db.people.add(p);
+    return p;
+  };
+
+  for (const sh of shares) {
+    if (!Number.isSafeInteger(sh.amountMinor) || sh.amountMinor < 0) {
+      throw new Error('分攤金額必須是非負整數最小單位');
+    }
+    let matched: Debt | undefined;
+    if (sh.debtId && existingMap.has(sh.debtId) && !matchedIds.has(sh.debtId)) {
+      matched = existingMap.get(sh.debtId);
+    }
+    if (matched?.settled === 1) {
+      if (matched.amountMinor !== sh.amountMinor) {
+        throw new Error('已結清的分帳項目不可修改金額');
+      }
+      matchedIds.add(matched.id);
+      finalDebtIds.push(matched.id);
+      othersSum += matched.amountMinor;
+      continue;
+    }
+    if (sh.amountMinor === 0) continue;
+
+    const person = await getOrCreatePerson(sh.personName);
+    if (!matched) {
+      matched = existingDebts.find((d) => !matchedIds.has(d.id) && d.settled === 0 && d.personId === person.id);
+    }
+    if (matched) {
+      matchedIds.add(matched.id);
+      await db.debts.update(matched.id, {
+        personId: person.id,
+        amountMinor: sh.amountMinor,
+        currency: tx.currency,
+        date: opts?.date ?? tx.date,
+        note: opts?.note ?? (tx.note || '分帳'),
+        updatedAt: tsNow,
+      });
+      finalDebtIds.push(matched.id);
+    } else {
+      const newId = uid();
+      await db.debts.add({
+        id: newId,
+        personId: person.id,
+        direction: 'they_owe_me',
+        amountMinor: sh.amountMinor,
+        currency: tx.currency,
+        transactionId: tx.id,
+        groupId: tx.id,
+        date: opts?.date ?? tx.date,
+        note: opts?.note ?? (tx.note || '分帳'),
+        settled: 0,
+        createdAt: tsNow,
+        updatedAt: tsNow,
+      });
+      finalDebtIds.push(newId);
+    }
+    othersSum += sh.amountMinor;
+  }
+
+  for (const d of existingDebts) {
+    if (matchedIds.has(d.id)) continue;
+    if (d.settled === 1) {
+      throw new Error('已結清的分帳項目不可刪除');
+    }
+    await db.debts.update(d.id, { deletedAt: tsNow, updatedAt: tsNow });
+  }
+
+  if (othersSum > tx.amountMinor) {
+    throw new Error('分攤金額超過帳目總額');
+  }
+  const myShareMinor = tx.amountMinor - othersSum;
+  const nextTx = { ...tx, updatedAt: tsNow };
+  if (finalDebtIds.length === 0) {
+    delete nextTx.split;
+  } else {
+    nextTx.split = { myShareMinor, debtIds: finalDebtIds };
+  }
+  return nextTx;
+}
+
+/** 事後分帳／編輯既有支出的分帳份額：保留 tx.id、decisionId 與帳戶扣款全額，並同步未結清欠款 */
+export async function updateTransactionSplit(
+  txId: string,
+  shares: SplitShareInput[],
+  opts?: { note?: string; date?: string },
+): Promise<Transaction> {
+  let saved!: Transaction;
+  await db.transaction('rw', [db.transactions, db.debts, db.people], async () => {
+    const old = await db.transactions.get(txId);
+    if (!old || old.deletedAt) throw new Error('帳目不存在');
+    saved = await applySplitShares(old, shares, opts);
+    await db.transactions.put(saved);
+  });
+  return saved;
+}
+
+export async function updateTransaction(
+  id: string,
+  input: TxInput,
+  opts?: { allowLinked?: boolean; splitShares?: SplitShareInput[] },
+): Promise<Transaction> {
   const amounts = await resolveAmounts(input);
   let saved!: Transaction;
-  await db.transaction('rw', db.transactions, db.accounts, db.attachments, db.debts, async () => {
+  await db.transaction('rw', [db.transactions, db.accounts, db.attachments, db.debts, db.people], async () => {
     const old = await db.transactions.get(id);
     if (!old) throw new Error('帳目不存在');
     if (!opts?.allowLinked && (old.stockTradeId || old.dividendId || old.transferId)) {
@@ -153,7 +300,9 @@ export async function updateTransaction(id: string, input: TxInput, opts?: { all
     // 只覆蓋有給值的欄位，保留週期／分期／股票等來源關聯；專案可被清除
     const row = Object.fromEntries(Object.entries(toRow(id, input, amounts, old.createdAt)).filter(([, v]) => v !== undefined));
     saved = { ...old, ...row, projectId: input.projectId || undefined, fxRateDec: amounts.fxRateDec } as Transaction;
-    if (old.split && (old.amountMinor !== saved.amountMinor || old.currency !== saved.currency || old.type !== saved.type)) {
+    if (opts?.splitShares !== undefined) {
+      saved = await applySplitShares(saved, opts.splitShares, { note: saved.note || '分帳', date: saved.date, oldCurrency: old.currency });
+    } else if (old.split && (old.amountMinor !== saved.amountMinor || old.currency !== saved.currency || old.type !== saved.type)) {
       if (saved.type !== 'expense') throw new Error('分帳帳目只能是支出');
       const debts = await db.debts.bulkGet(old.split.debtIds);
       if (debts.some((d) => !d || d.deletedAt || d.settled)) throw new Error('請先恢復或取消結清相關欠款，再修改分帳金額');

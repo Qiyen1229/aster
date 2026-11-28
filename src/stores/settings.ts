@@ -8,15 +8,20 @@ import { setFontSizePreference } from '@/app/viewport';
 
 interface SettingsState extends Settings {
   ready: boolean;
+  /** 每位往來對象最後使用的結清帳戶（personId → accountId） */
+  personSettleAccMap: Record<string, string>;
   hydrate: (s: Settings) => void;
   set: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+  setPersonSettleAcc: (personId: string, accountId: string) => void;
 }
 
 export const useSettings = create<SettingsState>((set) => ({
   ...DEFAULT_SETTINGS,
   ready: false,
+  personSettleAccMap: {},
   hydrate: (s) => {
-    const settings = { ...s, themePalette: normalizeThemePalette(s.themePalette) };
+    const personSettleAccMap = (s as Partial<SettingsState>).personSettleAccMap ?? {};
+    const settings = { ...s, personSettleAccMap, themePalette: normalizeThemePalette(s.themePalette) };
     set({ ...settings, ready: true });
     applyTheme(settings);
     setFontSizePreference(s.fontSize);
@@ -26,6 +31,12 @@ export const useSettings = create<SettingsState>((set) => ({
     void saveSetting(key, value);
     if (key === 'theme' || key === 'themePalette' || key === 'accent' || key === 'upColor' || key === 'travelModeProjectId') applyTheme(useSettings.getState());
     if (key === 'fontSize') setFontSizePreference(value as Settings['fontSize']);
+  },
+  setPersonSettleAcc: (personId, accountId) => {
+    if (!personId || !accountId) return;
+    const next = { ...useSettings.getState().personSettleAccMap, [personId]: accountId };
+    set({ personSettleAccMap: next });
+    void saveSetting('personSettleAccMap' as keyof Settings, next as never);
   },
 }));
 

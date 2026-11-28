@@ -93,7 +93,7 @@ export type Op =
   | { kind: 'tx_delete'; ids: string[] }
   | { kind: 'goal'; input: Omit<Goal, 'id' | 'createdAt' | 'updatedAt'> }
   | { kind: 'rule'; input: Omit<CategoryRule, 'id' | 'createdAt' | 'updatedAt' | 'hits'> }
-  | { kind: 'tx'; draftId?: string; input: { type: 'expense' | 'income'; accountId: string; categoryId: string; amountMinor: number; currency: string; date: string; note: string; projectId?: string; tagNames?: string[]; merchant?: string; excludeFromBudget?: boolean; excludeFromStats?: boolean; split?: { myShareMinor: number; personName: string } } }
+  | { kind: 'tx'; draftId?: string; input: { type: 'expense' | 'income'; accountId: string; categoryId: string; amountMinor: number; currency: string; date: string; note: string; projectId?: string; tagNames?: string[]; merchant?: string; excludeFromBudget?: boolean; excludeFromStats?: boolean; split?: { myShareMinor: number; personName?: string; shares?: { personName: string; amountMinor: number }[] } } }
   | { kind: 'transfer'; input: { fromAccountId: string; toAccountId: string; amountMinor: number; date: string; note: string } }
   | { kind: 'debt'; input: { direction: 'i_owe_them' | 'they_owe_me'; personName: string; amountMinor: number; currency: string; date: string; note: string; accountId?: string } }
   | { kind: 'settle'; debtId: string; accountId?: string }
@@ -516,11 +516,41 @@ function addTransactionTool(a: Record<string, unknown>, d: AgentData, W: Work, w
   const tagNames = [...new Set((Array.isArray(a.tags) ? a.tags : []).map((t) => str(t).slice(0, 20)).filter(Boolean))].slice(0, 6);
   const amountMinor = minorOf(amount, acc.currency);
   const note = str(a.note).slice(0, 60) || cat.name;
-  // 分帳：我付我的份額，對方欠我剩下的（跟記帳面板的分帳一樣，會建立應收）
+  // 分帳：支援多人 shares（[{ person, amount }]）或單人（{ my_share, person }）
   const sp = a.split && typeof a.split === 'object' ? (a.split as Record<string, unknown>) : null;
-  const myShare = sp ? num(sp.my_share) : NaN;
-  const person = sp ? str(sp.person).slice(0, 30) : '';
-  const split = sp && myShare > 0 && myShare < amount && person ? { myShareMinor: minorOf(myShare, acc.currency), personName: person } : undefined;
+  const rawShares = Array.isArray(sp?.shares) ? sp.shares : Array.isArray(a.shares) ? a.shares : null;
+  let split: { myShareMinor: number; personName?: string; shares?: { personName: string; amountMinor: number }[] } | undefined;
+  let splitInvalid = false;
+  if (type === 'expense' && rawShares && rawShares.length > 0) {
+    const parsedShares: { personName: string; amountMinor: number }[] = [];
+    let valid = true;
+    for (const item of rawShares) {
+      if (!item || typeof item !== 'object') { valid = false; break; }
+      const rec = item as Record<string, unknown>;
+      const pName = str(rec.person).slice(0, 30);
+      const sAmt = num(rec.amount);
+      if (!pName || !(sAmt > 0)) { valid = false; break; }
+      parsedShares.push({ personName: pName, amountMinor: minorOf(sAmt, acc.currency) });
+    }
+    const sumSharesMinor = parsedShares.reduce((s, x) => s + x.amountMinor, 0);
+    if (valid && parsedShares.length > 0 && sumSharesMinor > 0 && sumSharesMinor <= amountMinor) {
+      split = {
+        myShareMinor: amountMinor - sumSharesMinor,
+        ...(parsedShares.length === 1 ? { personName: parsedShares[0].personName } : {}),
+        shares: parsedShares,
+      };
+    } else {
+      splitInvalid = true;
+    }
+  } else if (sp) {
+    const myShare = num(sp.my_share);
+    const person = str(sp.person).slice(0, 30);
+    if (type === 'expense' && myShare > 0 && myShare < amount && person) {
+      split = { myShareMinor: minorOf(myShare, acc.currency), personName: person };
+    } else {
+      splitInvalid = true;
+    }
+  }
   const before = W.balances.get(acc.id) ?? acc.balanceMinor;
   const after = before + (type === 'income' ? amountMinor : -amountMinor);
   W.balances.set(acc.id, after);
@@ -528,11 +558,16 @@ function addTransactionTool(a: Record<string, unknown>, d: AgentData, W: Work, w
   const lines = [`${type === 'income' ? '收入' : '支出'}${fmt(amountMinor, acc.currency)}，分類「${cat.name}」，${date}`, balanceLine(acc, before, after, warnings)];
   if (project) lines.push(`歸入專案「${project.name}」`);
   if (tagNames.length) lines.push(`標籤：${tagNames.join('、')}${tagNames.some((t) => !(d.tags ?? []).some((x) => x.name === t)) ? '（不存在的名稱會自動建立）' : ''}`);
-  if (split) lines.push(`分帳：我付 ${fmt(split.myShareMinor, acc.currency)}，${split.personName} 欠我 ${fmt(amountMinor - split.myShareMinor, acc.currency)}（會建立一筆應收，帳目只算我的份額）`);
+  if (split?.shares?.length) {
+    const shareDesc = split.shares.map((s) => `${s.personName} 欠我 ${fmt(s.amountMinor, acc.currency)}`).join('、');
+    lines.push(`分帳：我付 ${fmt(split.myShareMinor, acc.currency)}，${shareDesc}（會建立 ${split.shares.length} 筆應收，帳目只算我的份額）`);
+  } else if (split) {
+    lines.push(`分帳：我付 ${fmt(split.myShareMinor, acc.currency)}，${split.personName} 欠我 ${fmt(amountMinor - split.myShareMinor, acc.currency)}（會建立一筆應收，帳目只算我的份額）`);
+  }
   if (a.exclude_budget === true) lines.push('不計入預算');
   if (a.exclude_stats === true) lines.push('不計入收支統計');
   if (!str(a.category)) warnings.push(`你沒有指定分類，先放在「${cat.name}」`);
-  if (sp && !split) warnings.push('分帳資訊不完整（我的份額要介於 0 和總金額之間、要有對象名字），這筆不分帳');
+  if (splitInvalid) warnings.push('分帳資訊不完整（分攤金額或對象有誤，或超過總金額），這筆不分帳');
   const draftId = `draft-tx-${W.draftSeq++}`;
   const createdAt = Math.max(Date.now(), ...work.map((t) => t.createdAt)) + 1;
   work.push({ id: draftId, type, accountId: acc.id, categoryId: cat.id, amountMinor, currency: acc.currency, date, note,
@@ -541,9 +576,10 @@ function addTransactionTool(a: Record<string, unknown>, d: AgentData, W: Work, w
     merchant: str(a.merchant) || undefined, excludeFromBudget: a.exclude_budget === true, excludeFromStats: a.exclude_stats === true,
     ...(split ? { split: { myShareMinor: split.myShareMinor, debtIds: [] } } : {}),
   });
+  const debtsCreated = split ? (split.shares?.length ?? 1) : 0;
   return {
     op: { kind: 'tx', draftId, input: { type, accountId: acc.id, categoryId: cat.id, amountMinor, currency: acc.currency, date, note, projectId: project?.id, tagNames: tagNames.length ? tagNames : undefined, merchant: str(a.merchant).slice(0, 30) || undefined, excludeFromBudget: a.exclude_budget === true || undefined, excludeFromStats: a.exclude_stats === true || undefined, split } },
-    preview: { tool: 'add_transaction', title: `${type === 'income' ? '收入' : '支出'} ${fmt(amountMinor, acc.currency)}（${note}）→「${acc.name}」`, lines, warnings, txCreated: 1, accountsTouched: 1, accountIds: [acc.id], debtsCreated: split ? 1 : 0 },
+    preview: { tool: 'add_transaction', title: `${type === 'income' ? '收入' : '支出'} ${fmt(amountMinor, acc.currency)}（${note}）→「${acc.name}」`, lines, warnings, txCreated: 1, accountsTouched: 1, accountIds: [acc.id], debtsCreated },
   };
 }
 

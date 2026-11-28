@@ -7,18 +7,21 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { listLedger, type LedgerItem } from '@/db/repo/ledger';
+import { db } from '@/db/schema';
 import { periodRange, shiftPeriod, todayKey, type PeriodUnit } from '@/domain/period';
 import { totals } from '@/domain/ledger';
 import { useAccounts, useCategories, useTags } from '@/app/hooks';
 import { TravelScopeBanner } from '@/app/TravelScopeBanner';
 import { useSettings } from '@/stores/settings';
+import { useUI } from '@/stores/ui';
 import { Icon } from '@/ui/Icon';
 import { Amount, EmptyState, Segmented, SkeletonRows } from '@/ui/controls';
-import { CustomDateInput } from '@/ui/form';
+import { CustomDateInput, CustomSelect } from '@/ui/form';
+import { Sheet } from '@/ui/Sheet';
 import { LedgerRow } from './LedgerRow';
 import { FilterSheet, filterCount } from './FilterSheet';
-import { categoryChildren, matchFilter } from '@/db/repo/plan';
-import type { TxFilter } from '@/db/types';
+import { categoryChildren, matchFilter, settleDebt, unsettleDebt } from '@/db/repo/plan';
+import type { Account, Debt, Person, Transaction, TxFilter } from '@/db/types';
 import { statAmount } from '@/domain/ledger';
 import { formatMoney } from '@/domain/money';
 import { useScreenDetail } from '@/stores/screenContext';
@@ -38,8 +41,23 @@ export default function LedgerPage() {
   const [keyword, setKeyword] = useState('');
   const [filter, setFilter] = useState<TxFilter>({});
   const [filterOpen, setFilterOpen] = useState(false);
+  const [splitTxId, setSplitTxId] = useState<string | null>(null);
   const children = useLiveQuery(() => categoryChildren(), []);
+  const splitDebtsRaw = useLiveQuery(() => db.debts.filter((d) => !d.deletedAt && !!d.transactionId).toArray(), []);
+  const peopleRaw = useLiveQuery(() => db.people.toArray(), []);
   const accountFilter = params.get('account') ?? undefined;
+
+  const splitDebtsByTx = useMemo(() => {
+    const map = new Map<string, Debt[]>();
+    for (const d of splitDebtsRaw ?? []) {
+      if (!d.transactionId) continue;
+      const arr = map.get(d.transactionId) ?? [];
+      arr.push(d);
+      map.set(d.transactionId, arr);
+    }
+    return map;
+  }, [splitDebtsRaw]);
+  const peopleMap = useMemo(() => new Map((peopleRaw ?? []).map((p) => [p.id, p])), [peopleRaw]);
 
   const range = unit === 'custom' ? custom : periodRange(anchor, unit, { monthStartDay: settings.monthStartDay, weekStart: settings.weekStart });
   const accounts = useAccounts(true);
@@ -195,8 +213,24 @@ export default function LedgerPage() {
                     </span>
                   </div>
                 ) : (
-                  <LedgerRow item={r.item} cats={cats.map} accounts={accounts.map} tags={tags.map}
-                    showDate={unit === 'year'} />
+                  <>
+                    <LedgerRow item={r.item} cats={cats.map} accounts={accounts.map} tags={tags.map}
+                      showDate={unit === 'year'} />
+                    {r.item.kind === 'tx' && r.item.tx.type === 'expense' && r.item.tx.split && r.item.tx.split.debtIds.length > 0 && (() => {
+                      const tx = r.item.tx;
+                      const txDebts = splitDebtsByTx.get(tx.id) ?? [];
+                      const totalCount = txDebts.length || tx.split!.debtIds.length;
+                      const settledCount = txDebts.filter((d) => d.settled === 1).length;
+                      return (
+                        <div style={{ padding: '0 14px 8px 56px', marginTop: -4 }}>
+                          <button type="button" className="pill" style={{ fontSize: '0.75rem', minHeight: 28, padding: '2px 10px' }}
+                            onClick={() => setSplitTxId(tx.id)}>
+                            分帳 · {settledCount}/{totalCount} 已收 · 我的份額 {formatMoney(tx.split!.myShareMinor, tx.currency)}
+                          </button>
+                        </div>
+                      );
+                    })()}
+                  </>
                 )}
               </div>
             );
@@ -207,6 +241,107 @@ export default function LedgerPage() {
       {accountFilter && (
         <p className="disclaimer"><button className="accent" onClick={() => { params.delete('account'); setParams(params); }}>顯示全部帳戶</button></p>
       )}
+
+      <BillSplitProgressSheet
+        tx={splitTxId ? (items?.find((it) => it.kind === 'tx' && it.tx.id === splitTxId) as Extract<LedgerItem, { kind: 'tx' }> | undefined)?.tx ?? null : null}
+        debts={splitTxId ? (splitDebtsByTx.get(splitTxId) ?? []) : []}
+        peopleMap={peopleMap}
+        accounts={accounts.list}
+        onClose={() => setSplitTxId(null)}
+      />
     </main>
+  );
+}
+
+function BillSplitProgressSheet({ tx, debts, peopleMap, accounts, onClose }: {
+  tx: Transaction | null;
+  debts: Debt[];
+  peopleMap: Map<string, Person>;
+  accounts: Account[];
+  onClose: () => void;
+}) {
+  const personSettleAccMap = useSettings((s) => s.personSettleAccMap);
+  const setPersonSettleAcc = useSettings((s) => s.setPersonSettleAcc);
+  const [accChoice, setAccChoice] = useState<Record<string, string>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const activeAccounts = accounts.filter((a) => !a.archived && !a.deletedAt);
+
+  const settledCount = debts.filter((d) => d.settled === 1).length;
+  const resolveAcc = (d: Debt) => {
+    const picked = accChoice[d.id];
+    if (picked !== undefined) return picked;
+    const mem = personSettleAccMap[d.personId];
+    if (mem && activeAccounts.some((a) => a.id === mem)) return mem;
+    if (tx && activeAccounts.some((a) => a.id === tx.accountId)) return tx.accountId;
+    return activeAccounts[0]?.id ?? '';
+  };
+
+  return (
+    <Sheet open={!!tx} onClose={onClose} title="聚餐收款進度">
+      {tx && (
+        <>
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+              <strong>{tx.note || '分帳帳目'}</strong>
+              <span className="num">{formatMoney(tx.amountMinor, tx.currency)}</span>
+            </div>
+            <div className="muted" style={{ fontSize: '0.82rem', display: 'flex', justifyContent: 'space-between' }}>
+              <span>我的份額 {formatMoney(tx.split?.myShareMinor ?? tx.amountMinor, tx.currency)}</span>
+              <span>{settledCount}/{debts.length} 已收</span>
+            </div>
+          </div>
+
+          {debts.length === 0 ? (
+            <EmptyState emoji="🤝" title="沒有分帳明細" text="這筆帳目目前沒有關聯的應收款項。" />
+          ) : (
+            <div className="list">
+              {debts.map((d) => {
+                const who = peopleMap.get(d.personId)?.name ?? '對象';
+                const accId = resolveAcc(d);
+                const busy = busyId === d.id;
+                return (
+                  <div key={d.id} className="row" style={{ gap: 8, opacity: d.settled ? 0.65 : 1 }}>
+                    <div className="row-main">
+                      <div className="row-title">{who}</div>
+                      <div className="row-sub num">{formatMoney(d.amountMinor, d.currency)}{d.settled ? ' · 已收' : ''}</div>
+                    </div>
+                    {d.settled ? (
+                      <button type="button" className="btn small secondary" disabled={busy} onClick={async () => {
+                        setBusyId(d.id);
+                        try { await unsettleDebt(d.id); } finally { setBusyId(null); }
+                      }}>取消</button>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <CustomSelect
+                          aria-label={`${who} 收款帳戶`}
+                          title={`${who} 收款帳戶`}
+                          value={accId}
+                          onChange={(v) => setAccChoice((prev) => ({ ...prev, [d.id]: v }))}
+                          options={[
+                            ...activeAccounts.map((a) => ({ value: a.id, label: a.name })),
+                            { value: '', label: '不記帳戶' },
+                          ]}
+                          style={{ width: 'auto', minWidth: 88, padding: '4px 8px', fontSize: '0.82rem', minHeight: 34 }}
+                        />
+                        <button type="button" className="btn small" disabled={busy} onClick={async () => {
+                          setBusyId(d.id);
+                          try {
+                            await settleDebt(d.id, accId || undefined);
+                            if (accId) setPersonSettleAcc(d.personId, accId);
+                            useUI.getState().showSnack({ text: `已收回 ${who} ${formatMoney(d.amountMinor, d.currency)}` });
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}>已收</button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </Sheet>
   );
 }

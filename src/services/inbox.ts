@@ -26,6 +26,7 @@ import { AUTH_ENABLED, useAuth } from '@/stores/auth';
 import { evaluateDraftContext, suggestAccount, learnImplicitMapping } from './autocat';
 import { attachDecisionToTx, recordDecision, recordFeedback } from './decisionLog';
 import { getRate } from './fx';
+import { settleDebt } from '@/db/repo/plan';
 import { bookDrafts, fallbackAccount, parseContext, resolveDraft, type ResolvedDraft } from './quickentry';
 
 export interface InboxRaw {
@@ -56,11 +57,23 @@ export interface InboxDup {
   certain?: boolean;
 }
 
+export interface MatchedDebtCandidate {
+  debtId: string;
+  personId: string;
+  personName: string;
+  amountMinor: number;
+  currency: string;
+  date: string;
+  note: string;
+}
+
 export interface InboxEntry {
   item: InboxRaw;
   /** 解析出的帳目（Siri 一句話可能有多筆）；空陣列代表看不懂金額，需要手動記 */
   drafts: ResolvedDraft[];
   dup?: InboxDup;
+  /** 比對到的未結清應收帳款（朋友欠我） */
+  matchedDebts?: MatchedDebtCandidate[];
   /** 來源不夠可信（例如 LINE 聊天訊息裡剛好有金額）：只留在收件匣等你確認，絕不自動入帳 */
   review?: string;
   /** 多金額／點數折抵／外幣未換算，需人工確認或由 AI 救援 */
@@ -88,7 +101,7 @@ export interface InboxEntry {
 /** LINE 裡視為「官方帳號」的發送者：只有這些名稱出現在訊息裡、且像交易通知，才當作消費通知 */
 export const LINE_OFFICIAL_SENDERS = [
   'LINE Pay', 'LINE錢包', 'LINE 錢包', 'LINE Bank', '街口', '悠遊付', '悠遊卡', '一卡通', 'iPASS', 'icash', '全支付', '歐付寶',
-  '國泰世華', '國泰', '中國信託', '中信', '玉山', '台新', 'Richart', '富邦', '永豐', '聯邦', '兆豐', '第一銀行', '華南',
+  '國泰世華', '國泰', '中國信託', '中信', '玉山', '台新', 'Richart', '富邦', '台北富邦', '富邦銀行', '永豐', '聯邦', '兆豐', '第一銀行', '華南',
   '合作金庫', '合庫', '彰化銀行', '彰銀', '凱基', '元大', '新光', '星展', '樂天', '渣打', '滙豐', '匯豐', '王道', '陽信', '遠東商銀', '郵局', '台灣Pay', '台灣 Pay',
 ];
 const TXN_WORDS = /消費|刷卡|扣款|付款成功|支付成功|交易成功|交易通知|授權|繳費成功|入帳|轉帳|退款|退刷|代扣|存款/;
@@ -1052,6 +1065,7 @@ export async function loadInbox(): Promise<InboxEntry[]> {
   }
   await checkInboxFxRates(out).catch(() => undefined);
   await markDuplicates(out, ctx.today).catch(() => undefined);
+  await matchInboxDebts(out).catch(() => undefined);
   await attachDecisionContext(out, ctx, { persist: true }).catch(() => undefined);
   return out;
 }
@@ -1086,6 +1100,7 @@ export async function loadInboxReadOnly(): Promise<InboxEntry[]> {
   }
   await checkInboxFxRates(out).catch(() => undefined);
   await markDuplicates(out, ctx.today).catch(() => undefined);
+  await matchInboxDebts(out).catch(() => undefined);
   await attachDecisionContext(out, ctx, { persist: false }).catch(() => undefined);
   roCache = { at: Date.now(), dbName: db.name, policy, entries: structuredClone(out) };
   return out;
@@ -1137,6 +1152,84 @@ export function learnCard(card: string | undefined, accountId: string | undefine
   if (existing && !opts.overwrite) return;
   if (existing === accountId) return;
   s.set('inbox', { ...s.inbox, cardMap: { ...s.inbox.cardMap, [card]: accountId } });
+}
+
+export async function matchInboxDebts(entries: InboxEntry[]): Promise<void> {
+  for (const e of entries) delete e.matchedDebts;
+  const targets = entries.filter((e) => e.drafts.length > 0 && e.drafts[0].kind === 'income' && e.drafts[0].amount > 0);
+  if (!targets.length) return;
+  const openDebts = (await db.debts.toArray()).filter((d) => !d.deletedAt && !d.settled && d.direction === 'they_owe_me');
+  if (!openDebts.length) return;
+  const [people, accounts] = await Promise.all([db.people.toArray(), db.accounts.toArray()]);
+  const peopleMap = new Map(people.map((p) => [p.id, p]));
+  const accountsMap = new Map(accounts.map((a) => [a.id, a]));
+
+  for (const e of targets) {
+    const d = e.drafts[0];
+    const cur = (d.currency ?? accountsMap.get(d.accountId)?.currency ?? 'TWD').trim().toUpperCase();
+    const amountMinor = toMinor(d.amount, cur);
+    const minDate = addDays(d.date, -45);
+    const maxDate = addDays(d.date, 45);
+    const hintText = `${e.item.text ?? ''} ${e.item.merchant ?? ''} ${d.note ?? ''}`.toLowerCase();
+
+    const matched: MatchedDebtCandidate[] = openDebts
+      .filter((debt) => (
+        debt.amountMinor === amountMinor
+        && debt.currency.trim().toUpperCase() === cur
+        && debt.date >= minDate
+        && debt.date <= maxDate
+      ))
+      .map((debt) => ({
+        debtId: debt.id,
+        personId: debt.personId,
+        personName: peopleMap.get(debt.personId)?.name ?? '朋友',
+        amountMinor: debt.amountMinor,
+        currency: debt.currency,
+        date: debt.date,
+        note: debt.note,
+      }))
+      .sort((a, b) => {
+        const aHit = hintText.includes(a.personName.toLowerCase()) ? 1 : 0;
+        const bHit = hintText.includes(b.personName.toLowerCase()) ? 1 : 0;
+        if (aHit !== bHit) return bHit - aHit;
+        return b.date.localeCompare(a.date);
+      });
+
+    if (matched.length > 0) {
+      e.matchedDebts = matched;
+      const names = [...new Set(matched.map((c) => c.personName))].join('、');
+      e.review = e.review || `疑似朋友還款（${names}），請確認沖銷應收`;
+    }
+  }
+}
+
+export async function settleInboxEntryWithDebt(
+  entry: InboxEntry,
+  debtId: string,
+  opts?: { accountId?: string },
+): Promise<void> {
+  const draft = entry.drafts[0];
+  const accountId = opts?.accountId ?? draft?.accountId ?? await fallbackAccount();
+  const date = draft?.date ?? itemDate(entry.item);
+  const ts = itemEventMs(entry.item) ?? Date.now();
+  const note = (draft?.note || entry.item.merchant || '').trim() || undefined;
+  await settleDebt(debtId, accountId, { date, ts, note });
+  if (entry.decisionId) {
+    await db.auto_decisions.update(entry.decisionId, { outcome: 'confirmed' }).catch(() => undefined);
+    await recordFeedback({
+      decisionId: entry.decisionId,
+      ruleId: entry.shadowMatch?.ruleId,
+      signalType: 'confirm_clean',
+    }).catch(() => undefined);
+  }
+  const fromFallback = !opts?.accountId && (!draft || draft.accountSource === 'default');
+  const fromDefaultDraft = Boolean(opts?.accountId && draft && opts.accountId === draft.accountId && draft.accountSource === 'default');
+  if (accountId && !fromFallback && !fromDefaultDraft && !(entry.item.source === 'notify' && (isLineChat(entry.item.card) || isPaymentRelayCard(entry.item.card)))) {
+    learnCard(entry.item.card, accountId);
+  }
+  await ackInbox([entry.item.id]);
+  await db.meta.put({ key: `acked:inbox-${entry.item.id}`, value: true }).catch(() => undefined);
+  invalidateInboxReadOnly();
 }
 
 /** 一次記下多則；先寫入本機資料庫，入帳成功後才向伺服器認領刪除（避免入帳中途失敗導致伺服器資料永久遺失）。skipDuplicates：很可能重複的留在收件匣等你確認 */
@@ -1325,6 +1418,7 @@ export async function previewAutoBook(text: string, card = '', merchant = '', op
   const drafts = await draftsFromItem(fake, ctx, fallback);
   const entry: InboxEntry = { item: fake, drafts, ...(driftWarning ? { driftWarning } : {}) };
   await markDuplicates([entry]);
+  await matchInboxDebts([entry]).catch(() => undefined);
   await attachDecisionContext([entry], ctx, { persist: false }).catch(() => undefined);
   return {
     dup: entry.dup,
@@ -1460,6 +1554,7 @@ export async function processInboxOnStartup(): Promise<{ booked: number; pending
   const autoReady = entries.filter((e) => auto(e) && !e.review);
   await enrichAmbiguousInboxWithAi(autoReady);
   await checkInboxFxRates(autoReady).catch(() => undefined);
+  await matchInboxDebts(autoReady).catch(() => undefined);
   await markDuplicates(entries);
   const r = await bookInboxEntries(autoReady, { skipDuplicates: true, auto: true });
   const pending = entries.filter((e) => !r.clearedItemIds.includes(e.item.id)).length;

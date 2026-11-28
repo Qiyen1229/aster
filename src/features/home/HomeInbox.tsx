@@ -86,6 +86,21 @@ export default function HomeInbox() {
     }
   };
 
+  const settleDebtEntry = async (e: InboxEntry, debtId: string, personName: string) => {
+    setBusy(true);
+    try {
+      const { settleInboxEntryWithDebt } = await import('@/services/inbox');
+      const accId = e.drafts[0]?.accountId;
+      await settleInboxEntryWithDebt(e, debtId, accId ? { accountId: accId } : undefined);
+      snack(`已沖銷 ${personName} 的應收帳款`);
+      await reload();
+    } catch (err) {
+      snack((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const applySecondCandidate = (e: InboxEntry, cand: NonNullable<InboxEntry['secondCandidate']>) => {
     const d = e.drafts[0];
     if (!d) return;
@@ -159,7 +174,9 @@ export default function HomeInbox() {
                   <span className="row-title">{title}</span>
                   <span className="row-sub" style={{ whiteSpace: 'normal' }}>
                     {d ? `${shortDate(d.date, today)} · ${acc?.name ?? '?'}` : '看不懂金額，請點「入帳」或「編輯」補填'}
-                    {e.review ? ` · ⚠️ ${e.review}` : e.dup ? ' · ⚠️ 可能重複' : ''}
+                    {e.matchedDebts && e.matchedDebts.length > 0
+                      ? ` · 🤝 疑為朋友還款：${e.matchedDebts.map((md) => `${md.personName} ${formatMoney(md.amountMinor, md.currency)}`).join('／')}`
+                      : e.review ? ` · ⚠️ ${e.review}` : e.dup ? ' · ⚠️ 可能重複' : ''}
                   </span>
                   <InboxDecisionMeta
                     entry={e}
@@ -169,7 +186,28 @@ export default function HomeInbox() {
                 </span>
                 {d && <span className={`num ${d.kind === 'income' ? 'pos' : 'neg'}`}>{formatMoney(toMinor(d.amount, cur), cur)}</span>}
                 <span className="inbox-actions">
-                  <button className="pill accent-pill" disabled={busy} onClick={() => (d ? void book(e) : edit(e))}>入帳</button>
+                  {e.matchedDebts && e.matchedDebts.length === 1 && (
+                    <button
+                      type="button"
+                      className="pill accent-pill"
+                      disabled={busy}
+                      onClick={() => void settleDebtEntry(e, e.matchedDebts![0].debtId, e.matchedDebts![0].personName)}
+                    >
+                      沖銷 {e.matchedDebts[0].personName} 應收
+                    </button>
+                  )}
+                  {e.matchedDebts && e.matchedDebts.length > 1 && e.matchedDebts.map((md) => (
+                    <button
+                      key={md.debtId}
+                      type="button"
+                      className="pill accent-pill"
+                      disabled={busy}
+                      onClick={() => void settleDebtEntry(e, md.debtId, md.personName)}
+                    >
+                      沖銷 {md.personName}
+                    </button>
+                  ))}
+                  <button className={e.matchedDebts?.length ? 'pill' : 'pill accent-pill'} disabled={busy} onClick={() => (d ? void book(e) : edit(e))}>入帳</button>
                   {d && <button type="button" className="pill" disabled={busy} onClick={() => setScopeEntry(e)}>以後這類都這樣</button>}
                   <button className="pill" disabled={busy} onClick={() => edit(e)}>編輯</button>
                   <SplitSkipControl disabled={busy} onSkip={(reason) => skip(e, reason)} />

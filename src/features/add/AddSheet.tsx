@@ -308,6 +308,28 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         if (dur?.lifeYears) { setDurableYears(dur.lifeYears); setDurableCustom([1, 2, 3, 5, 7, 10].includes(dur.lifeYears) ? 0 : dur.lifeYears); }
         const rows = await db.attachments.bulkGet(t.attachmentIds);
         setAtts(rows.filter(Boolean).map((r) => ({ id: r!.id, url: URL.createObjectURL(r!.thumb), fresh: false })));
+        if (t.type === 'expense' && t.split) {
+          const byIds = t.split.debtIds.length
+            ? (await db.debts.bulkGet(t.split.debtIds)).filter((d): d is Debt => !!d && !d.deletedAt)
+            : [];
+          const byTx = await db.debts.where('transactionId').equals(t.id).filter((d) => !d.deletedAt).toArray();
+          const dMap = new Map<string, Debt>();
+          for (const d of [...byIds, ...byTx]) dMap.set(d.id, d);
+          const linkedDebts = [...dMap.values()];
+          const pRows = await db.people.bulkGet(linkedDebts.map((d) => d.personId));
+          const pNameById = new Map(pRows.filter(Boolean).map((p) => [p!.id, p!.name]));
+          setSplit({
+            mode: 'custom',
+            people: linkedDebts.map((d) => ({
+              name: pNameById.get(d.personId) ?? '對象',
+              amount: fromMinor(d.amountMinor, d.currency).toString(),
+              debtId: d.id,
+              locked: d.settled === 1,
+            })),
+          });
+        } else {
+          setSplit({ mode: 'equal', people: [] });
+        }
       } else if (editTransferId) {
         const tr = await db.transfers.get(editTransferId);
         if (!tr) { onClose(); return; }
@@ -439,6 +461,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
             } else {
               await unsettleDebt(targetId);
             }
+            if (editTxId) await restoreTransactions([editTxId]);
           },
         );
       } else if (loan) {
@@ -501,8 +524,19 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         };
         const sp = mode === 'expense' && !editTxId && split.people.length ? computeSplit(amt, split, txCurrency) : null;
         if (sp?.error) throw new Error(sp.error);
+        const editSplit = mode === 'expense' && editTxId && !linkedLock && split.people.length
+          ? computeSplit(amt, split, txCurrency)
+          : null;
+        if (editSplit?.error) throw new Error(editSplit.error);
         if (editTxId) {
-          const saved = await updateTransaction(editTxId, input);
+          const splitOpts = mode === 'expense' && !linkedLock
+            ? {
+                splitShares: editSplit
+                  ? editSplit.shares.map((s) => ({ personName: s.name, amountMinor: s.minor, debtId: s.debtId }))
+                  : [],
+              }
+            : undefined;
+          const saved = await updateTransaction(editTxId, input, splitOpts);
           if (mode === 'expense') {
             const cat = catMap.get(catId);
             // 已連結但原本沒設期限、這次也沒選：只更新成本與購入日（-1），不要把物品刪掉
@@ -1235,7 +1269,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
                       <Icon name="chevronR" size={16} className="muted" />
                     </button>
                   )}
-                  {mode === 'expense' && !editing && (
+                  {mode === 'expense' && !linkedLock && (
                     <button type="button" className="add-adv-row" onClick={() => setPicker('split')}>
                       <Icon name="users" size={18} />
                       <span className="adv-label">分帳</span>
@@ -1462,7 +1496,7 @@ function AddSheetInner({ open, onClose, prefill, editTxId, editTransferId }: {
         onPick={(y) => setDurableYears(y)} onCustom={() => setLifeOpen(true)} />
       <LifeSpanSheet open={lifeOpen} initialYears={durableCustom || durableYears} onClose={() => setLifeOpen(false)} onConfirm={(y) => { setDurableCustom(y); setDurableYears(y); }} />
       <SplitSheet open={picker === 'split'} onClose={() => setPicker(null)} value={split} onChange={setSplit}
-        totalMinor={value && value.gt(0) ? toMinor(value, txCurrency) : 0} currency={txCurrency} />
+        totalMinor={value && value.gt(0) ? toMinor(value, txCurrency) : 0} currency={txCurrency} editing={!!editTxId} />
       <TagPicker open={picker === 'tags'} onClose={() => setPicker(null)} tags={tags} value={tagIds} onChange={setTagIds} />
       <ProjectPicker open={picker === 'project'} onClose={() => setPicker(null)} projects={projects} value={projectId} onPick={setProjectId} />
       <DatePickerSheet open={picker === 'date'} onClose={() => setPicker(null)} value={date} onPick={setDate} />

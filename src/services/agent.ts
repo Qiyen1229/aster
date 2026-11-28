@@ -371,12 +371,32 @@ async function executePlan(steps: ResolvedStep[], summary: string, idempotencyKe
         const t = await addTransaction({ ...rest, ts: Date.now(), tagIds, projectId: rest.projectId ?? (travelApplied !== undefined ? travelApplied : useSettings.getState().travelModeProjectId) ?? undefined, ...(split ? { split: { myShareMinor: split.myShareMinor, debtIds: [] } } : {}) });
         if (o.draftId) remap.set(o.draftId, t.id);
         log.changes.push({ table: 'transactions', id: t.id, stamp: 0, undo: 'tx' });
-        if (split && t.amountMinor > split.myShareMinor) {
-          // 分帳：全額先離開帳戶，對方欠我的差額記成一筆欠款（和記帳面板同一套流程）
-          const person = await findOrCreatePerson(split.personName);
-          const [debtId] = await addDebts([{ personId: person.id, direction: 'they_owe_me', amountMinor: t.amountMinor - split.myShareMinor, currency: t.currency, date: t.date, note: t.note || '分帳', transactionId: t.id, groupId: t.id }]);
-          await db.transactions.update(t.id, { split: { myShareMinor: split.myShareMinor, debtIds: [debtId] }, updatedAt: Date.now() });
-          log.changes.push({ table: 'debts', id: debtId, stamp: 0 });
+        if (split) {
+          const shareList = split.shares?.length
+            ? split.shares
+            : (split.personName && t.amountMinor > split.myShareMinor
+              ? [{ personName: split.personName, amountMinor: t.amountMinor - split.myShareMinor }]
+              : []);
+          if (shareList.length > 0) {
+            // 分帳：全額先離開帳戶，其他人欠我的份額各記成一筆應收（和記帳面板同一套流程）
+            const debtRows = [];
+            for (const sh of shareList) {
+              const person = await findOrCreatePerson(sh.personName);
+              debtRows.push({
+                personId: person.id,
+                direction: 'they_owe_me' as const,
+                amountMinor: sh.amountMinor,
+                currency: t.currency,
+                date: t.date,
+                note: t.note || '分帳',
+                transactionId: t.id,
+                groupId: t.id,
+              });
+            }
+            const debtIds = await addDebts(debtRows);
+            await db.transactions.update(t.id, { split: { myShareMinor: split.myShareMinor, debtIds }, updatedAt: Date.now() });
+            for (const debtId of debtIds) log.changes.push({ table: 'debts', id: debtId, stamp: 0 });
+          }
         }
       } else if (o.kind === 'transfer') {
         const tr = await addTransfer({ fromAccountId: o.input.fromAccountId, toAccountId: o.input.toAccountId, fromAmountMinor: o.input.amountMinor, toAmountMinor: o.input.amountMinor, feeMinor: 0, date: o.input.date, ts: Date.now(), note: o.input.note });

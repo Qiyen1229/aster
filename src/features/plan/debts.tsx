@@ -72,24 +72,30 @@ export default function DebtSection() {
 
 function PersonDebts({ personId, debts }: { personId: string; debts: Debt[] }) {
   const accounts = useAccounts();
-  const [settleAcc, setSettleAcc] = useState(accounts.list[0]?.id ?? '');
+  const personSettleAccMap = useSettings((s) => s.personSettleAccMap);
+  const setPersonSettleAcc = useSettings((s) => s.setPersonSettleAcc);
+  const rememberedAcc = personSettleAccMap[personId];
+  const [settleAcc, setSettleAcc] = useState(
+    (rememberedAcc && accounts.map.has(rememberedAcc) ? rememberedAcc : '') || accounts.list[0]?.id || '',
+  );
   const [touched, setTouched] = useState(false);
   const [showSettled, setShowSettled] = useState(false);
   const [busy, setBusy] = useState(false);
   const list = debts.filter((d) => (showSettled ? true : !d.settled)).sort((a, b) => (a.date < b.date ? 1 : -1));
   const open = debts.filter((d) => !d.settled);
-  // 預設結清帳戶：借出／借入當初使用的帳戶，否則第一個帳戶（帳戶清單載入較晚時補上）
+  // 預設結清帳戶：借出／借入當初使用的帳戶，否則此人上次結清帳戶，否則第一個帳戶
   const loanTxId = open.find((d) => d.loanTxId)?.loanTxId;
   useEffect(() => {
     if (touched || !accounts.list.length) return;
     let alive = true;
     (async () => {
       const tx = loanTxId ? await db.transactions.get(loanTxId) : undefined;
-      const id = tx && accounts.map.has(tx.accountId) ? tx.accountId : settleAcc || accounts.list[0].id;
+      const mem = rememberedAcc && accounts.map.has(rememberedAcc) ? rememberedAcc : '';
+      const id = tx && accounts.map.has(tx.accountId) ? tx.accountId : mem || settleAcc || accounts.list[0].id;
       if (alive) setSettleAcc(id);
     })();
     return () => { alive = false; };
-  }, [accounts.list.length, loanTxId, touched]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [accounts.list.length, loanTxId, rememberedAcc, touched]); // eslint-disable-line react-hooks/exhaustive-deps
   // 這個人的淨額（各幣別）：應收與應付互相抵銷後，實際要收或要付多少
   const netByCur = new Map<string, number>();
   for (const d of open) netByCur.set(d.currency, (netByCur.get(d.currency) ?? 0) + (d.direction === 'they_owe_me' ? d.amountMinor : -d.amountMinor));
@@ -116,6 +122,7 @@ function PersonDebts({ personId, debts }: { personId: string; debts: Debt[] }) {
           setBusy(true);
           try {
             for (const d of open) await settleDebt(d.id, settleAcc || undefined);
+            if (settleAcc) setPersonSettleAcc(personId, settleAcc);
             useUI.getState().showSnack({ text: `已結清 ${open.length} 筆` });
           } finally {
             setBusy(false);
@@ -138,6 +145,7 @@ function PersonDebts({ personId, debts }: { personId: string; debts: Debt[] }) {
                 setBusy(true);
                 try {
                   await settleDebt(d.id, settleAcc || undefined);
+                  if (settleAcc) setPersonSettleAcc(personId, settleAcc);
                   useUI.getState().showSnack({ text: '已結清' });
                 } finally {
                   setBusy(false);

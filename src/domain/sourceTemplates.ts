@@ -1,12 +1,12 @@
 /**
  * Pure domain: Versioned Source Templates & Drift Detection
- * Supports the 6 first-wave financial notification sources:
- * ctbc, esun, cathay, taishin, linepay, applepay.
+ * Supports the first-wave financial notification sources:
+ * ctbc, esun, cathay, taishin, fubon, linepay, applepay.
  */
 
 export const TEMPLATE_VERSION = '1.0.0';
 
-export type SourceId = 'ctbc' | 'esun' | 'cathay' | 'taishin' | 'linepay' | 'applepay';
+export type SourceId = 'ctbc' | 'esun' | 'cathay' | 'taishin' | 'fubon' | 'linepay' | 'applepay';
 
 export type RefundStatus = 'success' | 'pending' | 'cancelled' | 'none';
 
@@ -28,6 +28,8 @@ export interface ParsedSourceTx {
   merchant?: string;
   card?: string;
   kind?: 'expense' | 'income' | 'transfer';
+  transferMemo?: string;
+  senderLast5?: string;
   templateId: string;
   templateVersion: string;
   matched: boolean;
@@ -66,6 +68,12 @@ export const SOURCE_TEMPLATES: readonly SourceTemplateDef[] = [
     name: '台新銀行',
     version: TEMPLATE_VERSION,
     detectRe: /台新銀行|台新卡|台新\s*@?GoGo|台新\s*FlyGo|台新\s*Richart|Richart|Taishin/i,
+  },
+  {
+    id: 'fubon',
+    name: '富邦銀行',
+    version: TEMPLATE_VERSION,
+    detectRe: /台北富邦|臺北富邦|富邦銀行|富邦卡|富邦\s*J卡|富邦\s*momo卡|富邦Costco|Fubon\+|Fubon/i,
   },
   {
     id: 'linepay',
@@ -181,7 +189,7 @@ function extractRefundStatus(text: string): RefundStatus {
 function extractCard(text: string, sourceId: SourceId): string | undefined {
   // Specific named cards
   const namedCard = text.match(
-    /(?:您的\s*)?((?:中國信託|中信)\s*LINE\s*Pay卡|國泰\s*CUBE卡|CUBE卡|玉山\s*Unicard|玉山\s*Pi\s*拍錢包卡|玉山\s*U\s*Bear卡|台新\s*@?GoGo卡|台新\s*FlyGo卡|台新\s*玫瑰Giving卡|Apple\s*Pay)/i,
+    /(?:您的\s*)?((?:中國信託|中信)\s*LINE\s*Pay卡|國泰\s*CUBE卡|CUBE卡|玉山\s*Unicard|玉山\s*Pi\s*拍錢包卡|玉山\s*U\s*Bear卡|台新\s*@?GoGo卡|台新\s*FlyGo卡|台新\s*玫瑰Giving卡|富邦\s*J卡|富邦\s*momo卡|富邦Costco聯名卡|Apple\s*Pay)/i,
   );
   const last4Match = text.match(/(?:卡號末四碼|帳戶末四碼|末四碼|尾號|卡號\*{2,4}|\*{2,4})\s*(\d{4})/);
 
@@ -245,13 +253,29 @@ function detectSource(text: string, hintSource?: SourceId | string): SourceTempl
   return SOURCE_TEMPLATES.find((t) => t.detectRe.test(text));
 }
 
+function extractTransferMetadata(text: string): { senderLast5?: string; transferMemo?: string } {
+  const explicitSender = text.match(/(?:對方|轉出|匯款)(?:帳號|帳戶)?(?:末五碼|後五碼|末5碼|後5碼)\s*[:：]?\s*(\d{5})/);
+  const withoutReceiving = text.replace(/轉入(?:帳號|帳戶)(?:末五碼|後五碼|末5碼|後5碼)\s*[:：]?\s*\d{5}/g, ' ');
+  const genericLast5 = withoutReceiving.match(/(?:帳號|帳戶)?(?:末五碼|後五碼|末5碼|後5碼)\s*[:：]?\s*(\d{5})/);
+  const senderLast5 = explicitSender?.[1] ?? genericLast5?.[1];
+
+  const memoMatch = text.match(/(?:附言|備註|轉帳附言|交易附言|摘要|匯款人)[ \t]*[:：][ \t]*([^\n，。,；;）)]+)/);
+  const transferMemo = memoMatch?.[1]?.trim() || undefined;
+
+  return {
+    ...(senderLast5 ? { senderLast5 } : {}),
+    ...(transferMemo ? { transferMemo } : {}),
+  };
+}
+
 function stripNonTxClauses(text: string): string {
-  // Remove balance, creditLimit, points, fee, and card last4 segments so txAmount extraction never grabs them
+  // Remove balance, creditLimit, points, fee, and card last4/last5 segments so txAmount extraction never grabs them
   return text
     .replace(/(?:可用額度|剩餘額度|信用額度|總額度)\s*[:：]?\s*(?:[A-Za-z$新台幣圓]+\s*)?[\d,]+(?:\.\d+)?\s*(?:元|圓)?/gi, ' ')
     .replace(/(?:帳戶餘額|可用餘額|目前餘額|活存餘額|帳上餘額)\s*[:：]?\s*(?:[A-Za-z$新台幣圓]+\s*)?[\d,]+(?:\.\d+)?\s*(?:元|圓)?/gi, ' ')
     .replace(/(?:LINE\s*POINTS|紅利點數|小樹點|台新\s*Point|現金積點|P幣|點數)\s*(?:餘額|折抵)?\s*[:：]?\s*[\d,]+(?:\.\d+)?\s*點?/gi, ' ')
     .replace(/(?:跨轉手續費|海外交易手續費|國外交易服務費|手續費)\s*[:：]?\s*(?:[A-Za-z$新台幣圓]+\s*)?[\d,]+(?:\.\d+)?\s*(?:元|圓)?/gi, ' ')
+    .replace(/(?:對方|轉出|轉入|匯款)?(?:帳號|帳戶)?(?:末五碼|後五碼|末5碼|後5碼)\s*[:：]?\s*\d{5}/gi, ' ')
     .replace(/(?:卡號末四碼|帳戶末四碼|末四碼|尾號|卡號\*{2,4}|\*{2,4})\s*\d{4}/gi, ' ');
 }
 
@@ -278,11 +302,11 @@ function extractTxAmounts(cleanedText: string): {
 
   // 2. Match explicit transaction amount with currency
   const txWithCurrencyRe = new RegExp(
-    `(?:消費金額|交易金額|授權金額|退款金額|金額|消費|刷卡授權|刷卡|付款|轉出|轉入|跨行轉帳|轉帳|已退款|退款)\\s*[:：]?\\s*(${CURRENCY_PATTERN})\\s*([\\d,]+(?:\\.\\d+)?)\\s*(?:元|圓)?`,
+    `(?:消費金額|交易金額|授權金額|退款金額|金額|消費|刷卡授權|刷卡|付款|轉出|轉入|入帳|存入|跨行轉帳|轉帳|已退款|退款)\\s*[:：]?\\s*(${CURRENCY_PATTERN})\\s*([\\d,]+(?:\\.\\d+)?)\\s*(?:元|圓)?`,
     'i',
   );
   const txNoCurrencyRe =
-    /(?:消費金額|交易金額|授權金額|退款金額|金額|消費|刷卡授權|刷卡|付款|轉出|轉入|跨行轉帳|轉帳|已退款|退款)\s*[:：]?\s*([\d,]+(?:\.\d+)?)\s*(元|圓)/i;
+    /(?:消費金額|交易金額|授權金額|退款金額|金額|消費|刷卡授權|刷卡|付款|轉出|轉入|入帳|存入|跨行轉帳|轉帳|已退款|退款)\s*[:：]?\s*([\d,]+(?:\.\d+)?)\s*(元|圓)/i;
 
   let primaryAmount: number | undefined;
   let primaryCurrency: string | undefined;
@@ -406,6 +430,7 @@ export function parseSourceTemplate(
   const dates = extractDates(text, options?.referenceYear ?? new Date().getFullYear());
   const merchant = extractMerchant(text);
   const card = extractCard(text, template.id);
+  const transferMeta = extractTransferMetadata(text);
 
   // Determine kind carefully:
   // Pending or cancelled refunds MUST NOT be booked as income!
@@ -437,6 +462,7 @@ export function parseSourceTemplate(
     merchant,
     card,
     kind,
+    ...transferMeta,
     templateId,
     templateVersion,
     matched,

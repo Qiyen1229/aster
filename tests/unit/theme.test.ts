@@ -165,8 +165,10 @@ describe('hydrate 主題偏好', () => {
       ...before,
       themePalette: expected,
       ready: true,
+      personSettleAccMap: {},
       hydrate: expect.any(Function),
       set: expect.any(Function),
+      setPersonSettleAcc: expect.any(Function),
     });
     expect(input).toEqual(before);
     expect(document.documentElement.dataset).toMatchObject({ theme: 'light', palette: expected, accent: 'purple', updown: 'red' });

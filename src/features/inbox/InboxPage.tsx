@@ -15,7 +15,7 @@ import { shortDate } from '@/domain/nlp';
 import { todayKey } from '@/domain/period';
 import { deleteTransactions, deleteTransfers } from '@/db/repo/ledger';
 import {
-  ackInbox, bookInboxEntries, confirmInboxEntry, getInboxSyncState, inboxPrefix4, mergeDuplicate, loadInbox, markDuplicates, skipInboxEntry, SOURCE_LABEL, useInboxCount,
+  ackInbox, bookInboxEntries, confirmInboxEntry, getInboxSyncState, inboxPrefix4, mergeDuplicate, loadInbox, markDuplicates, settleInboxEntryWithDebt, skipInboxEntry, SOURCE_LABEL, useInboxCount,
   type InboxEntry,
 } from '@/services/inbox';
 import { saveSetting } from '@/db/repo/settings';
@@ -154,6 +154,20 @@ export default function InboxPage() {
       if (await mergeDuplicate(e)) snack('已合併，沒有重複記帳');
       await reload();
     } catch (err) { snack((err as Error).message); }
+  };
+
+  const settleDebtEntry = async (e: InboxEntry, debtId: string, personName: string) => {
+    setBusy(true);
+    try {
+      const accId = e.drafts[0]?.accountId;
+      await settleInboxEntryWithDebt(e, debtId, accId ? { accountId: accId } : undefined);
+      snack(`已沖銷 ${personName} 的應收帳款`);
+      await reload();
+    } catch (err) {
+      snack((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const blockItem = async (e: InboxEntry) => {
@@ -404,7 +418,12 @@ export default function InboxPage() {
                           )}
                         </span>
                         <span className={`num ${d.kind === 'income' ? 'pos' : 'neg'}`}>{formatMoney(toMinor(d.amount, cur), cur)}</span>
-                        {i === e.drafts.length - 1 && e.review && (
+                        {i === e.drafts.length - 1 && e.matchedDebts && e.matchedDebts.length > 0 && (
+                          <p className="inbox-dup weak" role="note">
+                            🤝 疑為朋友還款：{e.matchedDebts.map((md) => `${md.personName} ${formatMoney(md.amountMinor, md.currency)}`).join('／')}
+                          </p>
+                        )}
+                        {i === e.drafts.length - 1 && e.review && !e.matchedDebts?.length && (
                           <p className="inbox-dup strong" role="note">⚠️ {e.review}</p>
                         )}
                         {i === e.drafts.length - 1 && e.dup && (
@@ -415,6 +434,27 @@ export default function InboxPage() {
                         )}
                         {i === e.drafts.length - 1 && (
                           <span className="inbox-actions">
+                            {e.matchedDebts && e.matchedDebts.length === 1 && (
+                              <button
+                                type="button"
+                                className="pill accent-pill"
+                                disabled={busy}
+                                onClick={() => void settleDebtEntry(e, e.matchedDebts![0].debtId, e.matchedDebts![0].personName)}
+                              >
+                                沖銷 {e.matchedDebts[0].personName} 應收
+                              </button>
+                            )}
+                            {e.matchedDebts && e.matchedDebts.length > 1 && e.matchedDebts.map((md) => (
+                              <button
+                                key={md.debtId}
+                                type="button"
+                                className="pill accent-pill"
+                                disabled={busy}
+                                onClick={() => void settleDebtEntry(e, md.debtId, md.personName)}
+                              >
+                                沖銷 {md.personName}
+                              </button>
+                            ))}
                             {e.dup?.level === 'strong' ? (
                               <>
                                 <button className="pill accent-pill" onClick={() => void merge(e)}>合併（不重複記）</button>
@@ -427,7 +467,7 @@ export default function InboxPage() {
                               </>
                             ) : (
                               <>
-                                <button className="pill accent-pill" disabled={busy} onClick={() => void confirmSingle(e)}>記帳</button>
+                                <button className={e.matchedDebts?.length ? 'pill' : 'pill accent-pill'} disabled={busy} onClick={() => void confirmSingle(e)}>記帳</button>
                                 {e.dup && <button className="pill" onClick={() => void merge(e)}>合併</button>}
                                 <button type="button" className="pill" onClick={() => setScopeEntry(e)}>以後這類都這樣</button>
                                 <button className="pill" onClick={() => setRuleDraft(blankRule(d.kind === 'income' ? 'income' : 'expense', d.categoryId || '', e.item.merchant || d.note || e.item.text.slice(0, 60)))}>存為規則</button>
