@@ -259,9 +259,9 @@ describe('Wave 2B UI: InboxPage, HomeInbox, RulesPage', () => {
       skipToggle!.click();
     });
 
-    const nonTxBtn = findButton(host, '非交易');
-    const dupBtn = findButton(host, '重複');
-    const ignoreBtn = findButton(host, '這次不記');
+    const nonTxBtn = findButton(document.body, '非交易');
+    const dupBtn = findButton(document.body, '重複');
+    const ignoreBtn = findButton(document.body, '這次不記');
     expect(nonTxBtn).toBeTruthy();
     expect(dupBtn).toBeTruthy();
     expect(ignoreBtn).toBeTruthy();

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { CategoryKind, ConfidenceLevel } from '@/db/types';
 import { createScopedRule } from '@/services/autocat';
 import type { InboxEntry } from '@/services/inbox';
@@ -154,81 +155,120 @@ export function SplitSkipControl({
   onSkip: (reason: 'non_tx' | 'duplicate' | 'ignore') => void | Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ right: number; top?: number; bottom?: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+
+  const updatePos = () => {
+    const el = btnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const right = Math.max(8, window.innerWidth - r.right);
+    const spaceBelow = window.innerHeight - r.bottom;
+    if (spaceBelow >= 176 || spaceBelow >= r.top) {
+      setPos({ right, top: r.bottom + 6 });
+    } else {
+      setPos({ right, bottom: window.innerHeight - r.top + 6 });
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    updatePos();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    const onClose = () => setOpen(false);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onClose, true);
+    window.addEventListener('resize', onClose);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onClose, true);
+      window.removeEventListener('resize', onClose);
+    };
+  }, [open]);
 
   return (
     <span style={{ position: 'relative', display: 'inline-block' }}>
       <button
+        ref={btnRef}
         type="button"
         className="pill"
         disabled={disabled}
         aria-label="略過"
         aria-expanded={open}
         aria-haspopup="menu"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!open) updatePos();
+          setOpen((v) => !v);
+        }}
       >
         略過 ▾
       </button>
-      {open && (
-        <>
-          <div
-            aria-hidden="true"
-            onClick={() => setOpen(false)}
-            style={{ position: 'fixed', inset: 0, zIndex: 55 }}
-          />
-          <div
-            role="menu"
-            aria-label="選擇略過原因"
-            style={{
-              position: 'absolute',
-              right: 0,
-              top: 'calc(100% + 6px)',
-              zIndex: 60,
-              minWidth: 164,
-              padding: 6,
-              borderRadius: 14,
-              background: 'var(--surface)',
-              border: '0.5px solid var(--glass-border)',
-              boxShadow: 'var(--shadow-lg)',
-              display: 'grid',
-              gap: 2,
-            }}
-          >
-            {(
-              [
-                ['non_tx', '非交易', '驗證碼、廣告通知'],
-                ['duplicate', '重複', '帳本已有相同項目'],
-                ['ignore', '這次不記', '暫時略過不入帳'],
-              ] as const
-            ).map(([reason, label, sub]) => (
-              <button
-                key={reason}
-                type="button"
-                role="menuitem"
-                disabled={disabled}
-                onClick={() => {
-                  setOpen(false);
-                  void onSkip(reason);
-                }}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'flex-start',
-                  gap: 1,
-                  width: '100%',
-                  padding: '8px 10px',
-                  borderRadius: 10,
-                  textAlign: 'left',
-                  background: 'transparent',
-                  color: 'var(--text)',
-                }}
-              >
-                <span style={{ fontSize: '0.84rem', fontWeight: 600 }}>{label}</span>
-                <span className="muted" style={{ fontSize: '0.72rem' }}>{sub}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      {open &&
+        pos &&
+        createPortal(
+          <>
+            <div
+              aria-hidden="true"
+              onClick={() => setOpen(false)}
+              style={{ position: 'fixed', inset: 0, zIndex: 1190 }}
+            />
+            <div
+              role="menu"
+              aria-label="選擇略過原因"
+              style={{
+                position: 'fixed',
+                right: pos.right,
+                ...(pos.top !== undefined ? { top: pos.top } : { bottom: pos.bottom }),
+                zIndex: 1200,
+                minWidth: 168,
+                padding: 6,
+                borderRadius: 14,
+                background: 'var(--surface)',
+                border: '0.5px solid var(--glass-border)',
+                boxShadow: 'var(--shadow-lg)',
+                display: 'grid',
+                gap: 2,
+              }}
+            >
+              {(
+                [
+                  ['non_tx', '非交易', '驗證碼、廣告通知'],
+                  ['duplicate', '重複', '帳本已有相同項目'],
+                  ['ignore', '這次不記', '暫時略過不入帳'],
+                ] as const
+              ).map(([reason, label, sub]) => (
+                <button
+                  key={reason}
+                  type="button"
+                  role="menuitem"
+                  disabled={disabled}
+                  onClick={() => {
+                    setOpen(false);
+                    void onSkip(reason);
+                  }}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    gap: 1,
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 10,
+                    textAlign: 'left',
+                    background: 'transparent',
+                    color: 'var(--text)',
+                  }}
+                >
+                  <span style={{ fontSize: '0.84rem', fontWeight: 600 }}>{label}</span>
+                  <span className="muted" style={{ fontSize: '0.72rem' }}>{sub}</span>
+                </button>
+              ))}
+            </div>
+          </>,
+          document.body,
+        )}
     </span>
   );
 }
