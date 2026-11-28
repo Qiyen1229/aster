@@ -1248,11 +1248,11 @@ button img, a img, .cat-icon, .tab svg { -webkit-user-drag: none; }
 }
 .row.with-icon + .row.with-icon::before { left: 64px; }
 button.row:active, a.row:active { background: var(--surface-2); }
-.row-main { flex: 1; min-width: 0; }
+.row-main { flex: 1; min-width: 0; overflow: hidden; }
 .row-title { font-size: 1rem; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-title .hint-btn { width: 22px; height: 22px; margin: 0; }
 .row-title .hint-btn svg { width: 15px; height: 15px; }
-.row-sub { font-size: 0.8rem; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.row-sub { display: block; font-size: 0.8rem; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 .row-end { text-align: right; flex: none; }
 .row-chev { color: var(--text-3); width: 18px; height: 18px; flex: none; }
 .row-value { color: var(--text-2); font-size: 0.95rem; }

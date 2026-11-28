@@ -165,10 +165,10 @@ export default function InboxWhitelistPage() {
               {list.map((n, idx) => (
                 <div key={`${n}-${idx}`} className="row">
                   <span className="row-main">
-                    <span className="row-title">{n}</span>
+                    <span className="row-title" style={{ display: 'block' }}>{n}</span>
                     <span className="row-sub">發送者或卡片名稱完全相符時套用</span>
                   </span>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                     <button className="pill" onClick={() => void edit(n, idx)}>編輯</button>
                     <button className="pill" style={{ color: 'var(--danger)' }} onClick={() => remove(n)}>移除</button>
                   </div>
@@ -207,10 +207,10 @@ export default function InboxWhitelistPage() {
               {blacklist.map((b, idx) => (
                 <div key={`${b}-${idx}`} className="row">
                   <span className="row-main">
-                    <span className="row-title">{b}</span>
+                    <span className="row-title" style={{ display: 'block' }}>{b}</span>
                     <span className="row-sub">命中時自動忽略，不跳審核通知</span>
                   </span>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                     <button type="button" className="pill" onClick={() => void editBlacklist(b, idx)}>編輯</button>
                     <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={() => update({ blacklist: blacklist.filter((x) => x !== b) })}>移除</button>
                   </div>
@@ -234,12 +234,12 @@ export default function InboxWhitelistPage() {
               {rules.map((r) => (
                 <div key={r.id} className="row" style={{ opacity: r.enabled ? 1 : 0.55 }}>
                   <span className="row-main">
-                    <span className="row-title">「{r.keyword}」</span>
+                    <span className="row-title" style={{ display: 'block' }}>「{r.keyword}」</span>
                     <span className="row-sub">
                       {RULE_MATCH_LABEL[r.match]} · {ruleTargetSummary(r, catMap)}{r.hits > 0 ? ` · 命中 ${r.hits} 次` : ''}
                     </span>
                   </span>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                     <button type="button" className="pill" onClick={() => setRuleDraft({ ...r })}>編輯</button>
                     <button type="button" className="pill" style={{ color: 'var(--danger)' }} onClick={async () => { if (await ask(`刪除「${r.keyword}」這條規則？`)) { await deleteRule(r.id); snack('已刪除規則'); } }}>移除</button>
                   </div>
