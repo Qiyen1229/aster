@@ -208,7 +208,6 @@ export function EmailForwardSheet({ open, onClose, binding: externalBinding, onU
       {step === 1 && (
         <section className="wiz-panel" style={{ padding: '4px 0' }}>
           <h3 className="wiz-panel-title" style={{ marginBottom: 6 }}>步驟 1：輸入你的 Gmail</h3>
-          <GuideDemoVideo scene="email-step1" />
           <p className="muted" style={{ margin: '0 0 12px', fontSize: '0.86rem', lineHeight: 1.55 }}>
             輸入要轉寄銀行／支付通知的 Gmail，Aster 會為你產生一組專屬轉寄地址。
           </p>
